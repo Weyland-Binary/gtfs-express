@@ -1,0 +1,5 @@
+service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date
+WKD,1,1,1,1,1,0,0,20260401,20270331
+SAT,0,0,0,0,0,1,0,20260401,20270331
+SUN,0,0,0,0,0,0,1,20260401,20270331
+NIT,1,1,1,1,1,1,1,20260401,20270331

@@ -1,0 +1,5 @@
+# Bench fixtures are heavy GTFS .zip dumps, not part of the source.
+# small.zip is regenerable from the bundled sample/ via
+# `node bench/zip-sample.mjs`. medium.zip and xl.zip are operator-supplied.
+*.zip
+!.gitignore

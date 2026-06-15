@@ -1,0 +1,21 @@
+node_modules
+npm-debug.log*
+.env
+.env.local
+.env.production
+.env.example
+uploads/
+.git
+.gitignore
+README.md
+DESCRIPTION.md
+Dockerfile
+docker-compose.yml
+yarn.lock
+.pnp.*
+.yarn/
+
+# Beta gate — secret data, must NEVER be baked into the image.
+# In prod, mount these via volume (see docker-compose.prod.yml).
+beta/codes.json
+beta/usage.jsonl

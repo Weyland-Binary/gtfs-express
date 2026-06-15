@@ -1,0 +1,18 @@
+{
+  "name": "fr-datagouv",
+  "title": "France — transport.data.gouv.fr (PAN)",
+  "description": "Aligns with the publication requirements of the French Point d'Accès National (transport.data.gouv.fr). Promotes feed_info publisher contact and feed validity dates to ERROR (PAN refuses publication without them) and tightens language consistency. Reuses MobilityData Canonical baseline for everything else.",
+  "promote_warning_to_error": false,
+  "promote_info_to_warning": false,
+  "overrides": {
+    "missing_recommended_file": "error",
+    "missing_feed_info_publisher_name": "error",
+    "missing_feed_info_publisher_url": "error",
+    "missing_feed_info_lang": "error",
+    "missing_feed_info_date": "error",
+    "missing_feed_contact_email_and_url": "error",
+    "inconsistent_agency_lang": "error",
+    "expired_calendar": "error",
+    "feed_expired": "error"
+  }
+}

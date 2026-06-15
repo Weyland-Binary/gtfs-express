@@ -1,0 +1,285 @@
+# CI pipeline — credit-conscious but complete.
+# Key guardrails:
+#   - triggers only on push/PR to main (no branch-wildcard)
+#   - paths-ignore: docs-only commits skip the pipeline entirely
+#   - concurrency cancel-in-progress: only the latest run per ref survives
+#   - timeout-minutes per job: hard ceiling prevents runaway minutes
+#   - npm ci (lockfile-strict) everywhere, never npm install
+#   - NO workflow_run triggers, NO self-commit steps, NO push from inside workflow
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - ".claude/**"
+      - "memory/**"
+      - "*.log"
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - ".claude/**"
+      - "memory/**"
+      - "*.log"
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Job 1: lightweight — no npm, just bash + awk/grep ────────────────────────
+  facts-freshness:
+    name: CLAUDE.md facts freshness
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ensure CLAUDE.md facts block is in sync with source
+        run: |
+          chmod +x scripts/refresh-facts.sh
+          bash scripts/refresh-facts.sh --check
+
+  # ── Job 2: backend tests + audit ─────────────────────────────────────────────
+  test-backend:
+    name: Backend — test + audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: GTFS-EXPRESS-API
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: GTFS-EXPRESS-API/.nvmrc
+          cache: npm
+          cache-dependency-path: GTFS-EXPRESS-API/package-lock.json
+
+      - name: Install dependencies (lockfile-strict)
+        run: npm ci
+
+      - name: Run Jest tests
+        run: npm test
+
+      - name: Security audit (high+critical — informational)
+        run: npm audit --audit-level=high
+        continue-on-error: true
+
+  # ── Job 3: canonical validator integration (real JAR + JRE) ──────────────────
+  # Separate from test-backend so the fast unit-test job (~12 s) is not
+  # blocked on Java setup or JAR download. This job exercises the
+  # production code path against the published MobilityData artefact and
+  # is the single source of truth that the JAR-version pin in the
+  # Dockerfile is still compatible with our adapter.
+  canonical-integration:
+    name: Canonical validator — real JAR integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    defaults:
+      run:
+        working-directory: GTFS-EXPRESS-API
+    env:
+      GTFS_VALIDATOR_VERSION: "8.0.0"
+      GTFS_CANONICAL_VALIDATOR_JAR: /opt/gtfs-validator-cli.jar
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: GTFS-EXPRESS-API/.nvmrc
+          cache: npm
+          cache-dependency-path: GTFS-EXPRESS-API/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Cache MobilityData validator JAR
+        id: cache-jar
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.GTFS_CANONICAL_VALIDATOR_JAR }}
+          key: gtfs-validator-cli-${{ env.GTFS_VALIDATOR_VERSION }}
+
+      - name: Download MobilityData validator JAR
+        if: steps.cache-jar.outputs.cache-hit != 'true'
+        run: |
+          sudo curl -fL --retry 3 -o "$GTFS_CANONICAL_VALIDATOR_JAR" \
+            "https://github.com/MobilityData/gtfs-validator/releases/download/v${GTFS_VALIDATOR_VERSION}/gtfs-validator-${GTFS_VALIDATOR_VERSION}-cli.jar"
+          ls -lh "$GTFS_CANONICAL_VALIDATOR_JAR"
+
+      - name: Install dependencies (lockfile-strict)
+        run: npm ci
+
+      - name: Run canonical integration test (real JAR)
+        run: npx jest src/services/__tests__/canonicalValidator.integration.test.js --no-coverage
+
+  # ── Job 4: frontend build + bundle size report + audit ───────────────────────
+  build-frontend:
+    name: Frontend — build + bundle size + audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: GTFS-EXPRESS-WEB
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: GTFS-EXPRESS-WEB/.nvmrc
+          cache: npm
+          cache-dependency-path: GTFS-EXPRESS-WEB/package-lock.json
+
+      - name: Install dependencies (lockfile-strict)
+        run: npm ci
+
+      - name: Build production bundle
+        run: npm run build
+
+      - name: Report bundle size in step summary
+        run: |
+          echo "## Frontend bundle size" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### JS chunks (largest first)" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          du -sh dist/assets/*.js | sort -rh >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          MAIN_JS=$(ls dist/assets/index-*.js 2>/dev/null | head -1)
+          if [ -n "$MAIN_JS" ]; then
+            GZIP_BYTES=$(gzip -c "$MAIN_JS" | wc -c)
+            GZIP_KB=$(( GZIP_BYTES / 1024 ))
+            echo "### entry chunk gzip size: ${GZIP_KB} KB" >> $GITHUB_STEP_SUMMARY
+            if [ "$GZIP_KB" -gt 900 ]; then
+              echo "> **ERROR** entry chunk gzip exceeds 900 KB threshold (${GZIP_KB} KB)" >> $GITHUB_STEP_SUMMARY
+            elif [ "$GZIP_KB" -gt 800 ]; then
+              echo "> **WARNING** entry chunk gzip is between 800-900 KB (${GZIP_KB} KB)" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "> entry chunk gzip is within budget (${GZIP_KB} KB / 800 KB warn, 900 KB cap)" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
+
+      - name: Security audit (high+critical — informational)
+        run: npm audit --audit-level=high
+        continue-on-error: true
+
+  # ── Job 5: frontend lint + unit tests (Vitest) ───────────────────────────────
+  test-frontend:
+    name: Frontend — lint + unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    defaults:
+      run:
+        working-directory: GTFS-EXPRESS-WEB
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: GTFS-EXPRESS-WEB/.nvmrc
+          cache: npm
+          cache-dependency-path: GTFS-EXPRESS-WEB/package-lock.json
+
+      - name: Install dependencies (lockfile-strict)
+        run: npm ci
+
+      - name: Lint (react-hooks invariants are error-level)
+        run: npm run lint
+
+      - name: Run Vitest unit tests
+        run: npm test
+
+  # ── Job 6: E2E smoke — real API + built frontend + Playwright ────────────────
+  # Boots the actual Express backend (beta gate disabled) with the real
+  # MobilityData JAR, serves the production frontend bundle, and drives the
+  # core user loop in Chromium: load sample → explore → validate → edit →
+  # undo → export. This is the regression oracle for the Vite migration and
+  # for any refactor of the core loop.
+  e2e-smoke:
+    name: E2E — core-loop smoke (Playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GTFS_VALIDATOR_VERSION: "8.0.0"
+      GTFS_CANONICAL_VALIDATOR_JAR: /opt/gtfs-validator-cli.jar
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: GTFS-EXPRESS-API/.nvmrc
+          cache: npm
+          cache-dependency-path: |
+            GTFS-EXPRESS-API/package-lock.json
+            GTFS-EXPRESS-WEB/package-lock.json
+            e2e/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Cache MobilityData validator JAR
+        id: cache-jar
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.GTFS_CANONICAL_VALIDATOR_JAR }}
+          key: gtfs-validator-cli-${{ env.GTFS_VALIDATOR_VERSION }}
+
+      - name: Download MobilityData validator JAR
+        if: steps.cache-jar.outputs.cache-hit != 'true'
+        run: |
+          sudo curl -fL --retry 3 -o "$GTFS_CANONICAL_VALIDATOR_JAR" \
+            "https://github.com/MobilityData/gtfs-validator/releases/download/v${GTFS_VALIDATOR_VERSION}/gtfs-validator-${GTFS_VALIDATOR_VERSION}-cli.jar"
+
+      - name: Install API dependencies (lockfile-strict)
+        run: npm ci
+        working-directory: GTFS-EXPRESS-API
+
+      - name: Install frontend dependencies (lockfile-strict)
+        run: npm ci
+        working-directory: GTFS-EXPRESS-WEB
+
+      - name: Install e2e dependencies (lockfile-strict)
+        run: npm ci
+        working-directory: e2e
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('e2e/package-lock.json') }}
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+        working-directory: e2e
+
+      - name: Build frontend against the local API
+        run: npm run build
+        working-directory: GTFS-EXPRESS-WEB
+        env:
+          VITE_API_BASE_URL: http://127.0.0.1:3004/gtfs
+
+      - name: Run smoke suite
+        run: npx playwright test
+        working-directory: e2e
+
+      - name: Run dev-server smoke (Vite pre-bundling path)
+        run: npx playwright test -c playwright.dev.config.js
+        working-directory: e2e
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: e2e/playwright-report/
+          retention-days: 7

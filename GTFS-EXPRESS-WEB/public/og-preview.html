@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>OG Preview – 1200×630</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        width: 1200px;
+        height: 630px;
+        overflow: hidden;
+        font-family: "Inter", sans-serif;
+        background: #0b1929;
+      }
+
+      /* ─── Background ─────────────────────────────────────── */
+      .bg {
+        position: absolute;
+        inset: 0;
+        background: radial-gradient(
+          ellipse at 25% 55%,
+          #0d2a4a 0%,
+          #0b1929 65%
+        );
+      }
+      .bg::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background-image: radial-gradient(
+          circle,
+          rgba(255, 255, 255, 0.035) 1px,
+          transparent 1px
+        );
+        background-size: 36px 36px;
+      }
+      .accent-bar {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 4px;
+        background: linear-gradient(90deg, #1565c0, #42a5f5, #1976d2);
+      }
+
+      /* ─── Layout ──────────────────────────────────────────── */
+      .layout {
+        position: relative;
+        display: flex;
+        align-items: center;
+        width: 1200px;
+        height: 630px;
+        padding: 0 80px;
+        gap: 0;
+      }
+
+      /* ─── LEFT — identity ─────────────────────────────────── */
+      .left {
+        flex: 0 0 530px;
+        display: flex;
+        flex-direction: column;
+        gap: 32px;
+      }
+
+      .logo-row img {
+        height: 46px;
+        width: auto;
+      }
+
+      .headline h1 {
+        font-size: 52px;
+        font-weight: 800;
+        line-height: 1.1;
+        color: #ffffff;
+        letter-spacing: -0.025em;
+      }
+      .headline h1 span {
+        background: linear-gradient(90deg, #42a5f5, #90caf9);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+      }
+      .headline p {
+        margin-top: 14px;
+        font-size: 17px;
+        font-weight: 400;
+        color: #94a3b8;
+        line-height: 1.6;
+        max-width: 430px;
+      }
+
+      .domain {
+        font-size: 14px;
+        font-weight: 600;
+        color: #334155;
+        letter-spacing: 0.04em;
+      }
+
+      /* ─── DIVIDER ─────────────────────────────────────────── */
+      .divider {
+        flex-shrink: 0;
+        width: 1px;
+        height: 420px;
+        margin: 0 64px;
+        background: linear-gradient(
+          to bottom,
+          transparent,
+          rgba(66, 165, 245, 0.18),
+          transparent
+        );
+      }
+
+      /* ─── RIGHT — features ────────────────────────────────── */
+      .right {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+
+      .feature {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 18px 22px;
+        background: rgba(13, 42, 74, 0.55);
+        border: 1px solid rgba(66, 165, 245, 0.12);
+        border-radius: 14px;
+      }
+
+      .feature-icon {
+        flex-shrink: 0;
+        width: 38px;
+        height: 38px;
+        border-radius: 10px;
+        background: rgba(25, 118, 210, 0.2);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .feature-icon svg {
+        width: 20px;
+        height: 20px;
+        fill: #42a5f5;
+      }
+
+      .feature-text {
+        font-size: 16px;
+        font-weight: 600;
+        color: #e2e8f0;
+        letter-spacing: -0.01em;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="bg"></div>
+    <div class="accent-bar"></div>
+
+    <div class="layout">
+      <!-- LEFT -->
+      <div class="left">
+        <div class="logo-row">
+          <img src="img/logo.png" alt="GTFS Express" />
+        </div>
+        <div class="headline">
+          <h1>Explore transit<br />data <span>instantly</span></h1>
+          <p>
+            Upload any GTFS feed and visualize routes, stops, schedules and
+            network statistics in seconds.
+          </p>
+        </div>
+        <div class="domain">gtfsexpress.com</div>
+      </div>
+
+      <!-- DIVIDER -->
+      <div class="divider"></div>
+
+      <!-- RIGHT -->
+      <div class="right">
+        <div class="feature">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24">
+              <path
+                d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"
+              />
+            </svg>
+          </div>
+          <span class="feature-text">Interactive route &amp; stop maps</span>
+        </div>
+        <div class="feature">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24">
+              <path
+                d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11z"
+              />
+            </svg>
+          </div>
+          <span class="feature-text">Timetables &amp; schedule grids</span>
+        </div>
+        <div class="feature">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24">
+              <path d="M5 9.2h3V19H5zM10.6 5h2.8v14h-2.8zm5.6 8H19v6h-2.8z" />
+            </svg>
+          </div>
+          <span class="feature-text">Network statistics &amp; analysis</span>
+        </div>
+        <div class="feature">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24">
+              <path
+                d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-2 16l-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z"
+              />
+            </svg>
+          </div>
+          <span class="feature-text">Severity-graded GTFS validation</span>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

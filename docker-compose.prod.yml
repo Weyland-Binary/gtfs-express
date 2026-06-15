@@ -1,0 +1,174 @@
+services:
+  frontend:
+    build:
+      context: ./GTFS-EXPRESS-WEB
+      args:
+        - VITE_API_BASE_URL=/api/gtfs
+    container_name: gtfs-frontend
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://localhost/nginx-health",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    networks:
+      - internal
+
+  api:
+    build:
+      context: ./GTFS-EXPRESS-API
+    container_name: gtfs-api
+    environment:
+      - NODE_ENV=production
+      - PORT=3004
+      - ALLOWED_ORIGINS=https://${DOMAIN}
+      - RATE_LIMIT_WINDOW_MS=${RATE_LIMIT_WINDOW_MS:-3600000}
+      - RATE_LIMIT_MAX_REQUESTS=${RATE_LIMIT_MAX_REQUESTS:-500}
+      - RATE_LIMIT_MAX_UPLOADS=${RATE_LIMIT_MAX_UPLOADS:-10}
+      - RATE_LIMIT_SAMPLE_WINDOW_MS=${RATE_LIMIT_SAMPLE_WINDOW_MS:-900000}
+      - RATE_LIMIT_MAX_SAMPLES=${RATE_LIMIT_MAX_SAMPLES:-5}
+      - SESSION_CLEANUP_AGE_MS=${SESSION_CLEANUP_AGE_MS:-3600000}
+      - MAX_SESSIONS=${MAX_SESSIONS:-20}
+      # Beta gate : par défaut DISABLED en prod ; passer à `false` une fois
+      # ./GTFS-EXPRESS-API/beta/codes.json déployé sur l'hôte.
+      - BETA_GATE_DISABLED=${BETA_GATE_DISABLED:-true}
+      # Admin dashboard (#admin route) : si vide, l'endpoint /api/gtfs/admin/*
+      # renvoie 503 et la page admin reste inaccessible. Sert aussi de
+      # secret pour le HMAC qui anonymise les IPs dans les logs d'events.
+      - ADMIN_TOKEN=${ADMIN_TOKEN:-}
+      # Sel HMAC des IP/codes hashés dans les logs d'audit. DOIT être distinct
+      # de ADMIN_TOKEN (rotation indépendante — CLAUDE.md règle #9). Vide →
+      # fallback ADMIN_TOKEN (compat), mais le définir est l'état nominal.
+      - IP_HASH_SECRET=${IP_HASH_SECRET:-}
+      # NL2SQL — assistant IA (génération SQL depuis le langage naturel).
+      # Requiert une clé API Anthropic valide dans .env à la racine.
+      # NL2SQL_ENABLED=false → endpoint 503 + bouton masqué côté UI (kill switch).
+      - NL2SQL_ENABLED=${NL2SQL_ENABLED:-true}
+      - NL2SQL_CHAT_ENABLED=${NL2SQL_CHAT_ENABLED:-false}
+      - NL2SQL_MODEL=${NL2SQL_MODEL:-claude-haiku-4-5}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # Réglages chat + garde-fous de coût IA. Vides → défauts de config.js
+      # (chat: claude-sonnet-4-6, essai gratuit 5/session + 15/IP/jour,
+      # 30 msg/h/code, 100 req/24h/code, budget global 500/24h).
+      - NL2SQL_CHAT_MODEL=${NL2SQL_CHAT_MODEL:-}
+      - NL2SQL_FREE_MESSAGES_PER_SESSION=${NL2SQL_FREE_MESSAGES_PER_SESSION:-}
+      - NL2SQL_FREE_MESSAGES_PER_IP_DAY=${NL2SQL_FREE_MESSAGES_PER_IP_DAY:-}
+      - NL2SQL_CHAT_RATE_LIMIT=${NL2SQL_CHAT_RATE_LIMIT:-}
+      - NL2SQL_RATE_LIMIT=${NL2SQL_RATE_LIMIT:-}
+      - NL2SQL_DAILY_LIMIT_PER_CODE=${NL2SQL_DAILY_LIMIT_PER_CODE:-}
+      - NL2SQL_DAILY_BUDGET_TOTAL=${NL2SQL_DAILY_BUDGET_TOTAL:-}
+    volumes:
+      - uploads_data:/app/uploads
+      # Volume bind sur beta/ — codes.json et usage.jsonl sont gérés sur l'hôte
+      # (jamais dans l'image). Si le dossier hôte est vide et BETA_GATE_DISABLED
+      # ≠ true, le mode édition renvoie 403 BETA_CONFIG_ERROR (fail-closed).
+      - ./GTFS-EXPRESS-API/beta:/app/beta
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://localhost:3004/health",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+    networks:
+      - internal
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: gtfs-caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - DOMAIN=${DOMAIN}
+      - STATS_USER=${STATS_USER}
+      - STATS_HASH=${STATS_HASH}
+      # true → Caddy serves a static English maintenance page (503) on every
+      # route. Toggle in .env.production.local then `up -d caddy` to apply.
+      - MAINTENANCE=${MAINTENANCE:-false}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+      - caddy_logs:/logs
+      - goaccess_html:/stats:ro
+    depends_on:
+      frontend:
+        condition: service_healthy
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    networks:
+      - internal
+
+  goaccess:
+    image: allinurl/goaccess:1.9.3
+    container_name: gtfs-goaccess
+    volumes:
+      - caddy_logs:/logs:ro
+      - goaccess_html:/output
+    entrypoint: /bin/sh
+    command: >-
+      -c "until [ -f /logs/access.log ]; do echo 'Waiting for access.log...'; sleep 2; done &&
+      goaccess /logs/access.log
+      --log-format=CADDY
+      --real-time-html
+      --output=/output/index.html
+      --no-global-config
+      --ws-url=wss://${DOMAIN}:443/stats/
+      --addr=0.0.0.0
+      --port=7890"
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    networks:
+      - internal
+
+volumes:
+  uploads_data:
+  caddy_data:
+  caddy_config:
+  caddy_logs:
+  goaccess_html:
+
+networks:
+  internal:

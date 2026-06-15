@@ -1,0 +1,16 @@
+node_modules/
+.env
+.env.local
+.env.production
+uploads/
+npm-debug.log*
+*.log
+
+# Beta gate — secret data, never commit (codes.example.json is the template)
+beta/codes.json
+beta/usage.jsonl
+
+# Yarn (unused)
+yarn.lock
+.pnp.*
+.yarn/
