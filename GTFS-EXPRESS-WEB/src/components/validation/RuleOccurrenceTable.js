@@ -309,23 +309,29 @@ function RuleOccurrenceTable({ occurrences, ruleCode }) {
     "--text-color-secondary": theme.palette.text.secondary,
   };
 
-  const useVirtual = rows.length > 50;
-
   return (
     <>
       <Box
         sx={{
+          maxHeight: 360,
+          overflow: "auto",
+          overscrollBehavior: "contain",
           "& .p-datatable": { fontSize: "0.78rem", fontFamily: "inherit" },
+          "& .p-datatable .p-datatable-thead": {
+            position: "sticky",
+            top: 0,
+            zIndex: 2,
+          },
           "& .p-datatable .p-datatable-thead > tr > th": {
-            bgcolor: "transparent",
-            color: theme.palette.text.secondary,
-            fontWeight: 700,
-            fontSize: "0.66rem",
+            backgroundColor: `${theme.palette.background.paper} !important`,
+            color: `${theme.palette.text.secondary} !important`,
+            fontWeight: "700 !important",
+            fontSize: "0.66rem !important",
             letterSpacing: "0.05em",
             fontFamily: MONOSPACE,
-            borderBottom: `1px solid ${theme.palette.divider}`,
-            py: "5px",
-            px: "10px",
+            textTransform: "none !important",
+            borderBottom: `1px solid ${theme.palette.divider} !important`,
+            padding: "6px 10px !important",
             whiteSpace: "nowrap",
           },
           "& .p-datatable .p-datatable-tbody > tr": {
@@ -337,8 +343,8 @@ function RuleOccurrenceTable({ occurrences, ruleCode }) {
           },
           "& .p-datatable .p-datatable-tbody > tr > td": {
             borderBottom: `1px solid ${alpha(theme.palette.divider, 0.5)}`,
-            py: "4px",
-            px: "10px",
+            padding: "4px 10px !important",
+            textAlign: "left",
             verticalAlign: "middle",
           },
         }}
@@ -346,11 +352,6 @@ function RuleOccurrenceTable({ occurrences, ruleCode }) {
         <DataTable
           value={rows}
           style={tableStyle}
-          scrollable
-          scrollHeight={useVirtual ? "320px" : undefined}
-          virtualScrollerOptions={
-            useVirtual ? { itemSize: 32, lazy: false } : undefined
-          }
           size="small"
           emptyMessage={
             <Box sx={{ px: 2, py: 1, color: "text.secondary", fontSize: "0.8rem" }}>
