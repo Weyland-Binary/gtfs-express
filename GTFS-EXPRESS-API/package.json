@@ -28,21 +28,21 @@
     "testTimeout": 30000
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.91.1",
+    "@anthropic-ai/sdk": "^0.105.0",
     "archiver": "^7.0.1",
-    "better-sqlite3": "^12.9.0",
+    "better-sqlite3": "^12.11.1",
     "body-parser": "^1.20.3",
     "compression": "^1.8.1",
     "cors": "^2.8.5",
-    "csv-parser": "^3.0.0",
+    "csv-parser": "^3.2.1",
     "dotenv": "^17.2.3",
     "express": "^4.19.2",
     "express-fileupload": "^1.5.0",
     "express-rate-limit": "^8.2.1",
-    "helmet": "^8.1.0",
-    "libphonenumber-js": "^1.12.42",
+    "helmet": "^8.2.0",
+    "libphonenumber-js": "^1.13.7",
     "swagger-ui-express": "^5.0.1",
-    "unzipper": "^0.12.1",
+    "unzipper": "^0.12.5",
     "yaml": "^2.9.0"
   },
   "devDependencies": {
