@@ -1,0 +1,380 @@
+### ═══════════════════════════════════════════════════════════════════
+###  GTFS INTERPRETER API — 44 endpoints (REST Client collection)
+###
+###  Usage: install the "humao.rest-client" extension then click
+###  "Send Request" above each request.
+###
+###  Environment variables: settings.json > rest-client.environmentVariables
+###  Toggle between "local" (direct API :3004) and "dev-docker" (via nginx /api).
+### ═══════════════════════════════════════════════════════════════════
+
+@baseUrl = http://localhost:3004/gtfs
+@sessionId = test-session-uuid-1234-5678-9abcdef0
+
+### ───────────────────────────────────────────────────────────────────
+###  HEALTH & BASE
+### ───────────────────────────────────────────────────────────────────
+
+### 1. Healthcheck
+GET http://localhost:3004/health
+
+### 2. Root welcome
+GET http://localhost:3004/
+
+### ───────────────────────────────────────────────────────────────────
+###  UPLOAD & SAMPLE
+### ───────────────────────────────────────────────────────────────────
+
+### 3. Upload a GTFS ZIP (replace the path)
+# @name uploadGtfs
+POST {{baseUrl}}/upload
+X-Session-ID: {{sessionId}}
+Content-Type: multipart/form-data; boundary=----boundary
+
+------boundary
+Content-Disposition: form-data; name="gtfsZip"; filename="sample.zip"
+Content-Type: application/zip
+
+< ./GTFS-EXPRESS-API/sample/sample.zip
+------boundary--
+
+### 4. Load bundled sample GTFS
+GET {{baseUrl}}/load-sample
+X-Session-ID: {{sessionId}}
+
+### 5. Upload stats (admin)
+GET {{baseUrl}}/upload-stats
+X-Session-ID: {{sessionId}}
+
+### ───────────────────────────────────────────────────────────────────
+###  READ: AGENCIES / ROUTES / DIRECTIONS / STOPS & TIMES
+### ───────────────────────────────────────────────────────────────────
+
+### 6. List agencies
+GET {{baseUrl}}/agencies
+X-Session-ID: {{sessionId}}
+
+### 7. List routes for an agency
+GET {{baseUrl}}/routes/AGENCY-1
+X-Session-ID: {{sessionId}}
+
+### 8. List directions for a route at a given date
+GET {{baseUrl}}/directions/ROUTE-1/20260415
+X-Session-ID: {{sessionId}}
+
+### 9. Stops & times for a route/direction/date
+GET {{baseUrl}}/stops_and_times/ROUTE-1/0/20260415
+X-Session-ID: {{sessionId}}
+
+### 10. Shapes for a route/direction
+GET {{baseUrl}}/shapes/ROUTE-1/0
+X-Session-ID: {{sessionId}}
+
+### 11. All shapes of the network
+GET {{baseUrl}}/all_shapes
+X-Session-ID: {{sessionId}}
+
+### 12. Shapes for a specific route
+GET {{baseUrl}}/shapes_for_route/ROUTE-1
+X-Session-ID: {{sessionId}}
+
+### ───────────────────────────────────────────────────────────────────
+###  READ: CALENDARS
+### ───────────────────────────────────────────────────────────────────
+
+### 13. Calendar for a route
+GET {{baseUrl}}/calendar/ROUTE-1
+X-Session-ID: {{sessionId}}
+
+### 14. Calendar_dates for a route
+GET {{baseUrl}}/calendar_dates/ROUTE-1
+X-Session-ID: {{sessionId}}
+
+### 15. Calendar by service_id
+GET {{baseUrl}}/calendar_service/SERVICE-1
+X-Session-ID: {{sessionId}}
+
+### 16. Calendar_dates by service_id
+GET {{baseUrl}}/calendar_dates_service/SERVICE-1
+X-Session-ID: {{sessionId}}
+
+### ───────────────────────────────────────────────────────────────────
+###  READ: STATS
+### ───────────────────────────────────────────────────────────────────
+
+### 17. Average trip times
+GET {{baseUrl}}/average_trip_times
+X-Session-ID: {{sessionId}}
+
+### 18. Global statistics
+GET {{baseUrl}}/statistics
+X-Session-ID: {{sessionId}}
+
+### ───────────────────────────────────────────────────────────────────
+###  READ: DETAILS & SEARCH
+### ───────────────────────────────────────────────────────────────────
+
+### 20. Stop detail
+GET {{baseUrl}}/stop_detail/STOP-1
+X-Session-ID: {{sessionId}}
+
+### 21. Route detail
+GET {{baseUrl}}/route_detail/ROUTE-1
+X-Session-ID: {{sessionId}}
+
+### 22. Trip detail
+GET {{baseUrl}}/trip_detail/TRIP-1
+X-Session-ID: {{sessionId}}
+
+### 23. Global search
+GET {{baseUrl}}/search?q=Châtelet&limit=20
+X-Session-ID: {{sessionId}}
+
+### ───────────────────────────────────────────────────────────────────
+###  EDIT SESSION: ENTER / EXIT / STATUS
+### ───────────────────────────────────────────────────────────────────
+
+### 24. Enter edit mode (migrates CSV → SQLite)
+POST {{baseUrl}}/edit/enter
+X-Session-ID: {{sessionId}}
+
+### 25. Exit edit mode (drops edits unless exported)
+POST {{baseUrl}}/edit/exit
+X-Session-ID: {{sessionId}}
+
+### 26. Edit mode status
+GET {{baseUrl}}/edit/status
+X-Session-ID: {{sessionId}}
+
+### ───────────────────────────────────────────────────────────────────
+###  MUTATIONS : STOPS
+### ───────────────────────────────────────────────────────────────────
+
+### 27. Update a stop
+PATCH {{baseUrl}}/edit/stops/STOP-1
+X-Session-ID: {{sessionId}}
+Content-Type: application/json
+Origin: http://localhost:3000
+
+{
+  "stop_name": "Châtelet — Les Halles",
+  "platform_code": "A",
+  "wheelchair_boarding": "1"
+}
+
+### 28. Create a stop
+POST {{baseUrl}}/edit/stops
+X-Session-ID: {{sessionId}}
+Content-Type: application/json
+Origin: http://localhost:3000
+
+{
+  "stop_id": "STOP-NEW-42",
+  "stop_name": "New Stop",
+  "stop_lat": 48.8566,
+  "stop_lon": 2.3522,
+  "location_type": 0
+}
+
+### 29. Delete a stop (refused if referenced)
+DELETE {{baseUrl}}/edit/stops/STOP-NEW-42
+X-Session-ID: {{sessionId}}
+Origin: http://localhost:3000
+
+### ───────────────────────────────────────────────────────────────────
+###  MUTATIONS : ROUTES
+### ───────────────────────────────────────────────────────────────────
+
+### 30. Update a route
+PATCH {{baseUrl}}/edit/routes/ROUTE-1
+X-Session-ID: {{sessionId}}
+Content-Type: application/json
+Origin: http://localhost:3000
+
+{
+  "route_long_name": "Châtelet ↔ Mairie d'Issy",
+  "route_color": "FF5733",
+  "route_text_color": "FFFFFF"
+}
+
+### 31. Delete a route (cascade: trips → stop_times → frequencies → orphan shapes/calendars)
+DELETE {{baseUrl}}/edit/routes/ROUTE-1
+X-Session-ID: {{sessionId}}
+Origin: http://localhost:3000
+
+### ───────────────────────────────────────────────────────────────────
+###  MUTATIONS : TRIPS
+### ───────────────────────────────────────────────────────────────────
+
+### 32. Update a trip
+PATCH {{baseUrl}}/edit/trips/TRIP-1
+X-Session-ID: {{sessionId}}
+Content-Type: application/json
+Origin: http://localhost:3000
+
+{
+  "trip_headsign": "Mairie d'Issy",
+  "direction_id": "0",
+  "wheelchair_accessible": "1",
+  "bikes_allowed": "2"
+}
+
+### 33. Create a trip
+POST {{baseUrl}}/edit/trips
+X-Session-ID: {{sessionId}}
+Content-Type: application/json
+Origin: http://localhost:3000
+
+{
+  "trip_id": "TRIP-NEW-01",
+  "route_id": "ROUTE-1",
+  "service_id": "SERVICE-1",
+  "trip_headsign": "Terminus",
+  "direction_id": "0"
+}
+
+### 34. Duplicate a trip (via create with source_trip_id + time_offset)
+POST {{baseUrl}}/edit/trips
+X-Session-ID: {{sessionId}}
+Content-Type: application/json
+Origin: http://localhost:3000
+
+{
+  "trip_id": "TRIP-DUP-01",
+  "source_trip_id": "TRIP-1",
+  "time_offset_minutes": 30
+}
+
+### 35. Delete a trip (cascade stop_times + frequencies)
+DELETE {{baseUrl}}/edit/trips/TRIP-NEW-01
+X-Session-ID: {{sessionId}}
+Origin: http://localhost:3000
+
+### ───────────────────────────────────────────────────────────────────
+###  MUTATIONS : STOP_TIMES
+### ───────────────────────────────────────────────────────────────────
+
+### 36. Update a stop_time (PK composite trip_id + stop_sequence)
+PATCH {{baseUrl}}/edit/stop_times/TRIP-1/5
+X-Session-ID: {{sessionId}}
+Content-Type: application/json
+Origin: http://localhost:3000
+
+{
+  "arrival_time": "08:15:00",
+  "departure_time": "08:15:30",
+  "pickup_type": "0",
+  "drop_off_type": "0"
+}
+
+### 37. Create a stop_time
+POST {{baseUrl}}/edit/stop_times
+X-Session-ID: {{sessionId}}
+Content-Type: application/json
+Origin: http://localhost:3000
+
+{
+  "trip_id": "TRIP-1",
+  "stop_sequence": 99,
+  "stop_id": "STOP-1",
+  "arrival_time": "25:30:00",
+  "departure_time": "25:30:30"
+}
+
+### 38. Delete a stop_time
+DELETE {{baseUrl}}/edit/stop_times/TRIP-1/99
+X-Session-ID: {{sessionId}}
+Origin: http://localhost:3000
+
+### ───────────────────────────────────────────────────────────────────
+###  MUTATIONS : CALENDAR & CALENDAR_DATES
+### ───────────────────────────────────────────────────────────────────
+
+### 39. Update a calendar (weekly pattern + date range)
+PATCH {{baseUrl}}/edit/calendar/SERVICE-1
+X-Session-ID: {{sessionId}}
+Content-Type: application/json
+Origin: http://localhost:3000
+
+{
+  "monday": 1,
+  "tuesday": 1,
+  "wednesday": 1,
+  "thursday": 1,
+  "friday": 1,
+  "saturday": 0,
+  "sunday": 0,
+  "start_date": "20260101",
+  "end_date": "20261231"
+}
+
+### 40. Create a calendar_date exception
+POST {{baseUrl}}/edit/calendar_dates
+X-Session-ID: {{sessionId}}
+Content-Type: application/json
+Origin: http://localhost:3000
+
+{
+  "service_id": "SERVICE-1",
+  "date": "20261225",
+  "exception_type": 2
+}
+
+### 41. Delete a calendar_date
+DELETE {{baseUrl}}/edit/calendar_dates/SERVICE-1/20261225
+X-Session-ID: {{sessionId}}
+Origin: http://localhost:3000
+
+### ───────────────────────────────────────────────────────────────────
+###  MUTATIONS : BULK DELETE (atomic, single _edit_log entry per batch)
+### ───────────────────────────────────────────────────────────────────
+
+### 42. Bulk delete stops (atomic — refuses if any stop has stop_times or children)
+### Returns: { deletedCount, deletedIds, cascadedCounts }
+POST {{baseUrl}}/edit/stops/bulk-delete
+X-Session-ID: {{sessionId}}
+Content-Type: application/json
+Origin: http://localhost:3000
+
+{
+  "ids": ["STOP-A", "STOP-B", "STOP-C"]
+}
+
+### 43. Bulk delete routes (cascade: trips → stop_times → frequencies + orphan shapes/calendars)
+### Returns: { deletedCount, deletedIds, cascadedCounts: { trips, stop_times, frequencies, orphan_shapes, orphan_calendars } }
+POST {{baseUrl}}/edit/routes/bulk-delete
+X-Session-ID: {{sessionId}}
+Content-Type: application/json
+Origin: http://localhost:3000
+
+{
+  "ids": ["ROUTE-1", "ROUTE-2"]
+}
+
+### 44. Bulk delete trips (cascade: stop_times + frequencies)
+### Returns: { deletedCount, deletedIds, cascadedCounts: { stop_times, frequencies } }
+POST {{baseUrl}}/edit/trips/bulk-delete
+X-Session-ID: {{sessionId}}
+Content-Type: application/json
+Origin: http://localhost:3000
+
+{
+  "ids": ["TRIP-1", "TRIP-2", "TRIP-3"]
+}
+
+### ───────────────────────────────────────────────────────────────────
+###  HISTORY, UNDO & EXPORT
+### ───────────────────────────────────────────────────────────────────
+
+### 45. Edit history (reads _edit_log)
+GET {{baseUrl}}/edit/history
+X-Session-ID: {{sessionId}}
+
+### 46. Undo last edit (LIFO — also undoes bulk operations atomically)
+POST {{baseUrl}}/edit/undo
+X-Session-ID: {{sessionId}}
+Origin: http://localhost:3000
+
+### 47. Export edited GTFS as ZIP
+GET {{baseUrl}}/edit/export
+X-Session-ID: {{sessionId}}

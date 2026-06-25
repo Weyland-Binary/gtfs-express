@@ -1,0 +1,9 @@
+from_stop_id,to_stop_id,transfer_type,min_transfer_time
+WTC_S,WSL_F,2,360
+WSL_F,WTC_S,2,360
+DUM_F,BBP,2,180
+BBP,DUM_F,2,180
+DBK_S,BAR,2,240
+BAR,DBK_S,2,240
+LIC_S,QBP,2,420
+QBP,LIC_S,2,420

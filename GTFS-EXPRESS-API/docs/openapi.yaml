@@ -1,0 +1,4236 @@
+# GTFS Express API — OpenAPI 3.0.3 surface.
+#
+# Source of truth for the HTTP contract: src/routes/gtfsRoutes.js (mounted
+# under /gtfs) plus GET /health (src/app.js). The Jest test
+# src/__tests__/openapiCoverage.test.js enforces a strict bijection between
+# this file and the router: adding/removing/renaming a route without
+# updating this spec fails the suite.
+#
+# Served at runtime by src/app.js:
+#   GET /gtfs/openapi.yaml — this document
+#   GET /gtfs/docs         — interactive Swagger UI
+openapi: 3.0.3
+info:
+  title: GTFS Express API
+  version: 1.0.0
+  description: |-
+    Professional GTFS Schedule editor and validator — REST surface of the GTFS Express backend.
+
+    ## Session model
+
+    The API is **session-based**: `POST /gtfs/upload` (or `GET /gtfs/load-sample`) creates an
+    isolated, in-memory-style SQLite database under `uploads/{sessionId}/gtfs.db` and returns a
+    UUIDv4 `sessionId`. Every subsequent call targets that database through the `X-Session-ID`
+    header. There is **no global persistent database**: sessions expire after a TTL (2 h dev / 1 h
+    prod) and the server enforces a concurrent-session cap (HTTP 503 beyond it). Work is persisted
+    by re-exporting the feed as a GTFS ZIP (`GET /gtfs/edit/export`) or saving a `.gtfsproj`
+    snapshot (`GET /gtfs/edit/project/export`).
+
+    ## Validation engine
+
+    Validation is performed by a single engine: the **MobilityData Canonical Validator** (Java JAR,
+    embedded in the Docker image). Reports are normalised to the internal shape documented in the
+    `ValidationReport` schema; `POST /gtfs/edit/validate.canonical` returns the untouched
+    canonical JSON instead. Severity profiles (canonical / strict / lenient / fr-datagouv) only
+    override severities — the rule set itself stays aligned with MobilityData.
+
+    ## Edit CRUD pattern
+
+    All `/gtfs/edit/{table}` families (stops, routes, trips, stop_times, calendar, fares v1/v2,
+    flex, levels, pathways, transfers, translations, attributions, frequencies…) share one generic
+    envelope, documented once and referenced everywhere:
+
+    - `POST /gtfs/edit/{table}` — create. Body: JSON map of GTFS column → value
+      (`EntityCreate`). Returns **201** with the created row echoed under a key named after the
+      entity.
+    - `PATCH /gtfs/edit/{table}/{pk}` — partial update. Body: JSON map restricted to the
+      server-side whitelist of editable columns (`EntityPatch`). Returns the full post-image row
+      plus the `changed` column list.
+    - `DELETE /gtfs/edit/{table}/{pk}` — delete. Returns `{ deleted: "<pk>" }`.
+    - `GET /gtfs/edit/{table}` — list.
+
+    Every mutation requires edit mode (`POST /gtfs/edit/enter`, beta-gated), is recorded in the
+    session edit log (undo/redo via `/gtfs/edit/undo|redo|jump`), and returns the `EditResult`
+    envelope. Sessions not in edit mode are rejected with **409** `SESSION_NOT_IN_EDIT_MODE`.
+
+    ## Servers & proxying
+
+    Direct (development) access is `http://localhost:3004` with paths as documented here. In
+    production the frontend reverse proxy exposes the same surface behind the `/api` prefix
+    (e.g. `/api/gtfs/agencies`).
+  license:
+    name: AGPL-3.0-only
+    url: https://www.gnu.org/licenses/agpl-3.0.html
+servers:
+  - url: /
+    description: "Direct access (development: http://localhost:3004). In production the API is exposed
+      behind the /api prefix by the reverse proxy."
+tags:
+  - name: Health
+    description: Liveness probe.
+  - name: Upload
+    description: "Feed ingestion: GTFS ZIP upload, demo feed, public upload counters."
+  - name: Read
+    description: Read-only feed exploration endpoints (HTTP-cached against the session edit counter).
+  - name: Diff
+    description: Read-only feed-to-feed comparison between two uploaded sessions.
+  - name: Search & Stats
+    description: Free-text search and aggregated feed statistics.
+  - name: Edit Session
+    description: "Edit-mode lifecycle: enter (beta-gated), exit, status."
+  - name: Edit
+    description: Transactional mutations on GTFS tables — generic CRUD envelope, see the Edit CRUD
+      pattern section.
+  - name: History
+    description: Edit log, undo, redo and history jump (backend-driven).
+  - name: Validation
+    description: On-demand canonical validation, profiles, locales and the rule catalogue.
+  - name: Quick Fixes
+    description: Auto-repair proposals derived from the validation report.
+  - name: SQL
+    description: "SQL console: read-only public surface plus the edit-mode mutation surface."
+  - name: AI
+    description: NL2SQL one-shot generation and multi-turn chat (Anthropic Claude, beta-gated, read-only).
+  - name: Project
+    description: ".gtfsproj disk persistence: save, open, metadata."
+  - name: Export
+    description: Re-export the (edited) feed as a GTFS ZIP.
+  - name: Admin
+    description: Operator dashboard endpoints, gated by X-Admin-Token.
+  - name: Config
+    description: Public feature flags.
+paths:
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Liveness probe (no session required).
+      security: []
+      responses:
+        "200":
+          description: Service is up.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  uptime:
+                    type: number
+                    description: Process uptime in seconds.
+  /gtfs/upload:
+    post:
+      tags:
+        - Upload
+      summary: Upload a GTFS ZIP and create an isolated session (SQLite DB).
+      description: Validates the archive (canonical MobilityData engine), migrates it to a per-session
+        SQLite database and returns the session ID to use in `X-Session-ID`. If the header carries
+        an existing session ID, the session content is replaced (any open edit session is dropped).
+        Rate-limited per IP.
+      requestBody:
+        $ref: "#/components/requestBodies/GtfsZipUpload"
+      security: []
+      responses:
+        "200":
+          $ref: "#/components/responses/UploadOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/SessionSaturated"
+  /gtfs/load-sample:
+    get:
+      tags:
+        - Upload
+      summary: Load the bundled demo GTFS feed into a new session.
+      security: []
+      responses:
+        "200":
+          $ref: "#/components/responses/UploadOk"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/SessionSaturated"
+  /gtfs/agencies:
+    get:
+      tags:
+        - Read
+      summary: List all agencies of the session feed.
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/routes/{agency_id}:
+    get:
+      tags:
+        - Read
+      summary: List routes operated by an agency.
+      parameters:
+        - name: agency_id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/directions/{route_id}/{date}:
+    get:
+      tags:
+        - Read
+      summary: List directions served by a route on a given date.
+      parameters:
+        - name: route_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: date
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Service date in YYYYMMDD format.
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/stops_and_times/{route_id}/{direction_id}/{date}:
+    get:
+      tags:
+        - Read
+      summary: Stop-by-trip departure time grid for a route, direction and date.
+      parameters:
+        - name: route_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: direction_id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: date
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Service date in YYYYMMDD format.
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/stops/all:
+    get:
+      tags:
+        - Read
+      summary: List every stop in the feed.
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/shapes/{route_id}/{direction_id}:
+    get:
+      tags:
+        - Read
+      summary: Shape polylines for a route and direction.
+      parameters:
+        - name: route_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: direction_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/calendar/{route_id}:
+    get:
+      tags:
+        - Read
+      summary: Calendar rows attached to a route.
+      parameters:
+        - name: route_id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/calendar_dates/{route_id}:
+    get:
+      tags:
+        - Read
+      summary: Calendar date exceptions attached to a route.
+      parameters:
+        - name: route_id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/calendar_service/{service_id}:
+    get:
+      tags:
+        - Read
+      summary: Calendar row for a service_id.
+      parameters:
+        - name: service_id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/calendar_dates_service/{service_id}:
+    get:
+      tags:
+        - Read
+      summary: Calendar date exceptions for a service_id.
+      parameters:
+        - name: service_id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/average_trip_times:
+    get:
+      tags:
+        - Search & Stats
+      summary: Average trip duration per route.
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/statistics:
+    get:
+      tags:
+        - Search & Stats
+      summary: Aggregated feed statistics (entity counts, service span, frequencies).
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/all_shapes:
+    get:
+      tags:
+        - Read
+      summary: Every shape of the feed (map overview).
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/shapes_for_route/{route_id}:
+    get:
+      tags:
+        - Read
+      summary: Shapes referenced by the trips of a route.
+      parameters:
+        - name: route_id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/upload-stats:
+    get:
+      tags:
+        - Upload
+      summary: Public aggregate upload statistics.
+      security: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+  /gtfs/admin/stats:
+    get:
+      tags:
+        - Admin
+      summary: Aggregated usage statistics for the dashboard (30 s TTL cache).
+      security:
+        - AdminToken: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/admin/ping:
+    get:
+      tags:
+        - Admin
+      summary: Lightweight admin-token validation ping.
+      security:
+        - AdminToken: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/admin/ai-usage:
+    get:
+      tags:
+        - Admin
+      summary: Live AI cost-limiter counters (hourly / daily windows).
+      security:
+        - AdminToken: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/admin/active:
+    get:
+      tags:
+        - Admin
+      summary: Live active-session counter.
+      security:
+        - AdminToken: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/admin/sessions:
+    get:
+      tags:
+        - Admin
+      summary: Per-session details (agency, entity counts, validation summary).
+      security:
+        - AdminToken: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/admin/perf/sample:
+    get:
+      tags:
+        - Admin
+      summary: Live P50/P95/P99 latency per matched route.
+      security:
+        - AdminToken: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/admin/perf/reset:
+    post:
+      tags:
+        - Admin
+      summary: Reset the perf-stats ring buffers.
+      security:
+        - AdminToken: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/admin/stats/reset:
+    post:
+      tags:
+        - Admin
+      summary: Archive telemetry logs and reset stats counters.
+      security:
+        - AdminToken: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/stop_detail/{stop_id}:
+    get:
+      tags:
+        - Read
+      summary: Detailed stop record with related routes and trips.
+      parameters:
+        - name: stop_id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/route_detail/{route_id}:
+    get:
+      tags:
+        - Read
+      summary: Detailed route record with trips, shapes and calendars.
+      parameters:
+        - name: route_id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/trip_detail/{trip_id}:
+    get:
+      tags:
+        - Read
+      summary: Detailed trip record with its stop_times.
+      parameters:
+        - name: trip_id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/shape_detail/{shape_id}:
+    get:
+      tags:
+        - Read
+      summary: Detailed shape record (ordered point list).
+      parameters:
+        - name: shape_id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/search:
+    get:
+      tags:
+        - Search & Stats
+      summary: Search stops, routes, trips and shapes by free text.
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Search text (case-insensitive).
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/diff:
+    post:
+      tags:
+        - Diff
+      summary: Compare the session feed against another uploaded session.
+      description: >
+        Read-only feed-to-feed comparison. The base feed is the caller's
+        session (X-Session-ID); the comparison target is another uploaded
+        session referenced by `otherSessionId` ("after" side). Returns
+        per-table added/removed/changed counts plus up to `sampleLimit`
+        example rows per category; tables with a surrogate primary key are
+        compared by full row content and only report added/removed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [otherSessionId]
+              properties:
+                otherSessionId:
+                  type: string
+                  format: uuid
+                  description: Session id of the feed to compare against.
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          description: Per-table diff with summary counts and bounded samples.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  base: { type: string, format: uuid }
+                  other: { type: string, format: uuid }
+                  sampleLimit: { type: integer }
+                  summary:
+                    type: object
+                    properties:
+                      added: { type: integer }
+                      removed: { type: integer }
+                      changed: { type: integer }
+                      tablesWithChanges: { type: integer }
+                  tables:
+                    type: object
+                    additionalProperties:
+                      type: object
+                      properties:
+                        keyed: { type: boolean }
+                        added: { type: integer }
+                        removed: { type: integer }
+                        changed: { type: integer }
+                        samples: { type: object }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /gtfs/sql:
+    post:
+      tags:
+        - SQL
+      summary: Run a read-only SQL query (SELECT / WITH / EXPLAIN / read-only PRAGMA).
+      requestBody:
+        $ref: "#/components/requestBodies/SqlQuery"
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/SqlOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/EditModeRequired"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /gtfs/sql/export.csv:
+    post:
+      tags:
+        - SQL
+      summary: Stream a read-only SQL result as CSV (bypasses the 10k-row UI cap).
+      requestBody:
+        $ref: "#/components/requestBodies/SqlQuery"
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/CsvOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /gtfs/sql/schema:
+    get:
+      tags:
+        - SQL
+      summary: SQLite schema introspection for the SQL console (read mode).
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/sql/nl2sql:
+    post:
+      tags:
+        - AI
+      summary: Generate a SQL query from a natural-language prompt (Claude, beta-gated).
+      description: One-shot NL2SQL. The generated SQL is returned for review — never executed server-side.
+        Kill-switched via `NL2SQL_ENABLED` (503 when off).
+      requestBody:
+        $ref: "#/components/requestBodies/NlPrompt"
+      security:
+        - SessionId: []
+          BetaCode: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "403":
+          $ref: "#/components/responses/EditModeRequired"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/SessionSaturated"
+  /gtfs/sql/nl2sql-chat:
+    post:
+      tags:
+        - AI
+      summary: Multi-turn NL2SQL chat assistant (Server-Sent Events stream, beta-gated with anonymous free trial).
+      description: Conversational repair companion. A valid `X-Beta-Code` grants full access; anonymous
+        sessions get a small free-trial allowance (`NL2SQL_FREE_MESSAGES_PER_SESSION`, typed 403
+        `FREE_QUOTA_EXHAUSTED` once spent). Model-generated mutations are never executed by this
+        endpoint — they are surfaced as `sql_blocked` drafts the guided RepairFlow applies through
+        the regular `/gtfs/edit/sql` pipeline. Kill-switched via `NL2SQL_CHAT_ENABLED` (503 when
+        off). Pre-stream errors return JSON envelopes.
+      requestBody:
+        $ref: "#/components/requestBodies/ChatTurn"
+      security:
+        - SessionId: []
+          BetaCode: []
+      responses:
+        "200":
+          $ref: "#/components/responses/SseOk"
+        "403":
+          $ref: "#/components/responses/EditModeRequired"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/SessionSaturated"
+  /gtfs/sql/nl2sql-chat/feedback:
+    post:
+      tags:
+        - AI
+      summary: Thumbs up/down on an assistant chat turn (quota-free telemetry).
+      description: Appends a feedback record (turnId + rating "up"|"down") to the chat usage log and
+        records a `chat.feedback` event. Session-gated; never consumes free-trial or AI quota.
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /gtfs/config/features:
+    get:
+      tags:
+        - Config
+      summary: Public feature flags (NL2SQL / chat availability) consumed at frontend boot.
+      security: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+  /gtfs/edit/enter:
+    post:
+      tags:
+        - Edit Session
+      summary: Enter edit mode for the session (beta-gated).
+      security:
+        - SessionId: []
+          BetaCode: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/EditModeRequired"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /gtfs/edit/exit:
+    post:
+      tags:
+        - Edit Session
+      summary: Exit edit mode.
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /gtfs/edit/status:
+    get:
+      tags:
+        - Edit Session
+      summary: Edit-mode status with table counts and pending/undone edit counters.
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /gtfs/edit/stops/{stop_id}:
+    patch:
+      tags:
+        - Edit
+      summary: Update a stops record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: stop_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        $ref: "#/components/requestBodies/EntityPatch"
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    delete:
+      tags:
+        - Edit
+      summary: Delete a stops record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: stop_id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/stops:
+    post:
+      tags:
+        - Edit
+      summary: Create a stops record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      requestBody:
+        $ref: "#/components/requestBodies/EntityCreate"
+      security:
+        - SessionId: []
+      responses:
+        "201":
+          $ref: "#/components/responses/EditCreated"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/routes:
+    post:
+      tags:
+        - Edit
+      summary: Create a routes record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      requestBody:
+        $ref: "#/components/requestBodies/EntityCreate"
+      security:
+        - SessionId: []
+      responses:
+        "201":
+          $ref: "#/components/responses/EditCreated"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/routes/{route_id}:
+    patch:
+      tags:
+        - Edit
+      summary: Update a routes record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: route_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        $ref: "#/components/requestBodies/EntityPatch"
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    delete:
+      tags:
+        - Edit
+      summary: Delete a routes record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: route_id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/trips/{trip_id}:
+    patch:
+      tags:
+        - Edit
+      summary: Update a trips record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: trip_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        $ref: "#/components/requestBodies/EntityPatch"
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    delete:
+      tags:
+        - Edit
+      summary: Delete a trips record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: trip_id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/trips:
+    post:
+      tags:
+        - Edit
+      summary: Create a trips record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      requestBody:
+        $ref: "#/components/requestBodies/EntityCreate"
+      security:
+        - SessionId: []
+      responses:
+        "201":
+          $ref: "#/components/responses/EditCreated"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/calendar:
+    post:
+      tags:
+        - Edit
+      summary: Create a calendar record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      requestBody:
+        $ref: "#/components/requestBodies/EntityCreate"
+      security:
+        - SessionId: []
+      responses:
+        "201":
+          $ref: "#/components/responses/EditCreated"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/calendar/{service_id}:
+    patch:
+      tags:
+        - Edit
+      summary: Update a calendar record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: service_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        $ref: "#/components/requestBodies/EntityPatch"
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    delete:
+      tags:
+        - Edit
+      summary: Delete a calendar record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: service_id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/stop_times/{trip_id}/{stop_sequence}:
+    patch:
+      tags:
+        - Edit
+      summary: Update a stop_times record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: trip_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: stop_sequence
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Position of the stop within the trip (stop_times.stop_sequence).
+      requestBody:
+        $ref: "#/components/requestBodies/EntityPatch"
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    delete:
+      tags:
+        - Edit
+      summary: Delete a stop_times record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: trip_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: stop_sequence
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Position of the stop within the trip (stop_times.stop_sequence).
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/stop_times:
+    post:
+      tags:
+        - Edit
+      summary: Create a stop_times record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      requestBody:
+        $ref: "#/components/requestBodies/EntityCreate"
+      security:
+        - SessionId: []
+      responses:
+        "201":
+          $ref: "#/components/responses/EditCreated"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/stop_times/insert:
+    post:
+      tags:
+        - Edit
+      summary: Insert a stop_time at a position and renumber the trip sequence.
+      requestBody:
+        $ref: "#/components/requestBodies/EntityCreate"
+      security:
+        - SessionId: []
+      responses:
+        "201":
+          $ref: "#/components/responses/EditCreated"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/calendar_dates:
+    post:
+      tags:
+        - Edit
+      summary: Create a calendar_dates record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      requestBody:
+        $ref: "#/components/requestBodies/EntityCreate"
+      security:
+        - SessionId: []
+      responses:
+        "201":
+          $ref: "#/components/responses/EditCreated"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/calendar_dates/{service_id}/{date}:
+    patch:
+      tags:
+        - Edit
+      summary: Update a calendar_dates record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: service_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: date
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Service date in YYYYMMDD format.
+      requestBody:
+        $ref: "#/components/requestBodies/EntityPatch"
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    delete:
+      tags:
+        - Edit
+      summary: Delete a calendar_dates record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: service_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: date
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Service date in YYYYMMDD format.
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/frequencies/{trip_id}:
+    get:
+      tags:
+        - Edit
+      summary: List frequencies records of a trip.
+      parameters:
+        - name: trip_id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    patch:
+      tags:
+        - Edit
+      summary: Update a frequencies record (start_time is sent in the body, not the URL).
+      description: "`start_time` contains `:` characters so it cannot be a URL segment — the target row is
+        selected by `trip_id` (path) + `start_time` (body)."
+      parameters:
+        - name: trip_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        $ref: "#/components/requestBodies/EntityPatch"
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    delete:
+      tags:
+        - Edit
+      summary: Delete a frequencies record (start_time is sent in the body, not the URL).
+      description: "`start_time` contains `:` characters so it cannot be a URL segment — the target row is
+        selected by `trip_id` (path) + `start_time` (body)."
+      parameters:
+        - name: trip_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - start_time
+              properties:
+                start_time:
+                  type: string
+                  example: 06:00:00
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/frequencies:
+    post:
+      tags:
+        - Edit
+      summary: Create a frequencies record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      requestBody:
+        $ref: "#/components/requestBodies/EntityCreate"
+      security:
+        - SessionId: []
+      responses:
+        "201":
+          $ref: "#/components/responses/EditCreated"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/agencies:
+    post:
+      tags:
+        - Edit
+      summary: Create a agencies record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      requestBody:
+        $ref: "#/components/requestBodies/EntityCreate"
+      security:
+        - SessionId: []
+      responses:
+        "201":
+          $ref: "#/components/responses/EditCreated"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/agencies/{agency_id}:
+    patch:
+      tags:
+        - Edit
+      summary: Update a agencies record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: agency_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        $ref: "#/components/requestBodies/EntityPatch"
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    delete:
+      tags:
+        - Edit
+      summary: Delete a agencies record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: agency_id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/transfers:
+    get:
+      tags:
+        - Edit
+      summary: List transfers records.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    post:
+      tags:
+        - Edit
+      summary: Create a transfers record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      requestBody:
+        $ref: "#/components/requestBodies/EntityCreate"
+      security:
+        - SessionId: []
+      responses:
+        "201":
+          $ref: "#/components/responses/EditCreated"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/transfers/{id}:
+    patch:
+      tags:
+        - Edit
+      summary: Update a transfers record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        $ref: "#/components/requestBodies/EntityPatch"
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    delete:
+      tags:
+        - Edit
+      summary: Delete a transfers record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/shapes/{shape_id}:
+    get:
+      tags:
+        - Edit
+      summary: Get the ordered point list of a shape.
+      parameters:
+        - name: shape_id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    put:
+      tags:
+        - Edit
+      summary: Replace the full point list of a shape.
+      parameters:
+        - name: shape_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        $ref: "#/components/requestBodies/EntityCreate"
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    delete:
+      tags:
+        - Edit
+      summary: Delete a shape.
+      parameters:
+        - name: shape_id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/shapes:
+    post:
+      tags:
+        - Edit
+      summary: Create a shape from a point list.
+      requestBody:
+        $ref: "#/components/requestBodies/EntityCreate"
+      security:
+        - SessionId: []
+      responses:
+        "201":
+          $ref: "#/components/responses/EditCreated"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/shapes/{shape_id}/fork:
+    post:
+      tags:
+        - Edit
+      summary: Fork a shape into a new shape_id (copy-on-write for shared geometries).
+      parameters:
+        - name: shape_id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - SessionId: []
+      responses:
+        "201":
+          $ref: "#/components/responses/EditCreated"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/shapes/{shape_id}/validate:
+    get:
+      tags:
+        - Edit
+      summary: Check the shape geometry against the stops of the trips that use it.
+      parameters:
+        - name: shape_id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/history:
+    get:
+      tags:
+        - History
+      summary: Last 200 edit-log entries (most recent first).
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/HistoryOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/undo:
+    post:
+      tags:
+        - History
+      summary: Undo the most recent edit (SAVEPOINT replay of stored undo ops).
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/redo:
+    post:
+      tags:
+        - History
+      summary: Redo the most recently undone edit.
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/jump:
+    post:
+      tags:
+        - History
+      summary: Jump to an arbitrary point of the edit history (batch undo/redo).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                targetId:
+                  type: integer
+                  description: Edit-log id to land on (0 = before the first edit).
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/preview/route/{route_id}:
+    get:
+      tags:
+        - Edit
+      summary: Preview the cascade of deleting a route (trips, stop_times, shapes…).
+      parameters:
+        - name: route_id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/edit/preview/stop/{stop_id}:
+    get:
+      tags:
+        - Edit
+      summary: Preview the cascade of deleting a stop.
+      parameters:
+        - name: stop_id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/edit/preview/trip/{trip_id}:
+    get:
+      tags:
+        - Edit
+      summary: Preview the cascade of deleting a trip.
+      parameters:
+        - name: trip_id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/edit/preview/service/{service_id}:
+    get:
+      tags:
+        - Edit
+      summary: Preview the cascade of deleting a service (calendar entry).
+      parameters:
+        - name: service_id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/edit/validate:
+    post:
+      tags:
+        - Validation
+      summary: Re-run canonical validation on the session feed (rate-limited 5/min/session).
+      parameters:
+        - name: profile
+          in: query
+          required: false
+          schema:
+            type: string
+            default: canonical
+          description: "Severity profile: canonical | strict | lenient | fr-datagouv…"
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/ValidationOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /gtfs/edit/validate.canonical:
+    post:
+      tags:
+        - Validation
+      summary: Re-validate and return the raw MobilityData Canonical Validator JSON shape.
+      parameters:
+        - name: profile
+          in: query
+          required: false
+          schema:
+            type: string
+            default: canonical
+          description: "Severity profile: canonical | strict | lenient | fr-datagouv…"
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/edit/validate/profiles:
+    get:
+      tags:
+        - Validation
+      summary: List the available validation severity profiles.
+      security: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+  /gtfs/edit/validate/locales:
+    get:
+      tags:
+        - Validation
+      summary: List the available locales for validator messages.
+      security: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+  /gtfs/edit/validate/catalogue:
+    get:
+      tags:
+        - Validation
+      summary: Full validation rule catalogue (rules.json, static).
+      security: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+  /gtfs/edit/validate/rules:
+    get:
+      tags:
+        - Validation
+      summary: Human-readable validation rules documentation (HTML, mtime-cached).
+      security: []
+      responses:
+        "200":
+          $ref: "#/components/responses/HtmlOk"
+  /gtfs/edit/quickfix:
+    get:
+      tags:
+        - Quick Fixes
+      summary: List auto-repairable validation rules with proposal counts.
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/quickfix/preview:
+    post:
+      tags:
+        - Quick Fixes
+      summary: Preview the rows a quick fix would modify.
+      requestBody:
+        $ref: "#/components/requestBodies/QuickFixRequest"
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/quickfix/apply:
+    post:
+      tags:
+        - Quick Fixes
+      summary: Apply a quick fix as a single undoable edit.
+      requestBody:
+        $ref: "#/components/requestBodies/QuickFixRequest"
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/feed_info:
+    get:
+      tags:
+        - Edit
+      summary: Get the feed_info singleton record.
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    put:
+      tags:
+        - Edit
+      summary: Create or replace the feed_info singleton record.
+      requestBody:
+        $ref: "#/components/requestBodies/EntityCreate"
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    delete:
+      tags:
+        - Edit
+      summary: Delete the feed_info record.
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/sql:
+    post:
+      tags:
+        - SQL
+      summary: Run SQL with mutations allowed (edit mode required, whitelisted verbs only).
+      requestBody:
+        $ref: "#/components/requestBodies/SqlQuery"
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/SqlOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/EditModeRequired"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /gtfs/edit/sql/preview:
+    post:
+      tags:
+        - SQL
+      summary: Dry-run a mutating SQL statement and report the rows it would affect.
+      requestBody:
+        $ref: "#/components/requestBodies/SqlQuery"
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /gtfs/edit/sql/schema:
+    get:
+      tags:
+        - SQL
+      summary: SQLite schema introspection (edit-mode alias of /gtfs/sql/schema).
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/edit/levels:
+    get:
+      tags:
+        - Edit
+      summary: List levels records.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    post:
+      tags:
+        - Edit
+      summary: Create a levels record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      requestBody:
+        $ref: "#/components/requestBodies/EntityCreate"
+      security:
+        - SessionId: []
+      responses:
+        "201":
+          $ref: "#/components/responses/EditCreated"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/levels/{level_id}:
+    patch:
+      tags:
+        - Edit
+      summary: Update a levels record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: level_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        $ref: "#/components/requestBodies/EntityPatch"
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    delete:
+      tags:
+        - Edit
+      summary: Delete a levels record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: level_id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/pathways:
+    get:
+      tags:
+        - Edit
+      summary: List pathways records.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    post:
+      tags:
+        - Edit
+      summary: Create a pathways record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      requestBody:
+        $ref: "#/components/requestBodies/EntityCreate"
+      security:
+        - SessionId: []
+      responses:
+        "201":
+          $ref: "#/components/responses/EditCreated"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/pathways/{pathway_id}:
+    patch:
+      tags:
+        - Edit
+      summary: Update a pathways record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: pathway_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        $ref: "#/components/requestBodies/EntityPatch"
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    delete:
+      tags:
+        - Edit
+      summary: Delete a pathways record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: pathway_id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/translations/config:
+    get:
+      tags:
+        - Edit
+      summary: Configuration of translatable tables and fields.
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/translations:
+    get:
+      tags:
+        - Edit
+      summary: List translations records.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    post:
+      tags:
+        - Edit
+      summary: Create a translations record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      requestBody:
+        $ref: "#/components/requestBodies/EntityCreate"
+      security:
+        - SessionId: []
+      responses:
+        "201":
+          $ref: "#/components/responses/EditCreated"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/translations/{id}:
+    patch:
+      tags:
+        - Edit
+      summary: Update a translations record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        $ref: "#/components/requestBodies/EntityPatch"
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    delete:
+      tags:
+        - Edit
+      summary: Delete a translations record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/attributions:
+    get:
+      tags:
+        - Edit
+      summary: List attributions records.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    post:
+      tags:
+        - Edit
+      summary: Create a attributions record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      requestBody:
+        $ref: "#/components/requestBodies/EntityCreate"
+      security:
+        - SessionId: []
+      responses:
+        "201":
+          $ref: "#/components/responses/EditCreated"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/attributions/{rowid}:
+    patch:
+      tags:
+        - Edit
+      summary: Update a attributions record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: rowid
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: SQLite rowid of the record (surrogate key for tables without a natural single-column PK).
+      requestBody:
+        $ref: "#/components/requestBodies/EntityPatch"
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    delete:
+      tags:
+        - Edit
+      summary: Delete a attributions record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: rowid
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: SQLite rowid of the record (surrogate key for tables without a natural single-column PK).
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/fare_attributes:
+    get:
+      tags:
+        - Edit
+      summary: List fare_attributes records.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    post:
+      tags:
+        - Edit
+      summary: Create a fare_attributes record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      requestBody:
+        $ref: "#/components/requestBodies/EntityCreate"
+      security:
+        - SessionId: []
+      responses:
+        "201":
+          $ref: "#/components/responses/EditCreated"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/fare_attributes/{fare_id}:
+    patch:
+      tags:
+        - Edit
+      summary: Update a fare_attributes record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: fare_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        $ref: "#/components/requestBodies/EntityPatch"
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    delete:
+      tags:
+        - Edit
+      summary: Delete a fare_attributes record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: fare_id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/fare_rules:
+    get:
+      tags:
+        - Edit
+      summary: List fare_rules records.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    post:
+      tags:
+        - Edit
+      summary: Create a fare_rules record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      requestBody:
+        $ref: "#/components/requestBodies/EntityCreate"
+      security:
+        - SessionId: []
+      responses:
+        "201":
+          $ref: "#/components/responses/EditCreated"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/fare_rules/{rowid}:
+    patch:
+      tags:
+        - Edit
+      summary: Update a fare_rules record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: rowid
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: SQLite rowid of the record (surrogate key for tables without a natural single-column PK).
+      requestBody:
+        $ref: "#/components/requestBodies/EntityPatch"
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    delete:
+      tags:
+        - Edit
+      summary: Delete a fare_rules record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: rowid
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: SQLite rowid of the record (surrogate key for tables without a natural single-column PK).
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/areas:
+    get:
+      tags:
+        - Edit
+      summary: List areas records.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    post:
+      tags:
+        - Edit
+      summary: Create a areas record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      requestBody:
+        $ref: "#/components/requestBodies/EntityCreate"
+      security:
+        - SessionId: []
+      responses:
+        "201":
+          $ref: "#/components/responses/EditCreated"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/areas/{area_id}:
+    patch:
+      tags:
+        - Edit
+      summary: Update a areas record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: area_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        $ref: "#/components/requestBodies/EntityPatch"
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    delete:
+      tags:
+        - Edit
+      summary: Delete a areas record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: area_id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/stop_areas:
+    get:
+      tags:
+        - Edit
+      summary: List stop_areas records.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    post:
+      tags:
+        - Edit
+      summary: Create a stop_areas record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      requestBody:
+        $ref: "#/components/requestBodies/EntityCreate"
+      security:
+        - SessionId: []
+      responses:
+        "201":
+          $ref: "#/components/responses/EditCreated"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/stop_areas/{rowid}:
+    patch:
+      tags:
+        - Edit
+      summary: Update a stop_areas record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: rowid
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: SQLite rowid of the record (surrogate key for tables without a natural single-column PK).
+      requestBody:
+        $ref: "#/components/requestBodies/EntityPatch"
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    delete:
+      tags:
+        - Edit
+      summary: Delete a stop_areas record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: rowid
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: SQLite rowid of the record (surrogate key for tables without a natural single-column PK).
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/networks:
+    get:
+      tags:
+        - Edit
+      summary: List networks records.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    post:
+      tags:
+        - Edit
+      summary: Create a networks record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      requestBody:
+        $ref: "#/components/requestBodies/EntityCreate"
+      security:
+        - SessionId: []
+      responses:
+        "201":
+          $ref: "#/components/responses/EditCreated"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/networks/{network_id}:
+    patch:
+      tags:
+        - Edit
+      summary: Update a networks record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: network_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        $ref: "#/components/requestBodies/EntityPatch"
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    delete:
+      tags:
+        - Edit
+      summary: Delete a networks record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: network_id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/route_networks:
+    get:
+      tags:
+        - Edit
+      summary: List route_networks records.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    post:
+      tags:
+        - Edit
+      summary: Create a route_networks record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      requestBody:
+        $ref: "#/components/requestBodies/EntityCreate"
+      security:
+        - SessionId: []
+      responses:
+        "201":
+          $ref: "#/components/responses/EditCreated"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/route_networks/{rowid}:
+    patch:
+      tags:
+        - Edit
+      summary: Update a route_networks record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: rowid
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: SQLite rowid of the record (surrogate key for tables without a natural single-column PK).
+      requestBody:
+        $ref: "#/components/requestBodies/EntityPatch"
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    delete:
+      tags:
+        - Edit
+      summary: Delete a route_networks record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: rowid
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: SQLite rowid of the record (surrogate key for tables without a natural single-column PK).
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/fare_media:
+    get:
+      tags:
+        - Edit
+      summary: List fare_media records.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    post:
+      tags:
+        - Edit
+      summary: Create a fare_media record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      requestBody:
+        $ref: "#/components/requestBodies/EntityCreate"
+      security:
+        - SessionId: []
+      responses:
+        "201":
+          $ref: "#/components/responses/EditCreated"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/fare_media/{fare_media_id}:
+    patch:
+      tags:
+        - Edit
+      summary: Update a fare_media record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: fare_media_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        $ref: "#/components/requestBodies/EntityPatch"
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    delete:
+      tags:
+        - Edit
+      summary: Delete a fare_media record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: fare_media_id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/rider_categories:
+    get:
+      tags:
+        - Edit
+      summary: List rider_categories records.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    post:
+      tags:
+        - Edit
+      summary: Create a rider_categories record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      requestBody:
+        $ref: "#/components/requestBodies/EntityCreate"
+      security:
+        - SessionId: []
+      responses:
+        "201":
+          $ref: "#/components/responses/EditCreated"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/rider_categories/{rider_category_id}:
+    patch:
+      tags:
+        - Edit
+      summary: Update a rider_categories record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: rider_category_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        $ref: "#/components/requestBodies/EntityPatch"
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    delete:
+      tags:
+        - Edit
+      summary: Delete a rider_categories record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: rider_category_id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/timeframes:
+    get:
+      tags:
+        - Edit
+      summary: List timeframes records.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    post:
+      tags:
+        - Edit
+      summary: Create a timeframes record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      requestBody:
+        $ref: "#/components/requestBodies/EntityCreate"
+      security:
+        - SessionId: []
+      responses:
+        "201":
+          $ref: "#/components/responses/EditCreated"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/timeframes/{rowid}:
+    patch:
+      tags:
+        - Edit
+      summary: Update a timeframes record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: rowid
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: SQLite rowid of the record (surrogate key for tables without a natural single-column PK).
+      requestBody:
+        $ref: "#/components/requestBodies/EntityPatch"
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    delete:
+      tags:
+        - Edit
+      summary: Delete a timeframes record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: rowid
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: SQLite rowid of the record (surrogate key for tables without a natural single-column PK).
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/fare_products:
+    get:
+      tags:
+        - Edit
+      summary: List fare_products records.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    post:
+      tags:
+        - Edit
+      summary: Create a fare_products record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      requestBody:
+        $ref: "#/components/requestBodies/EntityCreate"
+      security:
+        - SessionId: []
+      responses:
+        "201":
+          $ref: "#/components/responses/EditCreated"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/fare_products/{rowid}:
+    patch:
+      tags:
+        - Edit
+      summary: Update a fare_products record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: rowid
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: SQLite rowid of the record (surrogate key for tables without a natural single-column PK).
+      requestBody:
+        $ref: "#/components/requestBodies/EntityPatch"
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    delete:
+      tags:
+        - Edit
+      summary: Delete a fare_products record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: rowid
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: SQLite rowid of the record (surrogate key for tables without a natural single-column PK).
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/fare_leg_rules:
+    get:
+      tags:
+        - Edit
+      summary: List fare_leg_rules records.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    post:
+      tags:
+        - Edit
+      summary: Create a fare_leg_rules record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      requestBody:
+        $ref: "#/components/requestBodies/EntityCreate"
+      security:
+        - SessionId: []
+      responses:
+        "201":
+          $ref: "#/components/responses/EditCreated"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/fare_leg_rules/{rowid}:
+    patch:
+      tags:
+        - Edit
+      summary: Update a fare_leg_rules record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: rowid
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: SQLite rowid of the record (surrogate key for tables without a natural single-column PK).
+      requestBody:
+        $ref: "#/components/requestBodies/EntityPatch"
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    delete:
+      tags:
+        - Edit
+      summary: Delete a fare_leg_rules record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: rowid
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: SQLite rowid of the record (surrogate key for tables without a natural single-column PK).
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/fare_leg_join_rules:
+    get:
+      tags:
+        - Edit
+      summary: List fare_leg_join_rules records.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    post:
+      tags:
+        - Edit
+      summary: Create a fare_leg_join_rules record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      requestBody:
+        $ref: "#/components/requestBodies/EntityCreate"
+      security:
+        - SessionId: []
+      responses:
+        "201":
+          $ref: "#/components/responses/EditCreated"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/fare_leg_join_rules/{rowid}:
+    patch:
+      tags:
+        - Edit
+      summary: Update a fare_leg_join_rules record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: rowid
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: SQLite rowid of the record (surrogate key for tables without a natural single-column PK).
+      requestBody:
+        $ref: "#/components/requestBodies/EntityPatch"
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    delete:
+      tags:
+        - Edit
+      summary: Delete a fare_leg_join_rules record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: rowid
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: SQLite rowid of the record (surrogate key for tables without a natural single-column PK).
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/fare_transfer_rules:
+    get:
+      tags:
+        - Edit
+      summary: List fare_transfer_rules records.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    post:
+      tags:
+        - Edit
+      summary: Create a fare_transfer_rules record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      requestBody:
+        $ref: "#/components/requestBodies/EntityCreate"
+      security:
+        - SessionId: []
+      responses:
+        "201":
+          $ref: "#/components/responses/EditCreated"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/fare_transfer_rules/{rowid}:
+    patch:
+      tags:
+        - Edit
+      summary: Update a fare_transfer_rules record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: rowid
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: SQLite rowid of the record (surrogate key for tables without a natural single-column PK).
+      requestBody:
+        $ref: "#/components/requestBodies/EntityPatch"
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    delete:
+      tags:
+        - Edit
+      summary: Delete a fare_transfer_rules record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: rowid
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: SQLite rowid of the record (surrogate key for tables without a natural single-column PK).
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/booking_rules:
+    get:
+      tags:
+        - Edit
+      summary: List booking_rules records.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    post:
+      tags:
+        - Edit
+      summary: Create a booking_rules record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      requestBody:
+        $ref: "#/components/requestBodies/EntityCreate"
+      security:
+        - SessionId: []
+      responses:
+        "201":
+          $ref: "#/components/responses/EditCreated"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/booking_rules/{booking_rule_id}:
+    patch:
+      tags:
+        - Edit
+      summary: Update a booking_rules record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: booking_rule_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        $ref: "#/components/requestBodies/EntityPatch"
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    delete:
+      tags:
+        - Edit
+      summary: Delete a booking_rules record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: booking_rule_id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/locations_geojson:
+    get:
+      tags:
+        - Edit
+      summary: List locations_geojson records.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    post:
+      tags:
+        - Edit
+      summary: Create a locations_geojson record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      requestBody:
+        $ref: "#/components/requestBodies/EntityCreate"
+      security:
+        - SessionId: []
+      responses:
+        "201":
+          $ref: "#/components/responses/EditCreated"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/locations_geojson/{feature_id}:
+    patch:
+      tags:
+        - Edit
+      summary: Update a locations_geojson record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: feature_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        $ref: "#/components/requestBodies/EntityPatch"
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    delete:
+      tags:
+        - Edit
+      summary: Delete a locations_geojson record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: feature_id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/location_groups:
+    get:
+      tags:
+        - Edit
+      summary: List location_groups records.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    post:
+      tags:
+        - Edit
+      summary: Create a location_groups record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      requestBody:
+        $ref: "#/components/requestBodies/EntityCreate"
+      security:
+        - SessionId: []
+      responses:
+        "201":
+          $ref: "#/components/responses/EditCreated"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/location_groups/{location_group_id}:
+    patch:
+      tags:
+        - Edit
+      summary: Update a location_groups record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: location_group_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        $ref: "#/components/requestBodies/EntityPatch"
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    delete:
+      tags:
+        - Edit
+      summary: Delete a location_groups record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: location_group_id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/location_group_stops:
+    get:
+      tags:
+        - Edit
+      summary: List location_group_stops records.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+    post:
+      tags:
+        - Edit
+      summary: Create a location_group_stops record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      requestBody:
+        $ref: "#/components/requestBodies/EntityCreate"
+      security:
+        - SessionId: []
+      responses:
+        "201":
+          $ref: "#/components/responses/EditCreated"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/location_group_stops/{location_group_id}/{stop_id}:
+    delete:
+      tags:
+        - Edit
+      summary: Delete a location_group_stops record.
+      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+        pattern** section of the API description.
+      parameters:
+        - name: location_group_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: stop_id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/EditOk"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/export:
+    get:
+      tags:
+        - Export
+      summary: Export the session feed as a GTFS ZIP (re-validated at export time).
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/ZipOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/EditModeRequired"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/edit/export/netex:
+    get:
+      tags:
+        - Export
+      summary: >-
+        Export the session feed as NeTEx France (converted by the embedded
+        gtfs2netexfr binary). Same pre-export validation gate as the GTFS
+        export, without the admin force bypass. 503 when the converter is
+        not installed on the server.
+      security:
+        - SessionId: []
+      parameters:
+        - name: participant
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: "^[A-Za-z0-9_.\\-]{1,64}$"
+          description: >-
+            Export instigator written into the NeTEx headers
+            (default GTFS-Express).
+      responses:
+        "200":
+          $ref: "#/components/responses/ZipOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+        "422":
+          description: Export blocked — the feed still has ERROR-severity canonical findings.
+            The body carries the severity summary and the full validation report.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          $ref: "#/components/responses/SessionSaturated"
+  /gtfs/edit/project/export:
+    get:
+      tags:
+        - Project
+      summary: Download the session as a self-contained .gtfsproj SQLite snapshot.
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/SqliteOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/edit/project/import:
+    post:
+      tags:
+        - Project
+      summary: "Open a .gtfsproj file: upload, validation, then atomic session swap (beta-gated)."
+      requestBody:
+        $ref: "#/components/requestBodies/GtfsProjUpload"
+      security:
+        - SessionId: []
+          BetaCode: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/EditModeRequired"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/SessionSaturated"
+  /gtfs/edit/project/meta:
+    get:
+      tags:
+        - Project
+      summary: Metadata of the current project (updated_at, source_feed_name…).
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+components:
+  securitySchemes:
+    SessionId:
+      type: apiKey
+      in: header
+      name: X-Session-ID
+      description: UUIDv4 returned by POST /gtfs/upload or GET /gtfs/load-sample. Required by every
+        session-scoped route; strictly validated server-side (path-traversal guard).
+    BetaCode:
+      type: apiKey
+      in: header
+      name: X-Beta-Code
+      description: Beta access code. Required by edit-mode entry, project import and AI routes while the
+        beta gate is enabled (no-op when BETA_GATE_DISABLED=true).
+    AdminToken:
+      type: apiKey
+      in: header
+      name: X-Admin-Token
+      description: Operator token (ADMIN_TOKEN env var) for the /gtfs/admin/* dashboard endpoints.
+  responses:
+    OkJson:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+    EditOk:
+      description: Mutation applied and logged in the session edit history.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/EditResult"
+    EditCreated:
+      description: Record created and logged in the session edit history.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/EditResult"
+    UploadOk:
+      description: "Feed ingested: session created (or replaced) and validated."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/UploadResult"
+    ValidationOk:
+      description: Validation report in the normalised internal shape.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ValidationReport"
+    HistoryOk:
+      description: Edit-log entries, most recent first.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              history:
+                type: array
+                items:
+                  $ref: "#/components/schemas/HistoryEntry"
+    SqlOk:
+      description: SQL result set (rows are capped server-side; `truncated` flags the cut).
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              columns:
+                type: array
+                items:
+                  type: string
+              rows:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+              rowCount:
+                type: integer
+              truncated:
+                type: boolean
+            additionalProperties: true
+    CsvOk:
+      description: CSV stream.
+      content:
+        text/csv:
+          schema:
+            type: string
+    ZipOk:
+      description: GTFS ZIP archive.
+      content:
+        application/zip:
+          schema:
+            type: string
+            format: binary
+    SqliteOk:
+      description: Self-contained SQLite project file (.gtfsproj).
+      content:
+        application/octet-stream:
+          schema:
+            type: string
+            format: binary
+    SseOk:
+      description: Server-Sent Events stream (token, sql_blocked, done… events).
+      content:
+        text/event-stream:
+          schema:
+            type: string
+    HtmlOk:
+      description: Human-readable HTML page.
+      content:
+        text/html:
+          schema:
+            type: string
+    BadRequest:
+      description: "Invalid input: missing/invalid X-Session-ID, validation failure, or malformed body."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: Invalid admin token.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    EditModeRequired:
+      description: Rejected by an access guard. Returned as 403 when the beta gate denies the X-Beta-Code
+        or a mutation is attempted on the read-only SQL surface; edit handlers reject sessions that
+        are not in edit mode with 409 and code SESSION_NOT_IN_EDIT_MODE.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: Session, feed or record not found.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    RateLimited:
+      description: Rate limit exceeded (global, upload, SQL, revalidation or beta-gate limiter).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    SessionSaturated:
+      description: "Service unavailable: concurrent-session cap reached, the validation engine is
+        unavailable, or the requested server-side feature is disabled (NL2SQL kill-switch, admin
+        token unset)."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+  requestBodies:
+    EntityCreate:
+      description: JSON map of GTFS column names to values for the new record (spec field names, e.g.
+        stop_id, stop_name, stop_lat…). Unknown columns are rejected by the server-side whitelist.
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+    EntityPatch:
+      description: Partial JSON map of GTFS column names to values. Only whitelisted editable columns are
+        applied; primary-key mutation is forbidden.
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+    SqlQuery:
+      description: SQL statement to execute against the session database.
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - sql
+            properties:
+              sql:
+                type: string
+                example: SELECT route_id, route_long_name FROM routes LIMIT 50
+            additionalProperties: true
+    NlPrompt:
+      description: Natural-language request to translate into SQL.
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - prompt
+            properties:
+              prompt:
+                type: string
+                example: List the 10 stops with the most departures
+            additionalProperties: true
+    ChatTurn:
+      description: "Chat turn: user message plus prior conversation context."
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              message:
+                type: string
+              history:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+            additionalProperties: true
+    QuickFixRequest:
+      description: "Quick-fix selector: the rule code to repair (plus optional scoping fields)."
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - rule
+            properties:
+              rule:
+                type: string
+                example: missing_stop_name
+            additionalProperties: true
+    GtfsZipUpload:
+      description: Multipart form upload with the GTFS archive under the `gtfsZip` field (max 50 MB, max
+        50 entries).
+      required: true
+      content:
+        multipart/form-data:
+          schema:
+            type: object
+            required:
+              - gtfsZip
+            properties:
+              gtfsZip:
+                type: string
+                format: binary
+    GtfsProjUpload:
+      description: Multipart form upload with the .gtfsproj SQLite snapshot.
+      required: true
+      content:
+        multipart/form-data:
+          schema:
+            type: object
+            properties:
+              project:
+                type: string
+                format: binary
+  schemas:
+    Error:
+      type: object
+      description: Standard error envelope. `message`, `code` and `details` are present on a subset of
+        endpoints.
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          description: Human-readable error (or machine code on gate endpoints).
+        message:
+          type: string
+          description: Optional human-readable detail.
+        code:
+          type: string
+          description: Optional machine-readable code (e.g. SESSION_NOT_IN_EDIT_MODE).
+        details:
+          type: array
+          items: {}
+          description: Optional structured validation violations.
+    EditResult:
+      type: object
+      description: "Envelope returned by every edit mutation. The mutated row is echoed under a key named
+        after the entity (e.g. `stop`, `route`, `trip`); updates add the `changed` column list,
+        deletes return the primary key under `deleted`. The `validation` envelope is always present
+        and currently always `skipped: true` — full canonical validation runs on demand via POST
+        /gtfs/edit/validate."
+      properties:
+        changed:
+          type: array
+          items:
+            type: string
+          description: Columns actually modified (updates only).
+        deleted:
+          type: string
+          description: Primary key of the removed record (deletes only).
+        validation:
+          type: object
+          description: Per-edit incremental validation envelope (skipped under the canonical-only engine).
+          properties:
+            items:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+            skipped:
+              type: boolean
+            reason:
+              type: string
+              example: incremental_validation_disabled_canonical_only
+            elapsedMs:
+              type: number
+            truncated:
+              type: integer
+            totalAvailable:
+              type: integer
+      additionalProperties: true
+    ValidationFinding:
+      type: object
+      description: A single validator finding, normalised from the MobilityData canonical report.
+      properties:
+        ruleCode:
+          type: string
+          description: Rule code from the rules.json catalogue.
+        severity:
+          type: string
+          enum:
+            - error
+            - warning
+            - info
+        message:
+          type: string
+      additionalProperties: true
+    ValidationReport:
+      type: object
+      description: Normalised validation report produced by the canonical-validator adapter.
+      properties:
+        valid:
+          type: boolean
+          description: True when no error-severity finding remains after profile overrides.
+        errors:
+          type: object
+          description: Findings grouped by GTFS file name (e.g. `stops.txt`).
+          additionalProperties:
+            type: array
+            items:
+              $ref: "#/components/schemas/ValidationFinding"
+        counts:
+          type: object
+          properties:
+            errors:
+              type: integer
+            warnings:
+              type: integer
+            infos:
+              type: integer
+        profile:
+          type: string
+          example: canonical
+        engine:
+          type: string
+          example: mobilitydata-canonical
+    UploadResult:
+      type: object
+      description: Response of POST /gtfs/upload and GET /gtfs/load-sample.
+      properties:
+        sessionId:
+          type: string
+          format: uuid
+          description: Session ID to send back in X-Session-ID.
+        valid:
+          type: boolean
+        validationReport:
+          $ref: "#/components/schemas/ValidationReport"
+        migration_ms:
+          type: number
+          description: CSV → SQLite migration duration.
+        editSessionDropped:
+          type: boolean
+          description: "Upload only: true when re-uploading over a session that had an open edit DB."
+        pendingEditsLost:
+          type: integer
+          description: "Upload only: count of pending edits discarded by the re-upload."
+        meta:
+          type: object
+          properties:
+            bomStripped:
+              type: array
+              items:
+                type: string
+            encodingFallbacks:
+              type: array
+              items:
+                type: string
+    HistoryEntry:
+      type: object
+      description: One row of the session `_edit_log` (undo/redo journal).
+      properties:
+        id:
+          type: integer
+        ts:
+          type: string
+          description: Timestamp of the edit.
+        entity:
+          type: string
+          example: stop
+        entity_id:
+          type: string
+        action:
+          type: string
+          example: update
+        description:
+          type: string
+        undone:
+          type: integer
+          enum:
+            - 0
+            - 1
+          description: 1 when the edit is currently undone.

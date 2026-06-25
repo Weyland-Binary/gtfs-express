@@ -1,0 +1,297 @@
+/* Importation des polices modernes */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Roboto:wght@300;400;500;700&display=swap");
+
+/* Application globale de la police */
+body,
+.p-datatable,
+.p-datatable-thead,
+.p-datatable-tbody,
+.p-datatable-tfoot,
+.p-datatable-column-title,
+.p-datatable-column-filter,
+.p-paginator {
+  font-family: "Inter", "Roboto", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  background: #f5f7fa;
+}
+
+/* Style général de la table */
+.DataTable {
+  white-space: nowrap;
+  border-radius: 0 0 12px 12px;
+  /* overflow must be visible so the nearest scroll ancestor for sticky
+     headers is .schedule-grid-container (which scrolls both axes), not
+     this element — otherwise top:0 sticky binds to the table's own box
+     and the thead scrolls away with the rows. */
+  overflow: visible;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  background: white;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-top: none;
+  transition:
+    background 0.3s ease,
+    border-color 0.3s ease;
+}
+
+/* Dark mode pour la DataTable */
+body.dark-mode .DataTable {
+  background: #1e1e1e;
+  border-color: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
+.p-datatable {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.p-datatable-thead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.p-datatable-thead > tr > th {
+  background: #1976d2 !important;
+  color: white !important;
+  font-weight: 600 !important;
+  padding: 10px 12px !important;
+  border: none !important;
+  font-size: 0.875rem;
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+}
+
+body.dark-mode .p-datatable-thead > tr > th {
+  background: #2d2d2d !important;
+}
+
+/* Style des cellules de la table */
+.p-datatable-tbody > tr > td {
+  padding: 10px 8px;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 500;
+  border: none;
+}
+
+/* Style des lignes - pas d'effet hover pour ne pas casser la timeline */
+.p-datatable-tbody > tr {
+  transition: none;
+}
+
+/* Style des horaires - simplifié sans bordure */
+.schedule-time {
+  padding: 4px 8px;
+  margin: 0;
+  min-width: 60px;
+  text-align: center;
+  font-weight: 500;
+  font-family: "Inter", sans-serif;
+  font-size: 13px;
+  color: #1e293b;
+  transition: color 0.3s ease;
+}
+
+body.dark-mode .schedule-time {
+  color: #e2e8f0;
+}
+
+/* Styles pour la timeline */
+.timeline-container {
+  display: flex;
+  align-items: center;
+  position: relative;
+}
+
+.timeline-circle {
+  width: 14px;
+  height: 14px;
+  background-color: #ffffff;
+  border: 4px solid #2d87f0;
+  border-radius: 50%;
+  margin-right: 10px;
+  margin-top: 0px;
+  z-index: 1;
+  transition: background-color 0.3s ease;
+}
+
+body.dark-mode .timeline-circle {
+  background-color: #1e1e1e;
+  border-color: #90caf9;
+}
+
+.timeline-line {
+  height: 280%;
+  width: 1px;
+  background-color: #2d87f0;
+  position: absolute;
+  left: 7px;
+  top: -50%;
+  bottom: 0;
+  transition: background-color 0.3s ease;
+}
+
+body.dark-mode .timeline-line {
+  background-color: #90caf9;
+}
+
+.p-datatable-tbody > tr:first-child .timeline-line {
+  top: 50%;
+}
+
+.p-datatable-tbody > tr:last-child .timeline-line {
+  height: 50%;
+}
+
+.DataTable tr:nth-child(even) {
+  background-color: #e6eef5;
+}
+
+.DataTable tr:nth-child(odd) {
+  background-color: #ffffff;
+}
+
+body.dark-mode .DataTable tr:nth-child(even) {
+  background-color: #2d2d2d;
+}
+
+body.dark-mode .DataTable tr:nth-child(odd) {
+  background-color: #1e1e1e;
+}
+
+.tab-content {
+  transition:
+    opacity 0.5s,
+    transform 0.5s;
+}
+
+.tab-entering,
+.tab-exiting,
+.tab-exited {
+  opacity: 0;
+  transform: translateY(-20px);
+}
+
+.tab-entered {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Make the stop name column sticky */
+.p-datatable-column.fixed-column {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: white;
+  box-shadow: 4px 0 12px rgba(0, 0, 0, 0.08);
+  transition: background 0.3s ease;
+}
+
+body.dark-mode .p-datatable-column.fixed-column {
+  background: #1e1e1e;
+  box-shadow: 4px 0 12px rgba(0, 0, 0, 0.3);
+}
+
+.p-datatable-tbody > tr:nth-child(even) .fixed-column {
+  background-color: #e6eef5;
+}
+
+body.dark-mode .p-datatable-tbody > tr:nth-child(even) .fixed-column {
+  background-color: #2d2d2d;
+}
+
+body.dark-mode .p-datatable-tbody > tr:nth-child(odd) .fixed-column {
+  background-color: #1e1e1e;
+}
+
+.schedule-cell {
+  position: relative;
+  text-align: center;
+  display: inline-block;
+}
+
+.schedule-icon {
+  position: absolute;
+  top: 5px;
+  right: -7px;
+  font-size: 13px !important;
+  color: #1976d2;
+}
+/* Style for the native calendar icon in date inputs */
+input[type="date"]::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  filter: invert(0);
+}
+
+body.dark-mode input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(1);
+}
+
+/* ---------- Map stop markers ---------- */
+/* Grab cursor on draggable stops to cue the move affordance */
+.leaflet-marker-draggable.gtfs-stop-marker {
+  cursor: grab;
+}
+.leaflet-marker-draggable.gtfs-stop-marker:active,
+.leaflet-marker-draggable.gtfs-stop-marker.leaflet-drag-target {
+  cursor: grabbing;
+}
+
+/* Newly created stop: same LocationMarker glyph as other stops + pulse ring.
+   Uses the anchor at bottom-center (iconAnchor [13, 26]); pulse is placed at
+   the foot of the pin so it rings around the geographic point. */
+.gtfs-new-stop-wrap {
+  position: relative;
+  width: 26px;
+  height: 26px;
+  pointer-events: none;
+}
+.gtfs-new-stop-pulse {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  margin-left: -7px;
+  border-radius: 50%;
+  background: rgba(76, 175, 80, 0.85);
+  box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.7);
+  animation: gtfs-new-stop-pulse 1.6s ease-out infinite;
+  z-index: 0;
+}
+.gtfs-new-stop-glyph {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+@keyframes gtfs-new-stop-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.55); }
+  70% { box-shadow: 0 0 0 18px rgba(76, 175, 80, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(76, 175, 80, 0); }
+}
+
+/* ── Validation Fix: field highlight animation ───────────────────────── */
+/* Used by EditStopDialog / EditRouteDialog / EditTripDialog when opened   */
+/* from the Fix button in RuleOccurrenceTable (highlightFields prop).      */
+/* 1.2s × 3 iterations = 3.6s total — stops pulsing to avoid distraction. */
+@keyframes gtfs-highlight-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(237, 108, 2, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(237, 108, 2, 0);
+  }
+}
+.gtfs-field-flagged .MuiOutlinedInput-notchedOutline {
+  border-color: #ed6c02 !important;
+  border-width: 2px !important;
+}
+.gtfs-field-flagged {
+  animation: gtfs-highlight-pulse 1.2s ease-out 3;
+}

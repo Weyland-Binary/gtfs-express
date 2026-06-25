@@ -1,0 +1,69 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+
+# Yarn (unused — npm only)
+yarn.lock
+yarn-debug.log*
+yarn-error.log*
+.pnp.*
+.yarn/
+
+# Environment variables
+.env
+.env.local
+.env.production
+.env.production.local
+.env*.local
+
+# Beta access codes + runtime usage logs (never commit — runtime data)
+GTFS-EXPRESS-API/beta/
+
+# Build outputs
+dist/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Internal-only — agent tooling + ops/product notes kept LOCAL, never published.
+# They live on the maintainer's machine (Claude Code reads CLAUDE.md locally)
+# but must never be committed to the public repo.
+.claude/
+CLAUDE.md
+PRODUCT_OVERVIEW.md
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Dev notes (internal roadmap — not part of the project)
+TODO.txt
+docs/
+# …but the OpenAPI contract is part of the project (served by the API,
+# coverage-tested by openapiCoverage.test.js) — re-include it explicitly.
+!GTFS-EXPRESS-API/docs/
+GTFS-EXPRESS-API/docs/*
+!GTFS-EXPRESS-API/docs/openapi.yaml
+
+# HTTP client
+requests.http
+
+# Local-only Docker Compose overrides (e.g. disabling the beta gate for local
+# testing). MUST stay out of the repo — never applies to prod (-f prod file).
+docker-compose.override.yml
+docker-compose.override.yaml

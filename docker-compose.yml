@@ -1,0 +1,98 @@
+services:
+  frontend:
+    build:
+      context: ./GTFS-EXPRESS-WEB
+      args:
+        - VITE_API_BASE_URL=/api/gtfs
+        # Corporate-proxy escape hatch: set APK_INSECURE=true in the root
+        # .env so `docker compose up --build` picks it up without manual
+        # --build-arg flags. Defaults stay secure for CI/prod.
+        - APK_INSECURE=${APK_INSECURE:-false}
+    container_name: gtfs-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://localhost/nginx-health",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./GTFS-EXPRESS-API
+      args:
+        # Same corporate-proxy escape hatches as the frontend (see above):
+        # APK packages over http, JAR download with curl -k.
+        - APK_INSECURE=${APK_INSECURE:-false}
+        - CURL_INSECURE=${CURL_INSECURE:-false}
+        # NeTEx France converter (gtfs2netexfr, built from source — adds
+        # ~10 min to the FIRST image build). Set false to skip it, e.g.
+        # behind a TLS-intercepting proxy where crates.io is unreachable.
+        - NETEX_ENABLED=${NETEX_ENABLED:-true}
+    container_name: gtfs-api
+    environment:
+      - NODE_ENV=production
+      - PORT=3004
+      # Set these in a root .env file or export them before running docker compose.
+      # The API refuses to start in production without IP_HASH_SECRET.
+      - ADMIN_TOKEN=${ADMIN_TOKEN:-dev-admin-token-change-in-production}
+      - IP_HASH_SECRET=${IP_HASH_SECRET:-dev-ip-hash-secret-change-in-production}
+      # En production, remplacer par votre domaine réel
+      # Exemple : ALLOWED_ORIGINS=https://gtfs.votre-domaine.com
+      - ALLOWED_ORIGINS=http://localhost:80
+      - RATE_LIMIT_WINDOW_MS=3600000
+      - RATE_LIMIT_MAX_REQUESTS=3000
+      - RATE_LIMIT_MAX_UPLOADS=20
+      - SESSION_CLEANUP_AGE_MS=7200000
+      - MAX_SESSIONS=50
+      # AI companion (chat + NL2SQL). Off by default: set ANTHROPIC_API_KEY
+      # in a root .env (or export it) and flip the flags to test the guided
+      # repair flow locally. BETA_GATE_DISABLED=true skips beta codes in dev.
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - NL2SQL_ENABLED=${NL2SQL_ENABLED:-false}
+      - NL2SQL_CHAT_ENABLED=${NL2SQL_CHAT_ENABLED:-false}
+      - NL2SQL_CHAT_MODEL=${NL2SQL_CHAT_MODEL:-claude-sonnet-4-6}
+      - NL2SQL_FREE_MESSAGES_PER_SESSION=${NL2SQL_FREE_MESSAGES_PER_SESSION:-5}
+      - BETA_GATE_DISABLED=${BETA_GATE_DISABLED:-false}
+      # Corporate-network escape hatches for the container -> api.anthropic.com
+      # leg (LOCAL DEV ONLY — never set these in production):
+      #   NODE_TLS_REJECT_UNAUTHORIZED=0   tolerate an SSL-intercepting proxy
+      #   HTTPS_PROXY + NODE_USE_ENV_PROXY=1  route Node's fetch through an
+      #                                        explicit corporate proxy (Node 24)
+      - NODE_TLS_REJECT_UNAUTHORIZED=${NODE_TLS_REJECT_UNAUTHORIZED:-1}
+      - NODE_USE_ENV_PROXY=${NODE_USE_ENV_PROXY:-0}
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - NO_PROXY=${NO_PROXY:-}
+    volumes:
+      - uploads_data:/app/uploads
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://localhost:3004/health",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  uploads_data:

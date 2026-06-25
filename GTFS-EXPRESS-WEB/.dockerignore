@@ -1,0 +1,17 @@
+node_modules
+npm-debug.log*
+.env
+.env.local
+.env.development
+.env.production
+.env.example
+build
+.git
+.gitignore
+README.md
+DESCRIPTION.md
+Dockerfile
+docker-compose.yml
+yarn.lock
+.pnp.*
+.yarn/

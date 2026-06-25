@@ -1,0 +1,8 @@
+{
+  "name": "default",
+  "title": "Default — rules.json severities, no overrides",
+  "description": "Pure no-op profile that surfaces every finding at the severity declared in rules.json. Used as the programmatic default for `validateGTFSFiles(dir)` calls so unit tests, CLIs and library consumers see our richer rule severities. The HTTP upload + export gates remain on the `canonical` profile (MobilityData-aligned) so a feed accepted by MobilityData also passes our gates.",
+  "promote_warning_to_error": false,
+  "promote_info_to_warning": false,
+  "overrides": {}
+}

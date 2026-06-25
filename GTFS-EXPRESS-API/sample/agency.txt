@@ -1,0 +1,2 @@
+agency_id,agency_name,agency_url,agency_timezone,agency_lang,agency_phone,agency_fare_url,agency_email
+NYCDEMO,New York City Demo Transit,https://example.com/nyc-demo-transit,America/New_York,en,+1 212-555-0100,https://example.com/nyc-demo-transit/fares,contact@example.com

@@ -1,0 +1,8 @@
+{
+  "name": "canonical",
+  "title": "MobilityData Canonical (default)",
+  "description": "Aligns severities with the MobilityData Canonical Validator. The declared default_severity values in rules.json and every emission site in the validator are now strictly aligned with MobilityData; this profile applies no overrides. The profile is kept as the named identity HTTP gates pass to validateGTFSFiles so the contract `validate(profile=\"canonical\")` remains valid and discoverable, and so future MD divergences can be re-applied here without changing call sites.",
+  "promote_warning_to_error": false,
+  "promote_info_to_warning": false,
+  "overrides": {}
+}
