@@ -38,7 +38,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Ensure CLAUDE.md facts block is in sync with source
         run: |
           chmod +x scripts/refresh-facts.sh
@@ -53,7 +53,7 @@ jobs:
       run:
         working-directory: GTFS-EXPRESS-API
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
@@ -88,7 +88,7 @@ jobs:
       GTFS_VALIDATOR_VERSION: "8.0.0"
       GTFS_CANONICAL_VALIDATOR_JAR: /opt/gtfs-validator-cli.jar
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
@@ -130,7 +130,7 @@ jobs:
       run:
         working-directory: GTFS-EXPRESS-WEB
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
@@ -180,7 +180,7 @@ jobs:
       run:
         working-directory: GTFS-EXPRESS-WEB
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
@@ -211,7 +211,7 @@ jobs:
       GTFS_VALIDATOR_VERSION: "8.0.0"
       GTFS_CANONICAL_VALIDATOR_JAR: /opt/gtfs-validator-cli.jar
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
