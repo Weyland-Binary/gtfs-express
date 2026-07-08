@@ -20,9 +20,21 @@ const { ensureDbHandle } = require("./db/connection");
  */
 const getServiceIdsForDate = (date, calendar, calendarDates) => {
   const dateInt = parseInt(date, 10);
-  const dayOfWeek = new Date(
-    `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}`,
-  ).getDay();
+  // Date.UTC + getUTCDay keeps the weekday independent of the server's
+  // timezone: new Date("YYYY-MM-DD").getDay() parses as UTC midnight but
+  // reads the weekday in local time, shifting it back one day on any
+  // UTC-negative host.
+  const year = parseInt(date.slice(0, 4), 10);
+  const month = parseInt(date.slice(4, 6), 10);
+  const day = parseInt(date.slice(6, 8), 10);
+  const utcDate = new Date(Date.UTC(year, month - 1, day));
+  // Date.UTC silently normalises out-of-range fields (20260732 → Aug 1),
+  // which would fabricate a weekday for a nonexistent date. Reject inputs
+  // that do not round-trip so they keep resolving to "no service".
+  const isRealDate =
+    utcDate.getUTCFullYear() === year &&
+    utcDate.getUTCMonth() === month - 1 &&
+    utcDate.getUTCDate() === day;
   const daysOfWeek = [
     "sunday",
     "monday",
@@ -32,7 +44,7 @@ const getServiceIdsForDate = (date, calendar, calendarDates) => {
     "friday",
     "saturday",
   ];
-  const dayOfWeekStr = daysOfWeek[dayOfWeek];
+  const dayOfWeekStr = isRealDate ? daysOfWeek[utcDate.getUTCDay()] : undefined;
 
   let serviceIds = calendar
     .filter((service) => {
