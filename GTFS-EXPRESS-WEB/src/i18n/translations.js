@@ -871,6 +871,7 @@ const translations = {
     "app.rateLimitSample":
       "You've loaded the demo too many times. Please wait a few minutes before trying again.",
     "app.errorRoutes": "Error fetching routes.",
+    "app.errorSchedule": "Error fetching schedule data.",
     "app.noService": "No service for this date.",
     "app.loadingRoute": "Loading data...",
     "app.selectPrompt":
@@ -3180,6 +3181,7 @@ const translations = {
     "app.rateLimitSample":
       "Vous avez chargé la démo trop de fois. Veuillez patienter quelques minutes avant de réessayer.",
     "app.errorRoutes": "Erreur lors de la récupération des lignes.",
+    "app.errorSchedule": "Erreur lors de la récupération des horaires.",
     "app.noService": "Aucun service pour cette date.",
     "app.loadingRoute": "Chargement des données...",
     "app.selectPrompt":
@@ -5435,6 +5437,7 @@ const translations = {
     "app.rateLimitSample":
       "Ha cargado la demo demasiadas veces. Espere unos minutos antes de intentarlo de nuevo.",
     "app.errorRoutes": "Error al obtener rutas.",
+    "app.errorSchedule": "Error al obtener horarios.",
     "app.noService": "Sin servicio para esta fecha.",
     "app.loadingRoute": "Cargando datos...",
     "app.selectPrompt":
@@ -7786,6 +7789,7 @@ const translations = {
     "app.rateLimitSample":
       "Sie haben die Demo zu oft geladen. Bitte warten Sie einige Minuten und versuchen Sie es erneut.",
     "app.errorRoutes": "Fehler beim Abrufen der Linien.",
+    "app.errorSchedule": "Fehler beim Abrufen der Fahrplandaten.",
     "app.noService": "Kein Betrieb an diesem Tag.",
     "app.loadingRoute": "Daten werden geladen...",
     "app.selectPrompt":
@@ -10149,6 +10153,7 @@ const translations = {
     "app.rateLimitSample":
       "Você carregou a demo muitas vezes. Aguarde alguns minutos antes de tentar novamente.",
     "app.errorRoutes": "Erro ao buscar rotas.",
+    "app.errorSchedule": "Erro ao buscar horários.",
     "app.noService": "Sem serviço para esta data.",
     "app.loadingRoute": "Carregando dados...",
     "app.selectPrompt":
@@ -12436,6 +12441,7 @@ const translations = {
     "app.errorAgencies": "获取机构时出错。",
     "app.rateLimitSample": "您加载演示的次数过多。请稍等几分钟后再试。",
     "app.errorRoutes": "获取线路时出错。",
+    "app.errorSchedule": "获取时刻表数据时出错。",
     "app.noService": "该日期无服务。",
     "app.loadingRoute": "正在加载数据...",
     "app.selectPrompt": "请选择机构、线路、方向和日期以查看时刻表。",
@@ -14625,6 +14631,7 @@ const translations = {
     "app.rateLimitSample":
       "لقد قمت بتحميل العرض التوضيحي مرات كثيرة. يرجى الانتظار بضع دقائق قبل المحاولة مرة أخرى.",
     "app.errorRoutes": "خطأ في جلب الخطوط.",
+    "app.errorSchedule": "خطأ في جلب بيانات الجدول الزمني.",
     "app.noService": "لا توجد خدمة في هذا التاريخ.",
     "app.loadingRoute": "جارٍ تحميل البيانات...",
     "app.selectPrompt":
@@ -16901,6 +16908,7 @@ const translations = {
     "app.rateLimitSample":
       "आपने डेमो बहुत बार लोड किया है। कृपया कुछ मिनट प्रतीक्षा करें और पुनः प्रयास करें।",
     "app.errorRoutes": "रूट प्राप्त करने में त्रुटि।",
+    "app.errorSchedule": "समय-सारणी डेटा प्राप्त करने में त्रुटि।",
     "app.noService": "इस तारीख को कोई सेवा नहीं।",
     "app.loadingRoute": "डेटा लोड हो रहा है...",
     "app.selectPrompt":

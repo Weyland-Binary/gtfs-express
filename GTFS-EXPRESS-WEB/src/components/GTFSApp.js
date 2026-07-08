@@ -53,6 +53,7 @@ import {
   setSessionId,
 } from "../utils/sessionManager";
 import { sortRoutesByPublisherOrder } from "../utils/routeSort";
+import { classifyFetchError } from "../utils/scheduleErrors";
 import { useLanguage } from "../contexts/LanguageContext";
 import { useEditMode } from "../contexts/EditModeContext";
 import { useDetailPanel } from "../contexts/DetailPanelContext";
@@ -881,42 +882,54 @@ function GTFSApp() {
       );
       if (!stopsTimesResponse.ok) {
         const errorText = await stopsTimesResponse.text();
-        throw new Error(errorText);
+        const requestError = new Error(errorText);
+        requestError.status = stopsTimesResponse.status;
+        throw requestError;
       }
       const stopsTimesData = await stopsTimesResponse.json();
       setStopsAndTimes(stopsTimesData);
 
-      const shapesResponse = await fetchWithSession(
-        `${baseUrl}/shapes/${encodeURIComponent(selectedRoute)}/${encodeURIComponent(selectedDirection)}`,
-      );
+      // Shapes only decorate the map: a shapes failure must not discard the
+      // schedule that just loaded, nor be reported as "no service".
+      try {
+        const shapesResponse = await fetchWithSession(
+          `${baseUrl}/shapes/${encodeURIComponent(selectedRoute)}/${encodeURIComponent(selectedDirection)}`,
+        );
 
-      if (!shapesResponse.ok) {
-        const errorText = await shapesResponse.text();
-        throw new Error(errorText);
+        if (!shapesResponse.ok) {
+          const errorText = await shapesResponse.text();
+          throw new Error(errorText);
+        }
+        const shapesData = await shapesResponse.json();
+        const shapesRaw = shapesData.reduce((acc, shape) => {
+          if (!acc[shape.shape_id]) acc[shape.shape_id] = [];
+          acc[shape.shape_id].push({
+            lat: parseFloat(shape.shape_pt_lat),
+            lon: parseFloat(shape.shape_pt_lon),
+            seq: parseInt(shape.shape_pt_sequence, 10),
+          });
+          return acc;
+        }, {});
+        const shapesById = {};
+        for (const [id, pts] of Object.entries(shapesRaw)) {
+          shapesById[id] = pts
+            .sort((a, b) => a.seq - b.seq)
+            .map((p) => [p.lat, p.lon]);
+        }
+        setShapes(shapesById);
+      } catch (shapesError) {
+        console.error("Error fetching shapes:", shapesError);
+        setShapes({});
       }
-      const shapesData = await shapesResponse.json();
-      const shapesRaw = shapesData.reduce((acc, shape) => {
-        if (!acc[shape.shape_id]) acc[shape.shape_id] = [];
-        acc[shape.shape_id].push({
-          lat: parseFloat(shape.shape_pt_lat),
-          lon: parseFloat(shape.shape_pt_lon),
-          seq: parseInt(shape.shape_pt_sequence, 10),
-        });
-        return acc;
-      }, {});
-      const shapesById = {};
-      for (const [id, pts] of Object.entries(shapesRaw)) {
-        shapesById[id] = pts
-          .sort((a, b) => a.seq - b.seq)
-          .map((p) => [p.lat, p.lon]);
-      }
-      setShapes(shapesById);
     } catch (error) {
       console.error("Error fetching route data:", error);
-      if (error.isRateLimit) {
+      const errorKind = classifyFetchError(error);
+      if (errorKind === "rate-limit") {
         setError(`⚠️ ${error.message}`);
-      } else {
+      } else if (errorKind === "no-service") {
         setError(t("app.noService"));
+      } else {
+        setError(t("app.errorSchedule"));
       }
       setStopsAndTimes({
         stops: [],
@@ -925,6 +938,7 @@ function GTFSApp() {
         has_normal_times: true,
         frequency_info: [],
       });
+      setShapes({});
     } finally {
       setLoading(false);
     }
