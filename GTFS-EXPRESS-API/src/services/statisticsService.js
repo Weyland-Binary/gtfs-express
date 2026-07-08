@@ -154,7 +154,9 @@ const buildStatisticsResponse = (data, stopTimesSource, sessionId) => {
   for (const day of weekDays) {
     let count = 0;
     for (const service of data.calendar) {
-      if (service[day] === "1") count += tripsByService[service.service_id] || 0;
+      // String coercion: SQLite returns INTEGER day columns as JS numbers.
+      if (String(service[day]) === "1")
+        count += tripsByService[service.service_id] || 0;
     }
     weeklyTrips[day] = count;
   }
