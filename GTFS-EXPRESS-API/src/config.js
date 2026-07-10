@@ -148,4 +148,20 @@ module.exports = {
   NL2SQL_CHAT_USAGE_PATH:
     process.env.NL2SQL_CHAT_USAGE_PATH ||
     path.resolve(__dirname, "..", "beta", "chat-usage.jsonl"),
+
+  // 📎 Chat attachments — tabular files (CSV / TSV / XLSX) uploaded alongside
+  // a chat message and imported as read-only `_chat_att_<n>` tables in the
+  // session DB, so the assistant can JOIN them against GTFS data. Every cap
+  // is a hard bound on parse CPU / DB bloat for this (unauthenticated-friendly)
+  // endpoint — see services/chatAttachmentService.js.
+  CHAT_ATTACHMENT_MAX_BYTES:
+    parseInt(process.env.CHAT_ATTACHMENT_MAX_BYTES, 10) || 5 * 1024 * 1024,
+  CHAT_ATTACHMENT_MAX_ROWS:
+    parseInt(process.env.CHAT_ATTACHMENT_MAX_ROWS, 10) || 5000,
+  CHAT_ATTACHMENT_MAX_COLS:
+    parseInt(process.env.CHAT_ATTACHMENT_MAX_COLS, 10) || 64,
+  CHAT_ATTACHMENT_MAX_TABLES:
+    parseInt(process.env.CHAT_ATTACHMENT_MAX_TABLES, 10) || 3,
+  CHAT_ATTACHMENT_MAX_CELL_CHARS:
+    parseInt(process.env.CHAT_ATTACHMENT_MAX_CELL_CHARS, 10) || 500,
 };
