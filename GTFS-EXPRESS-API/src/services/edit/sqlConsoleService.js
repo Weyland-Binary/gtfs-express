@@ -131,6 +131,16 @@ const MUTATING_VERBS = new Set(["update", "insert", "delete"]);
 // Tables that cannot be mutated through the SQL console.
 const PROTECTED_TABLES = new Set(["_edit_log", "_edit_meta", "_project_meta"]);
 
+// Chat-attachment tables (user spreadsheets imported for the AI assistant —
+// see services/chatAttachmentService.js). Dynamic names, so a prefix pattern
+// rather than a Set entry. Readable like any table (SELECT/JOIN) but never
+// mutable through user or model SQL; CREATE/DROP are already forbidden verbs.
+// Exported as the single source of truth for the name pattern.
+const CHAT_ATTACHMENT_TABLE_RE = /^_chat_att_[0-9]+$/;
+
+const isProtectedTable = (name) =>
+  PROTECTED_TABLES.has(name) || CHAT_ATTACHMENT_TABLE_RE.test(name);
+
 // Internal tables hidden from the schema endpoint.
 const INTERNAL_TABLES = new Set(["_edit_log", "_edit_meta", "_project_meta"]);
 
@@ -318,7 +328,7 @@ const classifyStatement = (stmt) => {
         message: `Could not determine target table for ${verb.toUpperCase()} statement.`,
       };
     }
-    if (PROTECTED_TABLES.has(table)) {
+    if (isProtectedTable(table)) {
       return {
         kind: "forbidden",
         verb,
@@ -1829,6 +1839,9 @@ module.exports = {
   // so error messages match what users see in the SQL Console).
   parseStatements,
   classifyStatement,
+  // Name pattern for chat-attachment tables (single source of truth, reused
+  // by chatAttachmentService for allocation/validation).
+  CHAT_ATTACHMENT_TABLE_RE,
   // Cache resync (used by undo/redo of sql_console entries)
   resyncCacheForTables,
   TABLE_TO_ENTITY,
