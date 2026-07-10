@@ -16,13 +16,17 @@ import {
   TextField,
   IconButton,
   Tooltip,
+  Chip,
   alpha,
   useTheme,
   CircularProgress,
 } from "@mui/material";
 import SendIcon from "@mui/icons-material/Send";
 import StopIcon from "@mui/icons-material/Stop";
+import AttachFileIcon from "@mui/icons-material/AttachFile";
+import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 import { useLanguage } from "../../contexts/LanguageContext";
+import { ACCEPTED_EXTENSIONS } from "../../utils/chatAttachment";
 
 const MAX_CHARS = 2000;
 const NEAR_LIMIT_THRESHOLD = 0.85;
@@ -36,10 +40,18 @@ export default function ChatInputBar({
   disabled = false,
   placeholderKey = "chat.input.placeholder",
   autoFocus = false,
+  // Tabular attachment (one at a time): metadata of the imported file, the
+  // File currently uploading (null when idle), and the two callbacks. All
+  // state lives upstream in ChatDrawer, like everything else here.
+  attachment = null,
+  attachmentUploading = null,
+  onAttachFile = null,
+  onRemoveAttachment = null,
 }) {
   const { t } = useLanguage();
   const theme = useTheme();
   const inputRef = useRef(null);
+  const attachInputRef = useRef(null);
 
   useEffect(() => {
     if (autoFocus) {
@@ -86,6 +98,34 @@ export default function ChatInputBar({
       ? theme.palette.warning.main
       : theme.palette.text.disabled;
 
+  const attachAvailable = Boolean(onAttachFile);
+  const canAttach =
+    attachAvailable &&
+    !streaming &&
+    !disabled &&
+    !attachmentUploading &&
+    !attachment;
+
+  const handleAttachPicked = (e) => {
+    const file = e.target.files && e.target.files[0];
+    // Reset so re-picking the same file after a removal fires onChange again.
+    e.target.value = "";
+    if (file && onAttachFile) onAttachFile(file);
+  };
+
+  const chipTooltip = attachment
+    ? [
+        attachment.truncated
+          ? t("chat.attach.truncatedRows", { count: attachment.rowCount })
+          : null,
+        attachment.sheetName
+          ? t("chat.attach.sheetUsed", { name: attachment.sheetName })
+          : null,
+      ]
+        .filter(Boolean)
+        .join(" — ")
+    : "";
+
   return (
     <Box
       sx={{
@@ -100,6 +140,65 @@ export default function ChatInputBar({
         gap: 0.4,
       }}
     >
+      {(attachment || attachmentUploading) && (
+        <Box sx={{ display: "flex", alignItems: "center", px: 0.25 }}>
+          <Tooltip title={chipTooltip}>
+            <Chip
+              size="small"
+              icon={
+                attachmentUploading ? (
+                  <CircularProgress size={12} thickness={5} />
+                ) : attachment?.truncated ? (
+                  <WarningAmberIcon sx={{ fontSize: 13 }} />
+                ) : (
+                  <AttachFileIcon sx={{ fontSize: 13 }} />
+                )
+              }
+              label={
+                attachmentUploading
+                  ? t("chat.attach.uploading", {
+                      filename: attachmentUploading.name || "",
+                    })
+                  : `${attachment.filename} · ${t("chat.attach.chipRows", {
+                      count: attachment.rowCount,
+                    })}`
+              }
+              onDelete={
+                attachmentUploading || !onRemoveAttachment
+                  ? undefined
+                  : onRemoveAttachment
+              }
+              aria-label={t("chat.attach.remove")}
+              data-testid="chat-attachment-chip"
+              sx={{
+                maxWidth: "100%",
+                height: 24,
+                fontSize: "0.7rem",
+                fontWeight: 600,
+                color: attachment?.truncated
+                  ? theme.palette.warning.dark
+                  : theme.palette.primary.dark,
+                bgcolor: alpha(
+                  attachment?.truncated
+                    ? theme.palette.warning.main
+                    : theme.palette.primary.main,
+                  0.10,
+                ),
+                border: `1px solid ${alpha(
+                  attachment?.truncated
+                    ? theme.palette.warning.main
+                    : theme.palette.primary.main,
+                  0.25,
+                )}`,
+                "& .MuiChip-label": {
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                },
+              }}
+            />
+          </Tooltip>
+        </Box>
+      )}
       <Box
         sx={{
           display: "flex",
@@ -107,6 +206,44 @@ export default function ChatInputBar({
           gap: 0.75,
         }}
       >
+        {attachAvailable && (
+          <>
+            <input
+              type="file"
+              accept={ACCEPTED_EXTENSIONS}
+              ref={attachInputRef}
+              style={{ display: "none" }}
+              onChange={handleAttachPicked}
+            />
+            <Tooltip title={t("chat.attach.button")}>
+              <Box>
+                <IconButton
+                  onClick={() => attachInputRef.current?.click()}
+                  disabled={!canAttach}
+                  aria-label={t("chat.attach.button")}
+                  sx={{
+                    width: 38,
+                    height: 38,
+                    borderRadius: 2,
+                    color: canAttach
+                      ? theme.palette.text.secondary
+                      : theme.palette.text.disabled,
+                    border: `1px solid ${alpha(theme.palette.text.primary, 0.12)}`,
+                    "&:hover": canAttach
+                      ? {
+                          color: theme.palette.primary.main,
+                          borderColor: alpha(theme.palette.primary.main, 0.45),
+                          background: alpha(theme.palette.primary.main, 0.06),
+                        }
+                      : {},
+                  }}
+                >
+                  <AttachFileIcon sx={{ fontSize: 18 }} />
+                </IconButton>
+              </Box>
+            </Tooltip>
+          </>
+        )}
         <TextField
           inputRef={inputRef}
           value={value}

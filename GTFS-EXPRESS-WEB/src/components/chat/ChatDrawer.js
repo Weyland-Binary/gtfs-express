@@ -35,6 +35,8 @@ import {
   DialogContent,
   DialogActions,
   Button,
+  Snackbar,
+  Alert,
   alpha,
   useTheme,
   useMediaQuery,
@@ -48,6 +50,14 @@ import CloudOffIcon from "@mui/icons-material/CloudOff";
 import { useLanguage } from "../../contexts/LanguageContext";
 import useChatHistory, { turnsToWireMessages, newChatId } from "./useChatHistory";
 import { streamChat } from "../../utils/chatStream";
+import {
+  uploadChatAttachment,
+  deleteChatAttachment,
+  MAX_ATTACHMENT_BYTES,
+  MAX_ATTACHMENT_MB,
+  MAX_ATTACHMENT_COLS,
+  ACCEPTED_EXTENSIONS,
+} from "../../utils/chatAttachment";
 import ChatHistoryList from "./ChatHistoryList";
 import ChatInputBar from "./ChatInputBar";
 import UpsellPanel from "./UpsellPanel";
@@ -96,6 +106,12 @@ export default function ChatDrawer({
   // null for coded users) and whether the paywall replaces the input bar.
   const [freeRemaining, setFreeRemaining] = useState(null);
   const [upsell, setUpsell] = useState(false);
+  // Tabular attachment (conversation-persistent): server metadata of the
+  // imported `_chat_att_<n>` table, the File currently uploading, and a
+  // transient localized error surfaced in a snackbar.
+  const [attachment, setAttachment] = useState(null);
+  const [attachmentUploading, setAttachmentUploading] = useState(null);
+  const [attachmentError, setAttachmentError] = useState(null);
 
   // The current pending pair we re-run after a successful beta-gate retry.
   // Stored as a ref because the BetaGateDialog onSubmit closure must read
@@ -115,6 +131,10 @@ export default function ChatDrawer({
       abortRef.current = null;
       setStreaming(false);
     }
+    // Attachment tables died with the replaced session DB — clear the chip
+    // client-side only (no DELETE call: the table no longer exists).
+    setAttachment(null);
+    setAttachmentUploading(null);
     reset();
   }, [feedEpoch, reset]);
 
@@ -154,8 +174,20 @@ export default function ChatDrawer({
         userTurnId = retryOf.userTurnId;
         if (retryOf.assistantTurnId) removeTurn(retryOf.assistantTurnId);
       } else {
-        // Fresh send.
-        const userTurn = appendUser(userMessage);
+        // Fresh send. Stamp the active attachment on the user turn so the
+        // bubble shows which file the question was asked against.
+        const userTurn = appendUser(
+          userMessage,
+          attachment
+            ? {
+                attachment: {
+                  table: attachment.table,
+                  filename: attachment.filename,
+                  rowCount: attachment.rowCount,
+                },
+              }
+            : {},
+        );
         userTurnId = userTurn.id;
       }
 
@@ -186,6 +218,10 @@ export default function ChatDrawer({
           userMessage,
           language,
           sessionContext,
+          // Conversation-persistent: the active chip is re-declared on every
+          // turn (the server rebuilds the [Attached file] block from its own
+          // metadata — history never accumulates it).
+          attachments: attachment ? [{ table: attachment.table }] : [],
           conversationId,
           turnId,
           signal: abort.signal,
@@ -325,6 +361,14 @@ export default function ChatDrawer({
               code: err.code,
             },
           });
+        } else if (err.code === "ATTACHMENT_NOT_FOUND") {
+          // Stale chip (feed re-uploaded, table dropped elsewhere) — clear
+          // it and tell the user to re-attach.
+          setAttachment(null);
+          updateTurn(assistantTurnId, {
+            status: "error",
+            error: { message: t("chat.attach.error.gone"), code: err.code },
+          });
         } else if (
           err.code === "NL2SQL_CHAT_DISABLED" ||
           err.code === "HTTP_503"
@@ -360,6 +404,7 @@ export default function ChatDrawer({
       conversationId,
       language,
       sessionContext,
+      attachment,
       t,
     ],
   );
@@ -385,6 +430,63 @@ export default function ChatDrawer({
       abortRef.current.abort();
     }
   }, []);
+
+  // ── Attachment upload / removal ─────────────────────────────────────
+  const attachErrorMessage = useCallback(
+    (err) => {
+      const byCode = {
+        ATTACHMENT_TOO_LARGE: t("chat.attach.error.tooLarge", {
+          max: MAX_ATTACHMENT_MB,
+        }),
+        UNSUPPORTED_FORMAT: t("chat.attach.error.format"),
+        ATTACHMENT_EMPTY: t("chat.attach.error.empty"),
+        ATTACHMENT_TOO_MANY_COLUMNS: t("chat.attach.error.columns", {
+          max: MAX_ATTACHMENT_COLS,
+        }),
+        ATTACHMENT_LIMIT_REACHED: t("chat.attach.error.limit"),
+        ATTACHMENT_NOT_FOUND: t("chat.attach.error.gone"),
+      };
+      return byCode[err.code] || err.message || t("chat.attach.error.generic");
+    },
+    [t],
+  );
+
+  const handleAttachFile = useCallback(
+    async (file) => {
+      if (attachmentUploading || attachment) return;
+      // Instant client-side pre-checks — the server remains the authority.
+      const ext = (file.name.match(/\.[^.]+$/) || [""])[0].toLowerCase();
+      if (!ACCEPTED_EXTENSIONS.split(",").includes(ext)) {
+        setAttachmentError(t("chat.attach.error.format"));
+        return;
+      }
+      if (file.size > MAX_ATTACHMENT_BYTES) {
+        setAttachmentError(
+          t("chat.attach.error.tooLarge", { max: MAX_ATTACHMENT_MB }),
+        );
+        return;
+      }
+      setAttachmentUploading(file);
+      try {
+        const meta = await uploadChatAttachment(file);
+        setAttachment(meta);
+      } catch (err) {
+        setAttachmentError(attachErrorMessage(err));
+      } finally {
+        setAttachmentUploading(null);
+      }
+    },
+    [attachment, attachmentUploading, attachErrorMessage, t],
+  );
+
+  const handleRemoveAttachment = useCallback(() => {
+    if (!attachment) return;
+    const { table } = attachment;
+    // Optimistic: the chip disappears immediately; the DROP is fire-and-
+    // forget (the table dies with the session TTL anyway).
+    setAttachment(null);
+    deleteChatAttachment(table).catch(() => {});
+  }, [attachment]);
 
   const handleRegenerate = useCallback(
     (assistantTurnId) => {
@@ -456,10 +558,16 @@ export default function ChatDrawer({
 
   const handleResetConfirmed = useCallback(() => {
     if (abortRef.current) abortRef.current.abort();
+    // A new conversation drops the attachment too — its table is freed
+    // server-side (fire-and-forget, same rationale as manual removal).
+    if (attachment) {
+      deleteChatAttachment(attachment.table).catch(() => {});
+      setAttachment(null);
+    }
     reset();
     setDraft("");
     setConfirmReset(false);
-  }, [reset]);
+  }, [reset, attachment]);
 
   const handleBetaGateSubmit = useCallback(
     async (code) => {
@@ -684,8 +792,27 @@ export default function ChatDrawer({
             onStop={handleStop}
             streaming={streaming}
             autoFocus={open}
+            attachment={attachment}
+            attachmentUploading={attachmentUploading}
+            onAttachFile={handleAttachFile}
+            onRemoveAttachment={handleRemoveAttachment}
           />
         ))}
+      <Snackbar
+        open={Boolean(attachmentError)}
+        autoHideDuration={5000}
+        onClose={() => setAttachmentError(null)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      >
+        <Alert
+          severity="error"
+          variant="filled"
+          onClose={() => setAttachmentError(null)}
+          sx={{ fontSize: "0.8rem" }}
+        >
+          {attachmentError}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 

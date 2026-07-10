@@ -31,6 +31,7 @@ import {
 } from "@mui/material";
 import GTFSAIIcon from "./GTFSAIIcon";
 import PersonIcon from "@mui/icons-material/Person";
+import AttachFileIcon from "@mui/icons-material/AttachFile";
 import ThumbUpOutlinedIcon from "@mui/icons-material/ThumbUpOutlined";
 import ThumbDownOutlinedIcon from "@mui/icons-material/ThumbDownOutlined";
 import ThumbUpIcon from "@mui/icons-material/ThumbUp";
@@ -76,8 +77,9 @@ const StreamingCursor = () => {
   );
 };
 
-const UserBubble = ({ content }) => {
+const UserBubble = ({ content, attachment = null }) => {
   const theme = useTheme();
+  const { t } = useLanguage();
   return (
     <Box
       sx={{
@@ -120,6 +122,35 @@ const UserBubble = ({ content }) => {
           boxShadow: `0 1px 3px ${alpha(theme.palette.primary.main, 0.30)}`,
         }}
       >
+        {attachment && (
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              gap: 0.5,
+              mb: 0.6,
+              px: 0.75,
+              py: 0.35,
+              borderRadius: 1,
+              fontSize: "0.7rem",
+              fontWeight: 600,
+              background: alpha(theme.palette.primary.contrastText, 0.16),
+            }}
+          >
+            <AttachFileIcon sx={{ fontSize: 13, flexShrink: 0 }} />
+            <Box
+              component="span"
+              sx={{
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {attachment.filename} ·{" "}
+              {t("chat.attach.chipRows", { count: attachment.rowCount })}
+            </Box>
+          </Box>
+        )}
         {content}
       </Box>
     </Box>
@@ -690,7 +721,7 @@ export default function MessageBubble({
   onRepairOutcome = null,
 }) {
   if (turn.role === "user") {
-    return <UserBubble content={turn.content} />;
+    return <UserBubble content={turn.content} attachment={turn.attachment} />;
   }
   return (
     <AssistantBubble

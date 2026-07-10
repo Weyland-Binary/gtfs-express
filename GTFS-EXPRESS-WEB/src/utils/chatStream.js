@@ -40,6 +40,9 @@ import { BETA_CODE_STORAGE_KEY } from "../components/edit/BetaGateDialog";
  * @param {Object?}       opts.sessionContext — live session snapshot
  *        (validation summary, UI tab) injected server-side into the current
  *        turn so the assistant acts as a repair companion
+ * @param {Array?}        opts.attachments    — chat-attachment refs
+ *        ([{table}], ≤1) declared to the model this turn; revalidated
+ *        server-side (409 ATTACHMENT_NOT_FOUND when stale)
  * @param {string?}       opts.conversationId — opaque, echoed by server
  * @param {string?}       opts.turnId         — opaque, echoed by server
  * @param {AbortSignal?}  opts.signal         — abort to cancel the stream
@@ -51,6 +54,7 @@ export async function streamChat({
   userMessage,
   language,
   sessionContext = null,
+  attachments = [],
   conversationId = null,
   turnId = null,
   signal,
@@ -78,6 +82,7 @@ export async function streamChat({
         userMessage,
         language,
         sessionContext,
+        attachments,
         conversationId,
         turnId,
       }),

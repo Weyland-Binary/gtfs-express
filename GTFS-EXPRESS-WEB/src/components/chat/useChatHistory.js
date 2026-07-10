@@ -11,6 +11,9 @@
  *     role:         "user" | "assistant"
  *     content:      string                — for "user": the prompt; for
  *                                            "assistant": the preamble + summary
+ *     // user-only field:
+ *     attachment?:  { table, filename, rowCount } — tabular file the turn
+ *                                            was asked against (chip in bubble)
  *     // assistant-only fields:
  *     status?:      "streaming" | "complete" | "blocked" | "error" | "aborted"
  *     preamble?:    string
@@ -119,12 +122,13 @@ export default function useChatHistory() {
     persistRef.current(state);
   }, [state]);
 
-  const appendUser = useCallback((content) => {
+  const appendUser = useCallback((content, extra = {}) => {
     const turn = {
       id: newId(),
       role: "user",
       content,
       startedAt: Date.now(),
+      ...extra,
     };
     setState((prev) => ({ ...prev, turns: [...prev.turns, turn] }));
     return turn;
