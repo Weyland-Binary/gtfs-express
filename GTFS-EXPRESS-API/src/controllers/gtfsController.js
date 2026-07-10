@@ -230,6 +230,10 @@ const {
   chatAccessGate,
   recordChatFeedback,
 } = require("../services/nl2sqlChatController");
+const {
+  uploadChatAttachment,
+  deleteChatAttachment,
+} = require("../services/chatAttachmentController");
 
 module.exports = {
   // ── Lecture ────────────────────────────────────────────────────────────
@@ -429,4 +433,6 @@ module.exports = {
   generateChatTurn,
   chatAccessGate,
   recordChatFeedback,
+  uploadChatAttachment,
+  deleteChatAttachment,
 };

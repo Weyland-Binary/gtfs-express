@@ -63,6 +63,7 @@ const { Anthropic } = require("@anthropic-ai/sdk");
 const config = require("../config");
 const nl2sqlService = require("./nl2sqlService");
 const sqlConsoleService = require("./edit/sqlConsoleService");
+const chatAttachmentService = require("./chatAttachmentService");
 const aiCostLimiter = require("./aiCostLimiter");
 
 // ─── Lazy Anthropic client ────────────────────────────────────────────────
@@ -703,12 +704,16 @@ const resolveChatModel = ({ freeTier = false } = {}) =>
  * @param {(event:string, data:Object) => void} opts.emit — SSE writer
  * @param {string} [opts.conversationId] — opaque, echoed back in events
  * @param {string} [opts.turnId]      — opaque, echoed back in events
+ * @param {Array<{table:string}>} [opts.attachmentRefs] — chat-attachment
+ *        tables to declare to the model this turn (validated upstream by
+ *        chatAttachmentService.validateAttachmentRefs)
  */
 const streamChatTurn = async ({
   history,
   userMessage,
   language,
   sessionContext = null,
+  attachmentRefs = [],
   freeRemaining = null,
   freeTier = false,
   dbCtx,
@@ -790,10 +795,17 @@ const streamChatTurn = async ({
   // Companion awareness: prepend the sanitized session snapshot to the
   // CURRENT user message only. The client stores its own raw copy of the
   // user text in history, so past contexts never pile up turn after turn.
+  // The [Attached file] block follows the same discipline: rebuilt from
+  // server-persisted metadata each turn, never stored in history, never in
+  // the (cached) system prompt.
   const contextBlock = buildSessionContextBlock(sessionContext);
-  const outboundUserMessage = contextBlock
-    ? `${contextBlock}\n\n${trimmed}`
-    : trimmed;
+  const attachmentBlock = chatAttachmentService.buildAttachmentContextBlock(
+    dbCtx.db,
+    attachmentRefs,
+  );
+  const outboundUserMessage = [contextBlock, attachmentBlock, trimmed]
+    .filter(Boolean)
+    .join("\n\n");
 
   // ── PASS 1 — generate SQL ──────────────────────────────────────────────
   let pass1;

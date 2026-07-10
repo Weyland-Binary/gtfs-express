@@ -188,6 +188,8 @@ const {
   generateChatTurn,
   chatAccessGate,
   recordChatFeedback,
+  uploadChatAttachment,
+  deleteChatAttachment,
 } = require("../controllers/gtfsController");
 
 // 🛡️ Upload route with strict validation
@@ -347,6 +349,14 @@ router.post("/sql/nl2sql-chat", chatAccessGate, generateChatTurn);
 // Thumbs up/down on an assistant turn — session-gated, quota-free, append-
 // only telemetry (chat-usage.jsonl + chat.feedback event).
 router.post("/sql/nl2sql-chat/feedback", recordChatFeedback);
+
+// Tabular chat attachment (CSV/TSV/XLSX → read-only `_chat_att_<n>` table in
+// the session DB, JOINable by assistant SQL). Upload shares the chat access
+// gate (beta code or anonymous free tier) plus a dedicated per-session rate
+// limiter wired in app.js; deletion is session-gated only — removing your own
+// uploaded data must never burn chat quota.
+router.post("/sql/nl2sql-chat/attachment", chatAccessGate, uploadChatAttachment);
+router.delete("/sql/nl2sql-chat/attachment/:table", deleteChatAttachment);
 
 // Public feature flags — consumed at frontend boot to decide whether to
 // render the NL2SQL panel. Returning the flags up-front avoids a 503 round-

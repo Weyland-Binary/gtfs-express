@@ -229,6 +229,28 @@ app.post(
   onlyWithBetaCode(betaGateFailureLimiter),
   onlyWithBetaCode(betaGateLimiter),
 );
+
+// 🚦 Chat-attachment uploads: parsing (CSV/XLSX) is CPU work, so a dedicated
+// per-session limiter, deliberately NOT the sqlLimiter bucket (coupling the
+// budgets would let attachment abuse starve SQL, and vice versa). The
+// per-session table cap + 5 MB size cap bound DB bloat; this bounds CPU.
+// Same beta-code brute-force wrapping as the chat route above.
+const attachmentLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: parseInt(process.env.RATE_LIMIT_MAX_ATTACHMENTS || "10"),
+  keyGenerator: betaAwareKey(
+    (req) => req.headers["x-session-id"] || ipKeyGenerator(req.ip) || "unknown",
+  ),
+  message: { error: "Too many attachment uploads, slow down." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.post(
+  "/gtfs/sql/nl2sql-chat/attachment",
+  onlyWithBetaCode(betaGateFailureLimiter),
+  onlyWithBetaCode(betaGateLimiter),
+  attachmentLimiter,
+);
 app.post("/gtfs/edit/project/import", betaGateFailureLimiter, betaGateLimiter);
 
 app.use("/gtfs", gtfsRoutes);

@@ -816,6 +816,58 @@ paths:
           $ref: "#/components/responses/OkJson"
         "400":
           $ref: "#/components/responses/BadRequest"
+  /gtfs/sql/nl2sql-chat/attachment:
+    post:
+      tags:
+        - AI
+      summary: Attach a tabular file (CSV/TSV/XLSX) to the chat — imported as a read-only session table.
+      description: Parses the spreadsheet server-side (separator sniffing, Latin-1 fallback, SheetJS for
+        XLSX) and imports it as a `_chat_att_<n>` TEXT table in the session DB so assistant SQL can
+        JOIN it against GTFS data. Caps — 5 MB, 5000 rows, 64 columns, 3 tables/session (env-tunable).
+        Same access gate as the chat endpoint; dedicated per-session rate limit. Typed errors —
+        `UNSUPPORTED_FORMAT`, `ATTACHMENT_EMPTY`, `ATTACHMENT_TOO_MANY_COLUMNS` (400),
+        `ATTACHMENT_LIMIT_REACHED` (409), `ATTACHMENT_TOO_LARGE` (413). Kill-switched with the chat
+        via `NL2SQL_CHAT_ENABLED` (503 when off).
+      requestBody:
+        $ref: "#/components/requestBodies/ChatAttachmentUpload"
+      security:
+        - SessionId: []
+          BetaCode: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/BadRequest"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/SessionSaturated"
+  /gtfs/sql/nl2sql-chat/attachment/{table}:
+    delete:
+      tags:
+        - AI
+      summary: Remove a chat attachment table from the session.
+      description: Drops the `_chat_att_<n>` table and its metadata. Session-gated only (destroys the
+        caller's own uploaded data; never consumes chat quota) and available even when the chat
+        kill-switch is off, so leftover tables can always be removed.
+      parameters:
+        - name: table
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^_chat_att_[0-9]+$"
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
   /gtfs/config/features:
     get:
       tags:
@@ -3958,6 +4010,13 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
+    Conflict:
+      description: "State conflict: attachment limit reached, or a referenced chat-attachment table is
+        no longer present in the session (ATTACHMENT_LIMIT_REACHED / ATTACHMENT_NOT_FOUND)."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
     RateLimited:
       description: Rate limit exceeded (global, upload, SQL, revalidation or beta-gate limiter).
       content:
@@ -4034,6 +4093,18 @@ components:
                 items:
                   type: object
                   additionalProperties: true
+              attachments:
+                type: array
+                maxItems: 1
+                description: References to chat-attachment tables previously imported via
+                  /gtfs/sql/nl2sql-chat/attachment. Revalidated server-side (409
+                  ATTACHMENT_NOT_FOUND when stale).
+                items:
+                  type: object
+                  properties:
+                    table:
+                      type: string
+                      pattern: "^_chat_att_[0-9]+$"
             additionalProperties: true
     QuickFixRequest:
       description: "Quick-fix selector: the rule code to repair (plus optional scoping fields)."
@@ -4061,6 +4132,20 @@ components:
               - gtfsZip
             properties:
               gtfsZip:
+                type: string
+                format: binary
+    ChatAttachmentUpload:
+      description: Multipart form upload with the tabular file (.csv, .tsv, .txt or .xlsx) under the
+        `chatAttachment` field (max 5 MB).
+      required: true
+      content:
+        multipart/form-data:
+          schema:
+            type: object
+            required:
+              - chatAttachment
+            properties:
+              chatAttachment:
                 type: string
                 format: binary
     GtfsProjUpload:

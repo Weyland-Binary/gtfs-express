@@ -15,6 +15,8 @@
  *     language:        "en"|"fr"|...  // explanation language
  *     conversationId:  string?        // opaque, echoed back in events
  *     turnId:          string?        // opaque, echoed back in events
+ *     attachments:     [{table}]?     // chat-attachment refs (≤1), revalidated
+ *                                     // server-side → 409 ATTACHMENT_NOT_FOUND
  *   }
  *
  * Response: text/event-stream — see nl2sqlChatService.js for the event
@@ -34,6 +36,7 @@
 
 const config = require("../config");
 const nl2sqlChatService = require("./nl2sqlChatService");
+const chatAttachmentService = require("./chatAttachmentService");
 const aiCostLimiter = require("./aiCostLimiter");
 const freeTierLimiter = require("./freeTierLimiter");
 const { recordEvent, extractReqMeta } = require("./eventLogger");
@@ -136,6 +139,20 @@ const generateChatTurn = async (req, res) => {
     });
   }
 
+  // Attachment refs (chat-attachment tables to declare to the model this
+  // turn). Revalidated against the live session DB — a stale chip after a
+  // feed re-upload gets a typed pre-stream 409 the client uses to drop it.
+  const attachments = chatAttachmentService.validateAttachmentRefs(
+    sessionCtx.db,
+    body.attachments,
+  );
+  if (!attachments.ok) {
+    return res.status(attachments.status).json({
+      error: attachments.code,
+      message: attachments.message,
+    });
+  }
+
   const rateKey = req.betaTester?.code || `anon:${sessionCtx.sessionId}`;
   // Raised per-code AI caps for beta holders (per-code quota wins over the
   // tier default); {} for anon free-trial users → strict config defaults.
@@ -210,6 +227,7 @@ const generateChatTurn = async (req, res) => {
       userMessage,
       language,
       sessionContext,
+      attachmentRefs: attachments.refs,
       freeRemaining,
       freeTier: Boolean(req.freeTier),
       dbCtx: { db: sessionCtx.db, sessionId: sessionCtx.sessionId },
