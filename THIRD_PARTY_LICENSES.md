@@ -86,6 +86,27 @@ and CLI arguments, this constitutes *mere aggregation* under the AGPL:
 its license governs the converter itself, not GTFS Express, and vice
 versa — including for GTFS Express commercial licensees.
 
+## SheetJS Community Edition (`xlsx`)
+
+| Field | Value |
+|---|---|
+| Component | `xlsx` npm package (SheetJS CE) |
+| Version | 0.20.3 |
+| Upstream | https://sheetjs.com / https://git.sheetjs.com/sheetjs/sheetjs |
+| Distribution | Official SheetJS CDN tarball, pinned in `GTFS-EXPRESS-API/package.json` as `https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz` (integrity hash in the lockfile) |
+| Copyright | © SheetJS LLC |
+| License | Apache License, Version 2.0 — see full text below |
+| How we use it | Server-side parsing of user-uploaded XLSX chat attachments (`GTFS-EXPRESS-API/src/services/chatAttachmentService.js`). Not modified, not bundled into frontend assets. |
+
+**Why the CDN tarball and not the npm registry:** the registry copy of
+`xlsx` is frozen at 0.18.5, which is affected by CVE-2023-30533
+(prototype pollution, fixed in 0.19.3) and CVE-2024-22363 (ReDoS, fixed
+in 0.20.2). SheetJS distributes patched Community Edition builds only
+through its own CDN. Never downgrade this dependency back to the
+registry version.
+
+---
+
 ## PROJ (Alpine package)
 
 | Field | Value |
