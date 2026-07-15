@@ -86,22 +86,56 @@ function EditStopTimeDialog({ open, stopTime, onClose }) {
   const { t } = useLanguage();
   const { recordEdit } = useEditMode();
 
-  const initial = useMemo(
-    () => buildInitialForm(stopTime),
-    [stopTime?.trip_id, stopTime?.stop_sequence],
-  );
-
-  const [form, setForm] = useState(initial);
+  // `initial` tracks the last-loaded values so `dirty` compares against them.
+  const [initial, setInitial] = useState(() => buildInitialForm(stopTime));
+  const [form, setForm] = useState(() => buildInitialForm(stopTime));
   const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  // Hooks before early returns (rules-of-hooks)
+  // Hooks before early returns (rules-of-hooks).
+  // On open, fetch the full stop_time row so the advanced fields reflect the
+  // current stored values — the ScheduleGrid pivot that opens this dialog only
+  // carries trip_id / stop_sequence / stop_id, not the advanced columns.
   useEffect(() => {
-    if (open) {
-      setForm(initial);
-      setError(null);
-    }
-  }, [open, initial]);
+    if (!open) return undefined;
+    const tripId = stopTime?.trip_id;
+    const seq = stopTime?.stop_sequence;
+    if (!tripId || seq == null) return undefined;
+
+    // Seed from whatever the caller passed so the form isn't stale while loading.
+    const seed = buildInitialForm(stopTime);
+    setForm(seed);
+    setInitial(seed);
+    setError(null);
+    setLoading(true);
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetchWithSession(
+          `${API_BASE_URL}/edit/stop_times/${encodeURIComponent(tripId)}/${encodeURIComponent(seq)}`,
+        );
+        if (!res.ok) throw new Error("load failed");
+        const body = await res.json();
+        if (cancelled || !body.stop_time) return;
+        const fresh = buildInitialForm(body.stop_time);
+        setForm(fresh);
+        setInitial(fresh);
+      } catch {
+        // Network/404 — keep the seeded values so the dialog stays usable.
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // Keyed on row identity, not the stopTime object ref, so we don't re-fetch
+    // on unrelated parent re-renders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, stopTime?.trip_id, stopTime?.stop_sequence]);
 
   const dirty = useMemo(
     () => Object.keys(initial).some((k) => form[k] !== initial[k]),
@@ -293,7 +327,32 @@ function EditStopTimeDialog({ open, stopTime, onClose }) {
       </DialogTitle>
 
       <DialogContent dividers>
-        <Box display="flex" flexDirection="column" gap={2} pt={1}>
+        <Box
+          display="flex"
+          flexDirection="column"
+          gap={2}
+          pt={1}
+          sx={{ position: "relative" }}
+        >
+          {loading && (
+            <Box
+              sx={{
+                position: "absolute",
+                inset: 0,
+                zIndex: 2,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                bgcolor: (theme) =>
+                  theme.palette.mode === "dark"
+                    ? "rgba(0,0,0,0.35)"
+                    : "rgba(255,255,255,0.6)",
+                borderRadius: 1,
+              }}
+            >
+              <CircularProgress size={26} color="warning" />
+            </Box>
+          )}
           <Typography
             variant="overline"
             color="text.secondary"
@@ -421,7 +480,7 @@ function EditStopTimeDialog({ open, stopTime, onClose }) {
           onClick={handleSave}
           variant="contained"
           color="warning"
-          disabled={saving || !dirty}
+          disabled={saving || loading || !dirty}
           startIcon={saving ? <CircularProgress size={14} /> : null}
         >
           {saving ? t("edit.saving") : t("app.save")}

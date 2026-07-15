@@ -47,6 +47,7 @@ const {
 
 const {
   updateCalendar,
+  getStopTime,
   updateStopTime,
   createStopTime,
   insertStopTime,
@@ -207,6 +208,7 @@ module.exports = {
   createCalendar,
   deleteCalendar,
   // Stop_times CRUD
+  getStopTime,
   updateStopTime,
   createStopTime,
   insertStopTime,

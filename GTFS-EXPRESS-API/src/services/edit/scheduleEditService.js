@@ -96,6 +96,34 @@ const validateFrequencyPayload = (body, { isPatch = false } = {}) => {
   return errors;
 };
 
+// ── Handler : GET a single stop_time ──────────────────────────────────────────
+// Full-row read used by the advanced stop_time edit dialog so it can display the
+// current values (the ScheduleGrid pivot only carries a subset of columns).
+const getStopTime = (req, res) => {
+  try {
+    const ctx = requireSession(req, res);
+    if (!ctx) return;
+    const { db } = ctx;
+    const { trip_id } = req.params;
+    const seq = parseInt(req.params.stop_sequence, 10);
+    if (Number.isNaN(seq) || seq < 0) {
+      return res.status(400).json({ error: "Invalid stop_sequence." });
+    }
+    const row = db
+      .prepare(
+        "SELECT * FROM stop_times WHERE trip_id = ? AND stop_sequence = ?",
+      )
+      .get(trip_id, seq);
+    if (!row) {
+      return res.status(404).json({ error: "stop_time not found." });
+    }
+    res.json({ stop_time: row });
+  } catch (err) {
+    console.error("getStopTime error:", err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
 // ── Handler : UPDATE stop_time ────────────────────────────────────────────────
 
 const updateStopTime = async (req, res) => {
@@ -1297,6 +1325,7 @@ const deleteFrequency = async (req, res) => {
 
 module.exports = {
   updateCalendar: makeUpdateHandler("calendar", validateCalendarPatch),
+  getStopTime,
   updateStopTime,
   createStopTime,
   insertStopTime,

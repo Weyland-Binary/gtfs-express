@@ -51,6 +51,7 @@ const {
   deleteTrip,
   createCalendar,
   deleteCalendar,
+  getStopTime,
   updateStopTime,
   createStopTime,
   insertStopTime,
@@ -382,6 +383,7 @@ router.delete("/edit/trips/:trip_id", deleteTrip);
 router.post("/edit/calendar", createCalendar);
 router.patch("/edit/calendar/:service_id", updateCalendar);
 router.delete("/edit/calendar/:service_id", deleteCalendar);
+router.get("/edit/stop_times/:trip_id/:stop_sequence", getStopTime);
 router.patch("/edit/stop_times/:trip_id/:stop_sequence", updateStopTime);
 router.post("/edit/stop_times", createStopTime);
 router.post("/edit/stop_times/insert", insertStopTime);

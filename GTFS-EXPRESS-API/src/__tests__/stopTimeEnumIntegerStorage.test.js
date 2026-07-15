@@ -197,4 +197,42 @@ describe("stop_times GTFS enum columns store clean integer strings (no decimals)
     expect(row.pickup_type).toBe("2");
     expect(row.drop_off_type).toBe("0");
   });
+
+  // ── 5. GET returns the full row so the edit dialog can display it ──────────
+  test("GET /edit/stop_times/:trip_id/:stop_sequence returns the full row", async () => {
+    const res = await request(app)
+      .get(
+        `/gtfs/edit/stop_times/${encodeURIComponent(TEST_TRIP_ID)}/${TEST_SEQ}`,
+      )
+      .set("X-Session-ID", sessionId);
+
+    expect(res.status).toBe(200);
+    const st = res.body.stop_time;
+    expect(st).toBeDefined();
+    // Advanced columns the ScheduleGrid pivot omits must be present here.
+    expect(st).toHaveProperty("timepoint");
+    expect(st).toHaveProperty("continuous_pickup");
+    expect(st).toHaveProperty("stop_headsign");
+    expect(st).toHaveProperty("shape_dist_traveled");
+    // Values set earlier via PATCH are returned as clean integer strings.
+    expect(st.pickup_type).toBe("3"); // last value set in test 3
+    expect(st.drop_off_type).toBe("2");
+    expect(st.timepoint).toBe("1");
+    for (const col of [
+      "pickup_type",
+      "drop_off_type",
+      "timepoint",
+      "continuous_pickup",
+      "continuous_drop_off",
+    ]) {
+      if (st[col] != null) expect(String(st[col])).not.toMatch(/\./);
+    }
+  });
+
+  test("GET a missing stop_time returns 404", async () => {
+    const res = await request(app)
+      .get(`/gtfs/edit/stop_times/${encodeURIComponent(TEST_TRIP_ID)}/99999`)
+      .set("X-Session-ID", sessionId);
+    expect(res.status).toBe(404);
+  });
 });
