@@ -132,11 +132,15 @@ function EditStopTimeDialog({ open, stopTime, onClose }) {
       }
     }
 
-    // Build patch with only changed fields
+    // Build patch with only changed fields.
+    // pickup_type / drop_off_type / timepoint / continuous_* are stored as TEXT
+    // in SQLite (schema.js). Sending a JS Number gets bound by better-sqlite3 as
+    // a REAL, which TEXT affinity then stores as "1.0" instead of "1" — corrupting
+    // the value and its downstream icon/enum matching. The <select> values already
+    // hold the correct string tokens ("0".."3"), so forward them verbatim.
     const patch = {};
     if (form.timepoint !== initial.timepoint) {
-      patch.timepoint =
-        form.timepoint !== "" ? Number(form.timepoint) : null;
+      patch.timepoint = form.timepoint !== "" ? form.timepoint : null;
     }
     if (form.stop_headsign !== initial.stop_headsign) {
       patch.stop_headsign = form.stop_headsign;
@@ -149,21 +153,18 @@ function EditStopTimeDialog({ open, stopTime, onClose }) {
     }
     if (form.continuous_pickup !== initial.continuous_pickup) {
       patch.continuous_pickup =
-        form.continuous_pickup !== "" ? Number(form.continuous_pickup) : null;
+        form.continuous_pickup !== "" ? form.continuous_pickup : null;
     }
     if (form.continuous_drop_off !== initial.continuous_drop_off) {
       patch.continuous_drop_off =
-        form.continuous_drop_off !== ""
-          ? Number(form.continuous_drop_off)
-          : null;
+        form.continuous_drop_off !== "" ? form.continuous_drop_off : null;
     }
     if (form.pickup_type !== initial.pickup_type) {
-      patch.pickup_type =
-        form.pickup_type !== "" ? Number(form.pickup_type) : null;
+      patch.pickup_type = form.pickup_type !== "" ? form.pickup_type : null;
     }
     if (form.drop_off_type !== initial.drop_off_type) {
       patch.drop_off_type =
-        form.drop_off_type !== "" ? Number(form.drop_off_type) : null;
+        form.drop_off_type !== "" ? form.drop_off_type : null;
     }
 
     if (Object.keys(patch).length === 0) {

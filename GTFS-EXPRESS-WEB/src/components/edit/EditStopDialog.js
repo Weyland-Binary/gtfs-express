@@ -263,7 +263,9 @@ function EditStopDialog({
         zone_id: form.zone_id,
         wheelchair_boarding: form.wheelchair_boarding,
         platform_code: form.platform_code,
-        location_type: form.location_type !== "" ? Number(form.location_type) : 0,
+        // location_type is stored as TEXT (schema.js). A JS Number would be bound
+        // as a REAL and stored by TEXT affinity as "1.0"; forward the string token.
+        location_type: form.location_type !== "" ? form.location_type : "0",
         level_id: form.level_id,
         tts_stop_name: form.tts_stop_name,
         stop_url: form.stop_url,
@@ -294,8 +296,9 @@ function EditStopDialog({
         if (form[k] !== initial[k]) payload[k] = form[k];
       });
       if (form.location_type !== initial.location_type) {
+        // TEXT column — send the string token, never a Number (see create path).
         payload.location_type =
-          form.location_type !== "" ? Number(form.location_type) : 0;
+          form.location_type !== "" ? form.location_type : "0";
       }
       if (form.stop_lat !== initial.stop_lat) {
         payload.stop_lat =

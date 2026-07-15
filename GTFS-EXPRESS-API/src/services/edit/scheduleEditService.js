@@ -29,6 +29,24 @@ const CONTINUOUS_VALUES = new Set(["0", "1", "2", "3"]);
 const DATE_RE = /^\d{8}$/;
 const TIME_HMS = /^\d+:[0-5]\d:[0-5]\d$/;
 
+// GTFS enum columns on stop_times are stored as TEXT (schema.js). A JS number bound
+// to a TEXT-affinity column is stored by SQLite as a REAL-derived string ("1.0", not
+// "1"), corrupting the value and its downstream icon/enum matching. Normalize a
+// numeric enum input to its integer-string form so the column always holds "0".."3".
+// (The frontend already forwards string tokens; this is a defensive net for any
+// client that still sends a Number.)
+const STOP_TIME_TEXT_ENUM_COLS = new Set([
+  "pickup_type",
+  "drop_off_type",
+  "continuous_pickup",
+  "continuous_drop_off",
+  "timepoint",
+]);
+const normalizeStopTimeEnum = (col, value) =>
+  typeof value === "number" && STOP_TIME_TEXT_ENUM_COLS.has(col)
+    ? String(value)
+    : value;
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /** Convert GTFS time string to total seconds */
@@ -200,7 +218,8 @@ const updateStopTime = async (req, res) => {
     ];
     const patch = {};
     for (const k of allowed) {
-      if (k in body) patch[k] = body[k] === "" ? null : body[k];
+      if (k in body)
+        patch[k] = normalizeStopTimeEnum(k, body[k] === "" ? null : body[k]);
     }
     const cols = Object.keys(patch);
     if (cols.length === 0)
@@ -334,7 +353,7 @@ const createStopTime = async (req, res) => {
     const values = fields.map((c) => {
       if (c === "stop_sequence") return seq;
       const v = body[c];
-      return v === undefined || v === "" ? null : v;
+      return v === undefined || v === "" ? null : normalizeStopTimeEnum(c, v);
     });
 
     const undoOps = [

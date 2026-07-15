@@ -119,9 +119,12 @@ function EditAttributionDialog({ open, onClose, mode = "create", initial, onSave
   const buildPayload = () => {
     const payload = {
       organization_name: form.organization_name.trim(),
-      is_producer: form.is_producer ? 1 : 0,
-      is_operator: form.is_operator ? 1 : 0,
-      is_authority: form.is_authority ? 1 : 0,
+      // is_producer/is_operator/is_authority are stored as TEXT (schema.js).
+      // Sending a JS Number would be bound as a REAL and stored by TEXT affinity
+      // as "1.0"/"0.0"; forward the "0"/"1" string tokens instead.
+      is_producer: form.is_producer ? "1" : "0",
+      is_operator: form.is_operator ? "1" : "0",
+      is_authority: form.is_authority ? "1" : "0",
     };
     if (form.attribution_id.trim()) payload.attribution_id = form.attribution_id.trim();
     if (target === "agency") payload.agency_id = form.agency_id;
