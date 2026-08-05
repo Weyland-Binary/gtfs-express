@@ -13,6 +13,7 @@ const UUID_V4_RE =
 
 beforeEach(() => {
   sessionStorage.clear();
+  localStorage.clear();
 });
 
 afterEach(() => {
@@ -69,6 +70,64 @@ describe("addSessionHeader", () => {
     expect(out.headers["X-Session-ID"]).toBe(
       "99999999-8888-4777-a666-555555555555",
     );
+  });
+
+  // A caller-supplied X-Session-ID used to short-circuit the whole helper,
+  // dropping X-Beta-Code from those requests.
+  it("still injects X-Beta-Code when the caller supplies X-Session-ID", () => {
+    localStorage.setItem("gtfs_beta_code", "BETA-XYZ");
+    const out = addSessionHeader({
+      headers: { "X-Session-ID": "99999999-8888-4777-a666-555555555555" },
+    });
+    expect(out.headers["X-Session-ID"]).toBe(
+      "99999999-8888-4777-a666-555555555555",
+    );
+    expect(out.headers["X-Beta-Code"]).toBe("BETA-XYZ");
+  });
+});
+
+// Without X-Beta-Code on every request the backend classifies an authenticated
+// beta tester as keyless and applies the low caps (5 revalidations/min), so a
+// normal editing session trips "Too many requests".
+describe("beta code header", () => {
+  it("attaches X-Beta-Code when a code is persisted", () => {
+    localStorage.setItem("gtfs_beta_code", "BETA-XYZ");
+    const out = addSessionHeader({ method: "PATCH" });
+    expect(out.headers["X-Beta-Code"]).toBe("BETA-XYZ");
+  });
+
+  it("omits X-Beta-Code entirely when the user has no code", () => {
+    const out = addSessionHeader();
+    expect(out.headers).not.toHaveProperty("X-Beta-Code");
+  });
+
+  it("preserves a caller-provided X-Beta-Code (gate dialog validating a new code)", () => {
+    localStorage.setItem("gtfs_beta_code", "OLD-CODE");
+    const out = addSessionHeader({ headers: { "X-Beta-Code": "TYPED-CODE" } });
+    expect(out.headers["X-Beta-Code"]).toBe("TYPED-CODE");
+  });
+
+  it("rides along on fetchWithSession requests (edits, revalidation)", async () => {
+    localStorage.setItem("gtfs_beta_code", "BETA-XYZ");
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("ok", { status: 200 }));
+
+    await fetchWithSession("/gtfs/edit/validate", { method: "POST" });
+
+    const [, options] = spy.mock.calls[0];
+    expect(options.headers["X-Beta-Code"]).toBe("BETA-XYZ");
+  });
+
+  it("survives localStorage access throwing (private browsing)", () => {
+    // Only localStorage is blocked here — sessionStorage (session id) is a
+    // separate concern and is not wrapped by this helper.
+    vi.spyOn(localStorage, "getItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    // Must not throw; the session header still needs to be produced.
+    expect(() => addSessionHeader()).not.toThrow();
+    expect(addSessionHeader().headers["X-Session-ID"]).toMatch(UUID_V4_RE);
   });
 });
 

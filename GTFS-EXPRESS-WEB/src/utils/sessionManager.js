@@ -58,24 +58,49 @@ export const clearSession = () => {
   sessionStorage.removeItem(SESSION_KEY);
 };
 
+const BETA_CODE_KEY = "gtfs_beta_code";
+
 /**
- * Adds the X-Session-ID header to fetch options. A caller-provided
- * X-Session-ID is preserved — the feed-comparison flow uploads a second
- * feed into its own session while the main session stays active.
+ * Reads the persisted beta code, if the user has one. localStorage access is
+ * wrapped because it throws in private-browsing / blocked-cookie contexts.
+ */
+export const getBetaCode = () => {
+  try {
+    return localStorage.getItem(BETA_CODE_KEY);
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Adds the X-Session-ID and X-Beta-Code headers to fetch options. Headers
+ * explicitly supplied by the caller always win:
+ *   - a caller-provided X-Session-ID is preserved — the feed-comparison flow
+ *     uploads a second feed into its own session while the main one stays live;
+ *   - a caller-provided X-Beta-Code is preserved (e.g. the beta gate dialog
+ *     validating a freshly typed code that isn't persisted yet).
+ *
+ * X-Beta-Code must ride along on EVERY request, not just the gated ones: the
+ * backend's betaContext classifier reads it to grant the raised beta rate
+ * limits (see middleware/betaLimit.js). Without it an authenticated beta
+ * tester silently falls back to the keyless caps — e.g. 5 revalidations/min
+ * instead of 30 — and hits "Too many requests" after a handful of edits.
  */
 export const addSessionHeader = (options = {}) => {
-  const callerProvided = Object.keys(options.headers || {}).some(
-    (h) => h.toLowerCase() === "x-session-id",
+  const headerNames = Object.keys(options.headers || {}).map((h) =>
+    h.toLowerCase(),
   );
-  if (callerProvided) return options;
+  const headers = { ...options.headers };
 
-  return {
-    ...options,
-    headers: {
-      ...options.headers,
-      "X-Session-ID": getSessionId(),
-    },
-  };
+  if (!headerNames.includes("x-session-id")) {
+    headers["X-Session-ID"] = getSessionId();
+  }
+  if (!headerNames.includes("x-beta-code")) {
+    const betaCode = getBetaCode();
+    if (betaCode) headers["X-Beta-Code"] = betaCode;
+  }
+
+  return { ...options, headers };
 };
 
 /**
