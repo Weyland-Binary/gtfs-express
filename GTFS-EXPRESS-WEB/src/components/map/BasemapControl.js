@@ -6,9 +6,13 @@ import MapIcon from "@mui/icons-material/Map";
 import SatelliteAltIcon from "@mui/icons-material/SatelliteAlt";
 import BrightnessAutoIcon from "@mui/icons-material/BrightnessAuto";
 import { useLanguage } from "../../contexts/LanguageContext";
+import { BASEMAP_PROVIDER, OSM_RASTER, ESRI_SATELLITE, VECTOR_MAX_ZOOM, pickAutoLayer } from "./basemapConfig";
+import VectorBasemap, { hasWebGL } from "./VectorBasemap";
+import "./basemap.css";
 
-// Base maps the user can switch between. Tile hosts must be allowed in the
-// production CSP `img-src` (security-headers.conf).
+// Base maps the user can switch between. "auto" follows the app theme with
+// the configured provider's light / dark vector style (basemapConfig.js).
+// Tile hosts must be allowed in the production CSP (security-headers.conf).
 export const BASEMAPS = {
   auto: {
     labelKey: "map.basemap.auto",
@@ -17,18 +21,13 @@ export const BASEMAPS = {
   osm: {
     labelKey: "map.basemap.osm",
     Icon: MapIcon,
-    url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-    attribution:
-      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-    maxZoom: 19,
+    ...OSM_RASTER,
   },
   satellite: {
     labelKey: "map.basemap.satellite",
     Icon: SatelliteAltIcon,
-    url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-    attribution:
-      "Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community",
-    maxZoom: 19,
+    // MapTiler's satellite when a MapTiler key is configured, Esri otherwise.
+    ...(BASEMAP_PROVIDER.satellite || ESRI_SATELLITE),
   },
 };
 
@@ -65,19 +64,27 @@ export function useBasemap() {
   return [basemap, setBasemap];
 }
 
-// The tile layer for the chosen basemap. "auto" follows the app theme with
-// the CARTO light/dark tiles.
+// The tile layer for the chosen basemap. "auto" follows the app theme: the
+// provider's vector style through MapLibre, or raster tiles when WebGL is
+// unavailable or the style failed (refused key, outage).
 export function BasemapTileLayer({ basemap, isDark }) {
+  const [vectorFailed, setVectorFailed] = useState(false);
+  const onFail = useCallback((reason) => {
+    console.warn("Vector basemap unavailable, falling back to raster tiles:", reason?.message || reason);
+    setVectorFailed(true);
+  }, []);
   if (basemap === "auto" || !BASEMAPS[basemap]) {
+    const layer = pickAutoLayer({ provider: BASEMAP_PROVIDER, isDark, webgl: hasWebGL(), failed: vectorFailed });
+    if (layer.kind === "vector") {
+      return <VectorBasemap styleUrl={layer.styleUrl} attribution={layer.attribution} transformRequest={layer.transformRequest} maxZoom={VECTOR_MAX_ZOOM} onFail={onFail} />;
+    }
     return (
       <TileLayer
-        key={isDark ? "dark" : "light"}
-        url={
-          isDark
-            ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-            : "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
-        }
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+        key={`raster-${isDark ? "dark" : "light"}`}
+        url={layer.url}
+        attribution={layer.attribution}
+        maxZoom={layer.maxZoom}
+        className={layer.className}
       />
     );
   }
@@ -88,6 +95,7 @@ export function BasemapTileLayer({ basemap, isDark }) {
       url={def.url}
       attribution={def.attribution}
       maxZoom={def.maxZoom}
+      {...(def.tileSize ? { tileSize: def.tileSize, zoomOffset: def.zoomOffset || 0 } : {})}
     />
   );
 }

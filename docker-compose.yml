@@ -8,6 +8,10 @@ services:
         # .env so `docker compose up --build` picks it up without manual
         # --build-arg flags. Defaults stay secure for CI/prod.
         - APK_INSECURE=${APK_INSECURE:-false}
+        # Basemap provider / key (optional, see docker-compose.prod.yml).
+        - VITE_BASEMAP_PROVIDER=${BASEMAP_PROVIDER:-}
+        - VITE_CARTO_API_KEY=${CARTO_API_KEY:-}
+        - VITE_MAPTILER_KEY=${MAPTILER_KEY:-}
     container_name: gtfs-frontend
     ports:
       - "80:80"

@@ -13,6 +13,18 @@ COPY . .
 ARG VITE_API_BASE_URL=/api/gtfs
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 
+# Basemap provider and key baked into the bundle (see
+# src/components/map/basemapConfig.js). Empty: OpenFreeMap, no key.
+ARG VITE_BASEMAP_PROVIDER=
+ARG VITE_CARTO_API_KEY=
+ARG VITE_MAPTILER_KEY=
+ENV VITE_BASEMAP_PROVIDER=$VITE_BASEMAP_PROVIDER \
+    VITE_CARTO_API_KEY=$VITE_CARTO_API_KEY \
+    VITE_MAPTILER_KEY=$VITE_MAPTILER_KEY
+# Say what the bundle will use, so a build that missed its key (compose run
+# without --env-file) is visible in the log rather than silently keyless.
+RUN echo "basemap: provider=${VITE_BASEMAP_PROVIDER:-inferred} carto_key=$([ -n "$VITE_CARTO_API_KEY" ] && echo set || echo none) maptiler_key=$([ -n "$VITE_MAPTILER_KEY" ] && echo set || echo none)"
+
 RUN npm run build
 
 # Stage 2: serve the static bundle with Nginx

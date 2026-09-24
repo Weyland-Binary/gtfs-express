@@ -4,6 +4,11 @@ services:
       context: ./GTFS-EXPRESS-WEB
       args:
         - VITE_API_BASE_URL=/api/gtfs
+        # Basemap tiles: a CARTO or MapTiler key (paid tiers beyond their
+        # free quota) or nothing for OpenFreeMap. Set in .env.production.local.
+        - VITE_BASEMAP_PROVIDER=${BASEMAP_PROVIDER:-}
+        - VITE_CARTO_API_KEY=${CARTO_API_KEY:-}
+        - VITE_MAPTILER_KEY=${MAPTILER_KEY:-}
     container_name: gtfs-frontend
     depends_on:
       api:

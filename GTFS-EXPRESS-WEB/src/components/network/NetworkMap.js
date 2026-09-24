@@ -5,10 +5,11 @@
  */
 
 import React, { useEffect, useMemo } from "react";
-import { MapContainer, TileLayer, Polyline, CircleMarker, Marker, Rectangle, Tooltip as LeafletTooltip, useMap, useMapEvents } from "react-leaflet";
+import { MapContainer, Polyline, CircleMarker, Marker, Rectangle, Tooltip as LeafletTooltip, useMap, useMapEvents } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
 import { Box, useTheme } from "@mui/material";
+import { BasemapTileLayer, useBasemap } from "../map/BasemapControl";
 
 const FitBounds = ({ points, epoch }) => {
   const map = useMap();
@@ -45,6 +46,7 @@ const POI_COLOR = { school: "#F9A825", college: "#F57F17", hospital: "#D32F2F", 
 export default function NetworkMap({ stops = [], lines = [], geometry = [], existingStops = [], pois = [], corridors = [], population = null, selectedStopId = null, placingStopId = null, onSelectStop = null, onMoveStop = null, onPlaceStop = null, onPickExistingStop = null, fitEpoch = 0, height = "100%" }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
+  const [basemap] = useBasemap();
   const located = useMemo(() => stops.filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lon)), [stops]);
   const points = useMemo(() => {
     const pts = located.map((s) => [s.lat, s.lon]);
@@ -72,11 +74,7 @@ export default function NetworkMap({ stops = [], lines = [], geometry = [], exis
   return (
     <Box sx={{ height, width: "100%", position: "relative", "& .leaflet-container": { height: "100%", width: "100%", background: isDark ? "#0f172a" : "#e5e7eb", cursor: placingStopId ? "crosshair" : undefined } }} data-testid="network-map">
       <MapContainer center={center} zoom={12} scrollWheelZoom style={{ height: "100%", width: "100%" }}>
-        <TileLayer
-          key={isDark ? "dark" : "light"}
-          url={isDark ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" : "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"}
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
-        />
+        <BasemapTileLayer basemap={basemap} isDark={isDark} />
         <FitBounds points={points} epoch={fitEpoch} />
         <ClickToPlace active={Boolean(placingStopId)} onPlace={(lat, lon) => onPlaceStop && onPlaceStop(placingStopId, lat, lon)} />
         {popCells.map((c) => (

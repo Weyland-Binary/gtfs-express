@@ -770,7 +770,7 @@ function LineMap({
         }}
         attributionControl
       >
-        {/* Base map: theme-following CARTO tiles, OpenStreetMap or satellite */}
+        {/* Base map: theme-following vector style (basemapConfig.js), OpenStreetMap or satellite */}
         <BasemapTileLayer basemap={basemap} isDark={isDark} />
 
         {/* Recompute size once when embedded in a freshly shown tab (Studio) */}

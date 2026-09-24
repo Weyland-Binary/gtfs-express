@@ -121,8 +121,11 @@ test("the passenger documents print from the route and stop details; the realtim
   await expect(page.getByTestId("realtime-dialog")).toBeVisible();
   await page.getByTestId("realtime-url").fill("https://127.0.0.1:9/nothing.pb");
   await page.getByTestId("realtime-run").click();
-  await expect(page.getByTestId("realtime-dialog").getByText(/HTTP|fetch|Realtime|ECONNREFUSED|failed|feed/i).first()).toBeVisible({ timeout: 60_000 });
-  await page.keyboard.press("Escape");
+  const rtDialog = page.getByTestId("realtime-dialog");
+  await expect(rtDialog.getByText(/HTTP|fetch|Realtime|ECONNREFUSED|failed|feed/i).first()).toBeVisible({ timeout: 60_000 });
+  // Close through the button: a key press can land while the check is still settling.
+  await rtDialog.getByRole("button", { name: /^(close|fermer)$/i }).click();
+  await expect(rtDialog).toBeHidden({ timeout: 15_000 });
 });
 
 test("a public share link lands a visitor on the card and opens their own copy", async () => {

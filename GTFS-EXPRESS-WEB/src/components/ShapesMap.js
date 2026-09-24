@@ -1,7 +1,6 @@
 import React, { useEffect, useState, useRef, useMemo, useCallback } from "react";
 import {
   MapContainer,
-  TileLayer,
   Polyline,
   CircleMarker,
   useMap,
@@ -16,6 +15,7 @@ import API_BASE_URL from "../config";
 import { fetchWithSession } from "../utils/sessionManager";
 import StopFloatingCard from "./StopFloatingCard";
 import { useDetailPanel } from "../contexts/DetailPanelContext";
+import { BasemapTileLayer, useBasemap } from "./map/BasemapControl";
 
 /* Douglas-Peucker line simplification (iterative, no recursion). */
 const simplifyDP = (points, tolerance) => {
@@ -107,6 +107,7 @@ const ShapesMap = ({ height = "360px", agencyId = null }) => {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const { openPanel } = useDetailPanel();
+  const [basemap] = useBasemap();
 
   useEffect(() => {
     let cancelled = false;
@@ -234,15 +235,7 @@ const ShapesMap = ({ height = "360px", agencyId = null }) => {
         attributionControl
         preferCanvas={true}
       >
-        <TileLayer
-          key={isDark ? "dark" : "light"}
-          url={
-            isDark
-              ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-              : "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
-          }
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
-        />
+        <BasemapTileLayer basemap={basemap} isDark={isDark} />
         <FitBounds shapes={shapes} stops={stops} />
         <ZoomTracker onZoom={setZoom} />
         {shapes.map((shape, index) => (

@@ -134,6 +134,9 @@ test("section tools straighten part of the shape; undo removes the shape again",
   });
   await page.getByTestId("basemap-control").click();
   await page.getByTestId("basemap-auto").click();
+  // The theme basemap is a MapLibre vector canvas; without WebGL it falls back to OpenStreetMap tiles.
+  await expect(page.locator(".leaflet-tile-pane .maplibregl-canvas, .leaflet-tile-pane img[src*='openstreetmap']").first()).toBeAttached({ timeout: 30_000 });
+  await expect(page.locator(".leaflet-tile-pane img[src*='cartocdn']")).toHaveCount(0);
 
   // Server-side undo of the creation: the shape and its trip links go away
   // and S1_0 gets its trips back.

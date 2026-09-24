@@ -19,6 +19,10 @@ yarn-error.log*
 # Beta access codes + runtime usage logs (never commit — runtime data)
 GTFS-EXPRESS-API/beta/
 
+# Local SSH secrets (never commit)
+credentials.txt
+id_ed25519*
+
 # Build outputs
 dist/
 
