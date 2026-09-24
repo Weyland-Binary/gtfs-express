@@ -407,6 +407,8 @@ router.delete("/sql/nl2sql-chat/attachment/:table", deleteChatAttachment);
 // render the NL2SQL panel. Returning the flags up-front avoids a 503 round-
 // trip on every page load when the feature is off.
 router.get("/config/features", getFeatures);
+// The offer (Free / Pro / Team) and the plan the caller's access code grants.
+router.get("/config/plans", require("../services/plansService").getPlans);
 
 // ── Edit mode ────────────────────────────────────────────────────────────────────────
 // Read ↔ edit toggle + status

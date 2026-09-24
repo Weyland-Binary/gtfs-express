@@ -943,6 +943,15 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+  /gtfs/config/plans:
+    get:
+      tags:
+        - Config
+      summary: The offer (Free / Pro / Team) with limits and checkout links, and the plan the caller's access code grants.
+      security: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
   /gtfs/diff:
     post:
       tags:

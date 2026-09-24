@@ -34,10 +34,12 @@ const specFromBody = (body, res) => {
   return spec;
 };
 
-/** Plan limits: the free plan caps the number of lines (lifted by a beta/paid code). */
+/** Plan limits: the number of lines a network may have, from the request's plan. */
 const planLimits = (req) => {
-  const hasCode = Boolean(req.headers["x-beta-code"]) || config.BETA_GATE_DISABLED;
-  return { maxLines: hasCode ? Infinity : config.NETWORK_FREE_MAX_LINES, plan: hasCode ? "pro" : "free" };
+  const { resolvePlan, limitsFor } = require("../plansService");
+  const plan = resolvePlan(req);
+  const max = limitsFor(plan.name).network_lines;
+  return { maxLines: Number.isFinite(max) && max > 0 ? max : Infinity, plan: plan.name };
 };
 
 const validateNetworkSpec = (req, res) => {
@@ -84,7 +86,7 @@ const compileNetwork = async (req, res) => {
   const limits = planLimits(req);
   const norm = normalizeSpec(spec);
   if (norm.spec.lines.length > limits.maxLines) {
-    return res.status(402).json({ error: "PLAN_LIMIT", message: `The free plan builds networks of up to ${limits.maxLines} lines. Enter an access code to build larger networks.`, plan: { name: limits.plan, max_lines: limits.maxLines } });
+    return res.status(402).json({ error: "PLAN_LIMIT", message: `The ${limits.plan} plan builds networks of up to ${limits.maxLines} lines. Upgrade to build larger networks.`, plan: { name: limits.plan, max_lines: limits.maxLines } });
   }
   const started = Date.now();
   try {

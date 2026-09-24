@@ -43,6 +43,11 @@ const getFeatures = (_req, res) => {
       // stopping them at the access dialog.
       freeMessages: config.NL2SQL_FREE_MESSAGES_PER_SESSION,
     },
+    // Plans: the free cap on network size, so the studio can say so upfront.
+    plans: {
+      freeMaxLines: config.NETWORK_FREE_MAX_LINES,
+      billingEnabled: Boolean(config.STRIPE_CHECKOUT_URL_PRO || config.STRIPE_CHECKOUT_URL_TEAM),
+    },
     // NeTEx France export (gtfs2netexfr embedded in the Docker image).
     // Optional capability: the UI shows the export option only when true.
     netex: {

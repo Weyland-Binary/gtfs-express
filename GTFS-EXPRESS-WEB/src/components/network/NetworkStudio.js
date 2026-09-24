@@ -34,6 +34,8 @@ import NetworkMap from "./NetworkMap";
 import PlanChat from "./PlanChat";
 import { LinesEditor, StopsEditor, JsonEditor } from "./SpecEditors";
 import { BETA_CODE_STORAGE_KEY } from "../edit/BetaGateDialog";
+import ContentCopyIcon from "@mui/icons-material/ContentCopy";
+import { PRICING_EVENT } from "../PricingDialog";
 
 const EMPTY_SPEC = { agency: { name: "", url: "", timezone: "" }, stops: [], lines: [] };
 const newId = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
@@ -73,6 +75,7 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
   const [compile, setCompile] = useState({ state: "idle" });
   const [fitEpoch, setFitEpoch] = useState(0);
   const [restored, setRestored] = useState(false);
+  const [shared, setShared] = useState(false);
   const abortRef = useRef(null);
   const validateTimer = useRef(null);
 
@@ -283,9 +286,9 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
             {t("network.subtitle")}
           </Typography>
         </Box>
-        {plan && plan.max_lines != null && (
+        {plan && plan.max_lines != null && plan.name === "free" && (
           <Tooltip title={t("network.plan.freeHint", { max: plan.max_lines })}>
-            <Chip size="small" icon={<LockOutlinedIcon sx={{ fontSize: 13 }} />} label={t("network.plan.free", { max: plan.max_lines })} color={plan.over_limit ? "warning" : "default"} sx={{ height: 22, fontSize: "0.66rem", fontWeight: 700 }} />
+            <Chip size="small" icon={<LockOutlinedIcon sx={{ fontSize: 13 }} />} label={t("network.plan.free", { max: plan.max_lines })} color={plan.over_limit ? "warning" : "default"} onClick={() => window.dispatchEvent(new CustomEvent(PRICING_EVENT, { detail: { reason: plan.over_limit ? "network_limit" : null } }))} data-testid="network-plan-chip" sx={{ height: 22, fontSize: "0.66rem", fontWeight: 700 }} />
           </Tooltip>
         )}
         <Tooltip title={t("network.startOver")}>
@@ -380,7 +383,12 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
             </Box>
             {compile.state === "running" && <LinearProgress sx={{ height: 3 }} />}
             {compile.state === "error" && (
-              <Alert severity="error" onClose={() => setCompile({ state: "idle" })} sx={{ mx: 2, mb: 1, fontSize: "0.78rem" }}>
+              <Alert
+                severity="error"
+                onClose={() => setCompile({ state: "idle" })}
+                action={compile.code === "PLAN_LIMIT" ? <Button color="inherit" size="small" onClick={() => window.dispatchEvent(new CustomEvent(PRICING_EVENT, { detail: { reason: "network_limit" } }))} sx={{ textTransform: "none", fontWeight: 700 }}>{t("network.plan.upgrade")}</Button> : null}
+                sx={{ mx: 2, mb: 1, fontSize: "0.78rem" }}
+              >
                 {compile.code === "PLAN_LIMIT" ? t("network.plan.limitReached") : compile.error}
               </Alert>
             )}
@@ -406,7 +414,24 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
               );
             })()}
             {compile.result.stats?.routing_fallback_legs > 0 && <Typography sx={{ fontSize: "0.74rem", color: "warning.dark" }}>{t("network.result.fallback", { count: compile.result.stats.routing_fallback_legs })}</Typography>}
-            <Box sx={{ display: "flex", gap: 1, justifyContent: "flex-end", mt: 0.5 }}>
+            <Box sx={{ display: "flex", gap: 1, justifyContent: "flex-end", mt: 0.5, flexWrap: "wrap" }}>
+              <Button
+                size="small"
+                startIcon={shared ? <CheckCircleOutlineIcon /> : <ContentCopyIcon />}
+                onClick={async () => {
+                  const c = compile.result.counts || {};
+                  try {
+                    await navigator.clipboard.writeText(t("network.result.shareText", { routes: c.routes ?? 0, stops: c.stops ?? 0, trips: c.trips ?? 0 }));
+                    setShared(true);
+                  } catch {
+                    /* clipboard unavailable */
+                  }
+                }}
+                data-testid="network-share"
+                sx={{ textTransform: "none", mr: "auto" }}
+              >
+                {shared ? t("network.result.shared") : t("network.result.share")}
+              </Button>
               <Button onClick={() => setCompile({ state: "idle" })} sx={{ textTransform: "none" }}>
                 {t("network.result.stay")}
               </Button>

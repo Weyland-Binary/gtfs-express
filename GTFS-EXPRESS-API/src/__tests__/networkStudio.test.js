@@ -287,7 +287,8 @@ describe("HTTP surface", () => {
     const capped = await request(app).post("/gtfs/network/compile").send({ spec: many, options: { routing: "straight" } });
     expect(capped.status).toBe(402);
     expect(capped.body.error).toBe("PLAN_LIMIT");
+    // An arbitrary code is not a plan: the cap stays (plans.test.js covers real tiers).
     const withCode = await request(app).post("/gtfs/network/validate").set("X-Beta-Code", "ANY-CODE").send({ spec: many });
-    expect(withCode.body.plan).toMatchObject({ name: "pro", over_limit: false });
+    expect(withCode.body.plan).toMatchObject({ name: "free", over_limit: true });
   });
 });

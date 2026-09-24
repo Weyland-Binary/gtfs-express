@@ -43,6 +43,7 @@ import SqlConsole from "./SqlConsole/SqlConsole";
 import ShapeStudio from "./shapeStudio/ShapeStudio";
 import FeedDiffPage from "./diff/FeedDiffPage";
 import NetworkStudio from "./network/NetworkStudio";
+import PricingDialog, { PRICING_EVENT } from "./PricingDialog";
 // Import of the advanced analysis component
 
 import ValidationErrorsPage from "./ValidationErrorsPage";
@@ -194,6 +195,13 @@ function GTFSApp() {
     const handler = () => setStudioOpen(true);
     window.addEventListener("gtfs:open-network-studio", handler);
     return () => window.removeEventListener("gtfs:open-network-studio", handler);
+  }, []);
+  // Plans & pricing, opened at the moment a limit is met (detail.reason).
+  const [pricing, setPricing] = useState(null); // null | { reason }
+  useEffect(() => {
+    const handler = (e) => setPricing({ reason: e?.detail?.reason || null });
+    window.addEventListener(PRICING_EVENT, handler);
+    return () => window.removeEventListener(PRICING_EVENT, handler);
   }, []);
   const [dataLoading, setDataLoading] = useState(false);
   const [loadingStep, setLoadingStep] = useState(0);
@@ -2068,6 +2076,7 @@ function GTFSApp() {
       <CommandPalette />
       <ShortcutsHelpDialog />
       <NetworkStudio open={studioOpen} onClose={() => setStudioOpen(false)} onCreated={handleNetworkCreated} />
+      <PricingDialog open={Boolean(pricing)} reason={pricing?.reason || null} onClose={() => setPricing(null)} />
       <ChatAssistantFAB
         feedLoaded={agencies.length > 0}
         feedEpoch={feedEpoch}

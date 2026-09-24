@@ -140,8 +140,16 @@ module.exports = {
   // Planner model: designing a network from a brief is the reasoning-heavy
   // step, so it defaults to the strongest tier; falls back to the chat model.
   NETWORK_PLANNER_MODEL: process.env.NETWORK_PLANNER_MODEL || "claude-opus-5-5",
-  // Free plan limits for network creation (paid plans lift them).
+  // Plans. Free builds small networks; Pro/Team (an access code with the
+  // matching tier in codes.json) lift the caps. Prices are display-only;
+  // Stripe Checkout links carry the purchase when configured.
   NETWORK_FREE_MAX_LINES: parseInt(process.env.NETWORK_FREE_MAX_LINES, 10) || 3,
+  NETWORK_PRO_MAX_LINES: parseInt(process.env.NETWORK_PRO_MAX_LINES, 10) || 40,
+  PLAN_PRO_PRICE_EUR: parseInt(process.env.PLAN_PRO_PRICE_EUR, 10) || 39,
+  PLAN_TEAM_PRICE_EUR: parseInt(process.env.PLAN_TEAM_PRICE_EUR, 10) || 149,
+  STRIPE_CHECKOUT_URL_PRO: process.env.STRIPE_CHECKOUT_URL_PRO || "",
+  STRIPE_CHECKOUT_URL_TEAM: process.env.STRIPE_CHECKOUT_URL_TEAM || "",
+  PLAN_CONTACT_EMAIL: process.env.PLAN_CONTACT_EMAIL || "weylandbinary@gmail.com",
 
   NL2SQL_CHAT_ENABLED: process.env.NL2SQL_CHAT_ENABLED === "true",
   NL2SQL_CHAT_MODEL: process.env.NL2SQL_CHAT_MODEL || "claude-sonnet-4-6",

@@ -17,6 +17,7 @@ import IosShareIcon from "@mui/icons-material/IosShare";
 import LockOpenOutlinedIcon from "@mui/icons-material/LockOpenOutlined";
 import MailOutlineIcon from "@mui/icons-material/MailOutline";
 import VpnKeyOutlinedIcon from "@mui/icons-material/VpnKeyOutlined";
+import WorkspacePremiumOutlinedIcon from "@mui/icons-material/WorkspacePremiumOutlined";
 import { useLanguage } from "../../contexts/LanguageContext";
 
 const SUPPORT_EMAIL = "weylandbinary@gmail.com";
@@ -100,10 +101,9 @@ function UpsellPanel({ onHaveCode }) {
         <Button
           variant="contained"
           size="small"
-          startIcon={<MailOutlineIcon sx={{ fontSize: 15 }} />}
-          href={mailto}
-          target="_blank"
-          rel="noreferrer"
+          startIcon={<WorkspacePremiumOutlinedIcon sx={{ fontSize: 15 }} />}
+          onClick={() => window.dispatchEvent(new CustomEvent("gtfs:open-pricing", { detail: { reason: "ai_quota" } }))}
+          data-testid="chat-upsell-plans"
           sx={{
             textTransform: "none",
             fontWeight: 700,
@@ -111,6 +111,17 @@ function UpsellPanel({ onHaveCode }) {
             boxShadow: "none",
             "&:hover": { boxShadow: "none" },
           }}
+        >
+          {t("chat.upsell.seePlans")}
+        </Button>
+        <Button
+          variant="outlined"
+          size="small"
+          startIcon={<MailOutlineIcon sx={{ fontSize: 15 }} />}
+          href={mailto}
+          target="_blank"
+          rel="noreferrer"
+          sx={{ textTransform: "none", fontWeight: 600, flexShrink: 0 }}
         >
           {t("chat.upsell.requestCta")}
         </Button>

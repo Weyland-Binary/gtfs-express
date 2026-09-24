@@ -24,27 +24,27 @@ const sseResponse = (chunks) => {
 
 describe("networkStudioApi", () => {
   beforeEach(() => {
-    global.fetch = vi.fn();
+    globalThis.fetch = vi.fn();
     localStorage.clear();
   });
 
   it("streams planner events, tolerating chunk boundaries inside an event", async () => {
-    global.fetch.mockResolvedValueOnce(sseResponse(['event: meta\ndata: {"model":"m"}\n\nevent: tok', 'en\ndata: {"text":"Bon"}\n\nevent: spec\ndata: {"ok":true,"spec":{"lines":[]}}\n\n', "event: done\ndata: {\"reason\":\"complete\"}\n\n"]));
+    globalThis.fetch.mockResolvedValueOnce(sseResponse(['event: meta\ndata: {"model":"m"}\n\nevent: tok', 'en\ndata: {"text":"Bon"}\n\nevent: spec\ndata: {"ok":true,"spec":{"lines":[]}}\n\n', "event: done\ndata: {\"reason\":\"complete\"}\n\n"]));
     const events = [];
     localStorage.setItem("beta-code", "ABCD");
     await streamPlan({ brief: "x", language: "fr", onEvent: (e, d) => events.push([e, d]) });
     expect(events.map((e) => e[0])).toEqual(["meta", "token", "spec", "done"]);
     expect(events[1][1]).toEqual({ text: "Bon" });
-    const [url, init] = global.fetch.mock.calls[0];
+    const [url, init] = globalThis.fetch.mock.calls[0];
     expect(url).toMatch(/\/network\/plan$/);
     expect(init.headers["X-Beta-Code"]).toBe("ABCD");
     expect(JSON.parse(init.body)).toMatchObject({ brief: "x", language: "fr", messages: [] });
   });
 
   it("surfaces pre-stream JSON errors with their code", async () => {
-    global.fetch.mockResolvedValueOnce({ headers: { get: () => "application/json" }, status: 403, json: async () => ({ error: "FREE_QUOTA_EXHAUSTED", message: "no more" }) });
+    globalThis.fetch.mockResolvedValueOnce({ headers: { get: () => "application/json" }, status: 403, json: async () => ({ error: "FREE_QUOTA_EXHAUSTED", message: "no more" }) });
     await expect(streamPlan({ brief: "x", onEvent: () => {} })).rejects.toMatchObject({ code: "FREE_QUOTA_EXHAUSTED", status: 403 });
-    global.fetch.mockResolvedValueOnce({ ok: false, status: 402, json: async () => ({ error: "PLAN_LIMIT", message: "too many lines" }) });
+    globalThis.fetch.mockResolvedValueOnce({ ok: false, status: 402, json: async () => ({ error: "PLAN_LIMIT", message: "too many lines" }) });
     await expect(validateSpec({})).rejects.toMatchObject({ code: "PLAN_LIMIT", status: 402 });
   });
 
