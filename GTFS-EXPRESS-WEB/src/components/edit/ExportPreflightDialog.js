@@ -163,7 +163,6 @@ function ExportPreflightDialog({ open, onClose, onConfirmExport, onReviewErrors 
   const [showRiskConfirm, setShowRiskConfirm] = useState(false);
 
   const elapsedTimerRef = useRef(null);
-  const staleTimerRef = useRef(null);
 
   // ── Helpers ──────────────────────────────────────────────────────────────────
   const pluralKey = useCallback(
@@ -248,16 +247,11 @@ function ExportPreflightDialog({ open, onClose, onConfirmExport, onReviewErrors 
     return () => clearInterval(elapsedTimerRef.current);
   }, [validatedAt]);
 
-  // ── Stale re-validation (30s in edit mode) ────────────────────────────────────
-  useEffect(() => {
-    if (!validatedAt || !editing) return;
-
-    staleTimerRef.current = setTimeout(() => {
-      runValidation();
-    }, 30_000);
-
-    return () => clearTimeout(staleTimerRef.current);
-  }, [validatedAt, editing, runValidation]);
+  // ── Staleness ─────────────────────────────────────────────────────────────────
+  // The report is flagged stale after 30 s (`isStale` below) but is NOT
+  // re-run automatically: the automatic re-run wiped the report and the
+  // "I accept the risk" checkbox from under the user while they were
+  // reading it. Re-validation is explicit (button) or on reopen.
 
   // ── Derived state ────────────────────────────────────────────────────────────
   // Parse once with a generous topN — we slice per-case below. INFO-level
@@ -472,7 +466,10 @@ function ExportPreflightDialog({ open, onClose, onConfirmExport, onReviewErrors 
                 label={t("export.preflight.staleValidation")}
                 size="small"
                 icon={<RefreshIcon sx={{ fontSize: 12 }} />}
+                onClick={runValidation}
+                data-testid="export-revalidate"
                 sx={{
+                  cursor: "pointer",
                   height: 20,
                   fontSize: "0.65rem",
                   backgroundColor: alpha(theme.palette.warning.main, 0.12),

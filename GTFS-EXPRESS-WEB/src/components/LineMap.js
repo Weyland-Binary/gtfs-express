@@ -116,6 +116,21 @@ export const SHAPE_PALETTE = [
 function FitBounds({ shapesById, stops, focusedStopId }) {
   const map = useMap();
   const prevFocusRef = useRef(null);
+  const prevDatasetKeyRef = useRef(null);
+
+  // Identity of the displayed dataset: which shapes and which stops. Every
+  // edit (a dragged stop, a saved shape) triggers a silent refetch that
+  // hands us NEW array references for the SAME dataset — refitting then
+  // threw away the user's zoom after each change. Only refit when the set
+  // of shapes / stops actually changes (route switch, shape created…).
+  const datasetKey = useMemo(() => {
+    const shapeIds = Object.keys(shapesById).sort().join(",");
+    const stopIds = stops
+      .map((s) => s.stop_id)
+      .sort()
+      .join(",");
+    return `${shapeIds}|${stopIds}`;
+  }, [shapesById, stops]);
 
   useEffect(() => {
     const prevFocus = prevFocusRef.current;
@@ -128,6 +143,8 @@ function FitBounds({ shapesById, stops, focusedStopId }) {
     // Focus was just cleared (prev truthy, now null) — let FlyToFocusedStop
     // animate the refit instead of snapping instantly here.
     if (prevFocus) return;
+    if (prevDatasetKeyRef.current === datasetKey) return;
+    prevDatasetKeyRef.current = datasetKey;
 
     const shapeArrays = Object.values(shapesById);
     if (shapeArrays.length > 0 || stops.length > 0) {
@@ -148,7 +165,7 @@ function FitBounds({ shapesById, stops, focusedStopId }) {
         map.fitBounds(bounds, { padding: [50, 50] });
       }
     }
-  }, [shapesById, stops, map, focusedStopId]);
+  }, [shapesById, stops, map, focusedStopId, datasetKey]);
 
   return null;
 }
