@@ -26,6 +26,7 @@
 const { haversineMeters } = require("../../utils/geoUtils");
 const { departuresOf, MODES } = require("./networkSpec");
 const { coverageOf } = require("./territoryService");
+const { estimateOperations, summarizeOperations, fmtMoney } = require("./operationsService");
 
 const HUB_CELL_M = 500;
 const HUB_MERGE_M = 350;
@@ -38,6 +39,7 @@ const SNAP_M = 40;
 const DENSIFY_BAND_M = 80;
 const DENSIFY_MIN_SPACING_M = 250;
 const MAX_INSERTS_PER_DIRECTION = 8;
+const RESIDENTS_PER_WEIGHT = 500;
 
 // Stop spacing (metres) and commercial speed (km/h) that make sense per mode.
 const MODE_PROFILE = {
@@ -119,6 +121,8 @@ const demandHubs = (territory, { cellM = HUB_CELL_M, max = MAX_HUBS } = {}) => {
     if (!c.best || weight > c.best.weight) c.best = { name, weight, category };
   };
   for (const p of territory.pois?.items || []) if (Number.isFinite(p.lat) && Number.isFinite(p.lon)) add(p.lat, p.lon, p.weight || 1, p.name, p.category);
+  // Residents: a 250 m cell of 2 000 people weighs like a hospital.
+  for (const c of territory.population_grid?.cells || []) if (c.pop >= RESIDENTS_PER_WEIGHT) add(c.lat, c.lon, c.pop / RESIDENTS_PER_WEIGHT, `~${c.pop} residents`, "residents");
   // The centre is where everything converges; weight it like a big generator.
   if (territory.place && Number.isFinite(territory.place.lat)) add(territory.place.lat, territory.place.lon, 6, territory.place.name || "Centre", "centre");
   let hubs = [...cells.values()].map((c, i) => ({ id: `h${i + 1}`, name: c.best.name, lat: c.latW / c.weight, lon: c.lonW / c.weight, weight: c.weight, categories: c.categories }));
@@ -369,13 +373,17 @@ const evaluatePlan = (spec, { territory = null, geometry = null } = {}) => {
   const isSchoolOrShuttle = (l) => l.mode === "shuttle" || /scol|school|navette|shuttle/i.test(`${l.short_name} ${l.long_name || ""}`);
 
   // 1. Coverage.
-  if (territory && (territory.pois?.items || []).length) {
+  if (territory && ((territory.pois?.items || []).length || territory.population_grid?.cells?.length)) {
     const c = coverageOf(spec, territory);
     const findings = [];
     if (c.coverage_pct != null && c.coverage_pct < 70) findings.push(f("major", `Only ${c.coverage_pct}% of the trip generators are within ${c.radius_m} m of a served stop.`, "Add a stop or a via near the main unserved places (coverage_score lists them)."));
+    if (c.population && c.population.pct != null && c.population.pct < 60) findings.push(f(c.population.pct < 40 ? "major" : "minor", `Only ${c.population.pct}% of the residents live within ${c.radius_m} m of a served stop${c.population.estimated ? " (population estimated)" : ""}.`, `Route a line through the densest unserved areas (e.g. ${c.population.top_missed.slice(0, 2).map((m) => `~${m.pop} residents at ${m.lat.toFixed(4)},${m.lon.toFixed(4)}`).join("; ")}).`));
     for (const m of c.top_missed.slice(0, 4)) findings.push(f("minor", `${m.name} (${m.category}) is not served.`, `Route a line via ${m.name} or add a stop within ${c.radius_m} m.`, { lat: m.lat, lon: m.lon }));
     if (c.stops_planned && c.existing_stops_reused / c.stops_planned < 0.5 && (territory.existing_stops || []).length > 20) findings.push(f("minor", `${c.existing_stops_reused}/${c.stops_planned} planned stops are existing stops; passengers know the existing ones.`, "Call refine_stops to snap onto and reuse existing stops."));
-    dims.push(dim("coverage", c.coverage_pct, findings, { coverage: c }));
+    // Generators and residents weigh the same when both are known.
+    const parts = [c.coverage_pct, c.population?.pct].filter((v) => v != null);
+    const score = parts.length ? parts.reduce((s, v) => s + v, 0) / parts.length : null;
+    dims.push(dim("coverage", score, findings, { coverage: c }));
   } else dims.push(dim("coverage", null, [f("info", "No territory dossier: coverage of the trip generators cannot be measured.", "Call get_territory with the town or area.")]));
 
   // 2. Spacing.
@@ -523,10 +531,20 @@ const evaluatePlan = (spec, { territory = null, geometry = null } = {}) => {
     dims.push(dim("plausibility", score, findings));
   }
 
+  // Operations: not a score, a bill — unless the brief set a cap.
+  let operations = null;
+  try {
+    operations = (spec.lines || []).length ? estimateOperations(spec, geometry) : null;
+  } catch {
+    operations = null;
+  }
+
   // 7. Compliance.
   {
     const findings = [];
     let score = 100;
+    if (operations?.limits?.max_vehicles != null && operations.fleet_total > operations.limits.max_vehicles) { score -= 40; findings.push(f("major", `The plan needs ${operations.fleet_total} vehicles; the brief allows ${operations.limits.max_vehicles}.`, "Loosen the headways, shorten a line or drop one until the fleet fits.")); }
+    if (operations?.limits?.max_cost_year != null && operations.cost_year > operations.limits.max_cost_year) { score -= 40; findings.push(f("major", `The plan costs ≈ ${fmtMoney(operations.cost_year, operations.currency)}/year; the budget is ${fmtMoney(operations.limits.max_cost_year, operations.currency)}.`, "Reduce vehicle-km: shorter lines, wider off-peak headways, no Sunday service.")); }
     if (!spec.agency?.timezone) { score -= 30; findings.push(f("major", "The agency has no timezone.", "Set agency.timezone (IANA), e.g. from the territory.")); }
     if (!spec.agency?.url || /example/.test(spec.agency.url)) { score -= 10; findings.push(f("info", "The agency URL is missing or a placeholder.", "Ask the user for the operator's website, or keep a placeholder and say so.")); }
     if (territory?.holidays?.length && !(spec.holidays || []).length) { score -= 25; findings.push(f("minor", "No public holidays in the spec although the territory lists them.", "Copy the territory's holiday dates into holidays[] (holiday_service: sunday).")); }
@@ -550,7 +568,7 @@ const evaluatePlan = (spec, { territory = null, geometry = null } = {}) => {
     .sort((a, b) => order[a.level] - order[b.level])
     .slice(0, 8);
   const majors = dims.reduce((n, d) => n + d.findings.filter((x) => x.level === "major").length, 0);
-  return { score, grade, majors, dimensions: dims, recommendations, generatedAt: new Date().toISOString() };
+  return { score, grade, majors, dimensions: dims, recommendations, operations, generatedAt: new Date().toISOString() };
 };
 
 /** The report as text for the model. */
@@ -560,6 +578,7 @@ const summarizeReport = (r) => {
     const top = d.findings.filter((x) => x.level !== "info").slice(0, 3).map((x) => x.message);
     out.push(`- ${d.id} (weight ${d.weight}): ${d.score == null ? "not measurable" : d.score}${top.length ? ` — ${top.join(" | ")}` : ""}`);
   }
+  if (r.operations) out.push(summarizeOperations(r.operations));
   if (r.recommendations.length) {
     out.push("Recommendations:");
     for (const rec of r.recommendations) out.push(`- [${rec.level}] ${rec.hint}`);

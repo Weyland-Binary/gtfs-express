@@ -98,3 +98,26 @@ test("building the network creates a session the app opens", async () => {
   await expect(page.getByTestId("dashboard-validation-health")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText("Réseau E2E").first()).toBeVisible({ timeout: 30_000 });
 });
+
+test("a public share link lands a visitor on the card and opens their own copy", async () => {
+  test.setTimeout(120_000);
+  await page.getByTestId("share-network").click();
+  const link = page.getByTestId("share-link");
+  await expect(link).toHaveValue(/\?share=[a-f0-9]{20}$/, { timeout: 30_000 });
+  const url = await link.inputValue();
+  await expect(page.getByTestId("share-zip")).toHaveAttribute("href", /gtfs\.zip$/);
+  // A second tab, no session: the landing card, then the visitor's own session.
+  const visitor = await page.context().browser().newContext();
+  const guest = await visitor.newPage();
+  await guest.goto(url);
+  const landing = guest.getByTestId("share-landing");
+  await expect(landing).toBeVisible({ timeout: 30_000 });
+  await expect(guest.getByTestId("share-landing-title")).toHaveText("Réseau E2E");
+  await expect(guest.getByTestId("share-validation")).toBeVisible();
+  await expect(guest.getByTestId("share-quality")).toBeVisible();
+  await guest.getByTestId("share-explore").click();
+  await expect(guest.getByTestId("tab-home")).toBeVisible({ timeout: 60_000 });
+  await expect(guest.getByText("Réseau E2E").first()).toBeVisible({ timeout: 30_000 });
+  await expect(guest).not.toHaveURL(/share=/);
+  await visitor.close();
+});

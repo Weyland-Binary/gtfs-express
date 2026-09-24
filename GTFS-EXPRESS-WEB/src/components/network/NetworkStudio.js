@@ -27,11 +27,12 @@ import CheckCircleOutlineIcon from "@mui/icons-material/CheckCircleOutline";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import LockOutlinedIcon from "@mui/icons-material/LockOutlined";
+import DirectionsBusFilledOutlinedIcon from "@mui/icons-material/DirectionsBusFilledOutlined";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { useFeatures } from "../../utils/featuresApi";
 import { validateSpec, estimateSpec, compileSpec, streamPlan, loadDraft, saveDraft, fetchCoverage, evaluateSpec, refineSpec } from "../../utils/networkStudioApi";
 import TerritoryPanel from "./TerritoryPanel";
-import { QualityBadge, QualityCard } from "./PlanCards";
+import { QualityBadge, QualityCard, fmtMoney } from "./PlanCards";
 import NetworkMap from "./NetworkMap";
 import PlanChat from "./PlanChat";
 import { LinesEditor, StopsEditor, JsonEditor } from "./SpecEditors";
@@ -87,7 +88,7 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
   const [restored, setRestored] = useState(false);
   const [shared, setShared] = useState(false);
   const [territory, setTerritory] = useState(null);
-  const [layers, setLayers] = useState({ stops: true, pois: true });
+  const [layers, setLayers] = useState({ stops: true, pois: true, population: true });
   const [coverage, setCoverage] = useState(null);
   const [requirements, setRequirements] = useState(null);
   const [quality, setQuality] = useState(null);
@@ -119,7 +120,7 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
   useEffect(() => {
     if (!restored) return;
     const hasContent = (spec.lines || []).length > 0 || (spec.stops || []).length > 0 || turns.length > 0 || territory;
-    saveDraft(hasContent ? { spec, turns: turns.slice(-12).map((x) => ({ ...x, quality: undefined })), requirements, territory: territory ? { ...territory, existing_stops: territory.existing_stops.slice(0, 300), pois: { ...territory.pois, items: territory.pois.items.slice(0, 200) } } : null } : null);
+    saveDraft(hasContent ? { spec, turns: turns.slice(-12).map((x) => ({ ...x, quality: undefined })), requirements, territory: territory ? { ...territory, existing_stops: territory.existing_stops.slice(0, 300), pois: { ...territory.pois, items: territory.pois.items.slice(0, 200) }, population_grid: territory.population_grid ? { ...territory.population_grid, cells: territory.population_grid.cells.slice(0, 600) } : null } : null } : null);
   }, [spec, turns, restored, territory, requirements]);
 
   useEffect(() => {
@@ -470,7 +471,7 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
           <Box sx={{ flex: 1, minHeight: 0, position: "relative", overflow: tab === "map" ? "hidden" : "auto", p: tab === "map" ? 0 : 1.5 }}>
             {tab === "map" && (
               <>
-                <NetworkMap stops={spec.stops || []} lines={validation?.spec?.lines || spec.lines || []} geometry={geometry} corridors={corridors} existingStops={territory && layers.stops ? territory.existing_stops : []} pois={territory && layers.pois ? territory.pois.items : []} onPickExistingStop={(s) => { if (!(spec.stops || []).some((x) => x.id === s.id)) updateSpec({ ...spec, stops: [...(spec.stops || []), { id: s.id, name: s.name || s.kind, lat: s.lat, lon: s.lon, source: "osm" }] }); }} selectedStopId={selectedStopId} placingStopId={placingStopId} onSelectStop={setSelectedStopId} onMoveStop={(id, lat, lon) => updateSpec({ ...spec, stops: spec.stops.map((s) => (s.id === id ? { ...s, lat, lon } : s)) })} onPlaceStop={(id, lat, lon) => { updateSpec({ ...spec, stops: spec.stops.map((s) => (s.id === id ? { ...s, lat, lon } : s)) }); setPlacingStopId(null); }} fitEpoch={fitEpoch} />
+                <NetworkMap stops={spec.stops || []} lines={validation?.spec?.lines || spec.lines || []} geometry={geometry} corridors={corridors} population={territory && layers.population ? territory.population_grid : null} existingStops={territory && layers.stops ? territory.existing_stops : []} pois={territory && layers.pois ? territory.pois.items : []} onPickExistingStop={(s) => { if (!(spec.stops || []).some((x) => x.id === s.id)) updateSpec({ ...spec, stops: [...(spec.stops || []), { id: s.id, name: s.name || s.kind, lat: s.lat, lon: s.lon, source: "osm" }] }); }} selectedStopId={selectedStopId} placingStopId={placingStopId} onSelectStop={setSelectedStopId} onMoveStop={(id, lat, lon) => updateSpec({ ...spec, stops: spec.stops.map((s) => (s.id === id ? { ...s, lat, lon } : s)) })} onPlaceStop={(id, lat, lon) => { updateSpec({ ...spec, stops: spec.stops.map((s) => (s.id === id ? { ...s, lat, lon } : s)) }); setPlacingStopId(null); }} fitEpoch={fitEpoch} />
                 {placingStopId && (
                   <Box sx={{ position: "absolute", top: 12, left: "50%", transform: "translateX(-50%)", zIndex: 1000, px: 1.5, py: 0.6, borderRadius: 99, background: theme.palette.warning.main, color: theme.palette.warning.contrastText, fontSize: "0.76rem", fontWeight: 700, boxShadow: 3 }}>
                     {t("network.placingHint", { name: (spec.stops || []).find((s) => s.id === placingStopId)?.name || "" })}
@@ -519,6 +520,11 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
                   <Chip size="small" label={t("network.estimate.trips", { count: estimate.trips })} sx={{ height: 22, fontSize: "0.68rem" }} />
                   {geometry.length > 0 && <Chip size="small" label={t("network.estimate.km", { km: Math.round(geometry.reduce((a, g) => a + (g.distance_km || 0), 0)) })} sx={{ height: 22, fontSize: "0.68rem" }} />}
                   <QualityBadge quality={quality} onClick={() => setQualityOpen(true)} />
+                  {quality?.operations && quality.operations.fleet_total > 0 && (
+                    <Tooltip title={t("network.ops.hint", { km: quality.operations.veh_km_year.toLocaleString(), hours: quality.operations.veh_h_year.toLocaleString() })}>
+                      <Chip size="small" icon={<DirectionsBusFilledOutlinedIcon sx={{ fontSize: 14 }} />} label={`${t("network.ops.fleet", { count: quality.operations.fleet_total })} · ${t("network.ops.cost", { cost: fmtMoney(quality.operations.cost_year, quality.operations.currency) })}`} onClick={() => setQualityOpen(true)} variant="outlined" data-testid="network-ops" sx={{ height: 22, fontSize: "0.68rem", fontWeight: 700 }} />
+                    </Tooltip>
+                  )}
                   <Box component="button" type="button" onClick={() => setIssuesOpen((v) => !v)} data-testid="network-issues-toggle" sx={{ all: "unset", cursor: issues.length ? "pointer" : "default", display: "flex", alignItems: "center", gap: 0.5, fontSize: "0.74rem", fontWeight: 700, color: blockers.length ? "error.main" : warnings.length ? "warning.dark" : "success.main" }}>
                     {blockers.length ? <ErrorOutlineIcon sx={{ fontSize: 15 }} /> : warnings.length ? <WarningAmberIcon sx={{ fontSize: 15 }} /> : <CheckCircleOutlineIcon sx={{ fontSize: 15 }} />}
                     {blockers.length ? t("network.issues.blockers", { count: blockers.length }) : warnings.length ? t("network.issues.warnings", { count: warnings.length }) : t("network.issues.none")}

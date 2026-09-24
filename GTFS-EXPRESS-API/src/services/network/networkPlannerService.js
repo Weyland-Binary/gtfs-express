@@ -73,7 +73,8 @@ You NEVER write GTFS rows yourself. You produce a Network Spec through the set_s
                     "periods"?: [ { "from": "06:00", "to": "09:00", "headway_min": 10 } ], "departures"?: ["06:05", …] } ]
   } ],
   "holidays"?: ["YYYYMMDD"], "holiday_service"?: "sunday"|"none",
-  "transfers"?: [ { "from", "to", "min_minutes" } ]
+  "transfers"?: [ { "from", "to", "min_minutes" } ],
+  "operations"?: { "currency"?: "EUR", "cost_per_km"?: number | {mode: number}, "cost_per_hour"?, "layover_min"?, "max_vehicles"?, "max_cost_year"? }
 }
 Limits: ≤ ${LIMITS.lines} lines, ≤ ${LIMITS.stops} stops, ≤ ${LIMITS.stopsPerDirection} stops per direction, ≤ ${LIMITS.trips} trips.
 
@@ -106,6 +107,7 @@ Answer in markdown, in the user's language, briefly: the network (lines, stops, 
 - Colours: one distinct colour per line; keep the brief's colours when given.
 - Stop naming: proper case, no codes; termini names as headsigns.
 - Ids: short and stable (line short name; stop slug); the compiler slugs missing ids.
+- Operations: evaluate_plan reports the fleet (vehicles at peak per line, no interlining), the vehicle-km and vehicle-hours per year and the yearly cost (per-mode cost per km; the brief's figures go in operations.cost_per_km / cost_per_hour / currency). When the brief caps the fleet or the budget, put it in operations.max_vehicles / max_cost_year: the report flags an overrun as a major finding, and you must fit within it (wider headways off-peak, shorter lines, fewer lines) before delivering. Always quote the fleet and the yearly cost in your summary.
 - Line design: stops every 300–600 m in town, termini at generators or existing stops, no detour over ×1.5 of the straight distance, every line meets another at a hub (station, centre) so passengers can transfer; a small town gets radial lines through the centre, a bigger one adds a cross-town line.
 
 # Style
@@ -397,6 +399,7 @@ const createTools = (ctx) => {
       return {
         content: [
           `Coverage: ${c.coverage_pct == null ? "n/a" : `${c.coverage_pct}%`} of trip generators within ${c.radius_m} m of a served stop (${c.pois_covered}/${c.pois_total}); ${c.existing_stops_reused}/${c.stops_planned} planned stops are existing stops.`,
+          c.population ? `Residents within ${c.radius_m} m of a served stop: ${c.population.pct == null ? "n/a" : `${c.population.pct}%`} (${c.population.covered}/${c.population.total}${c.population.estimated ? ", estimated" : ""}). Densest unserved areas: ${c.population.top_missed.map((m) => `~${m.pop} at ${m.lat.toFixed(4)},${m.lon.toFixed(4)}`).join("; ") || "none"}.` : "",
           `By category: ${Object.entries(c.by_category).map(([k, v]) => `${k} ${v.covered}/${v.total}`).join(", ") || "none"}.`,
           c.top_missed.length ? `Main unserved places: ${c.top_missed.map((m) => `${m.name} (${m.category}, ${m.lat.toFixed(5)},${m.lon.toFixed(5)})`).join("; ")}.` : "Every major generator is served.",
         ].join("\n"),

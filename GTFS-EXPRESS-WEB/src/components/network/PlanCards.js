@@ -15,6 +15,7 @@ import ErrorOutlineIcon from "@mui/icons-material/ErrorOutline";
 import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
+import DirectionsBusFilledOutlinedIcon from "@mui/icons-material/DirectionsBusFilledOutlined";
 import { useLanguage } from "../../contexts/LanguageContext";
 
 export const DIMENSIONS = ["coverage", "spacing", "directness", "service", "connectivity", "plausibility", "compliance"];
@@ -25,6 +26,13 @@ export const qualityColor = (score, theme) => {
   if (score >= 70) return theme.palette.info.main;
   if (score >= 55) return theme.palette.warning.main;
   return theme.palette.error.main;
+};
+
+/** 1 234 567 → "1.23 M EUR"; 45 600 → "46 k EUR". */
+export const fmtMoney = (v, currency = "EUR") => {
+  const n = Number(v) || 0;
+  const s = n >= 1e6 ? `${(n / 1e6).toFixed(2)} M` : n >= 1e3 ? `${Math.round(n / 1e3)} k` : String(Math.round(n));
+  return `${s} ${currency}`;
 };
 
 const CONFIDENCE_COLOR = { high: "success", medium: "warning", low: "error" };
@@ -161,6 +169,17 @@ export function QualityCard({ quality, dense = false }) {
           </Box>
         ))}
       </Box>
+      {q.operations && q.operations.fleet_total > 0 && (
+        <Box data-testid="quality-operations" sx={{ display: "flex", flexWrap: "wrap", gap: 0.5, alignItems: "center", fontSize: "0.72rem", px: 1, py: 0.6, borderRadius: 1.5, background: alpha(theme.palette.text.primary, 0.04) }}>
+          <DirectionsBusFilledOutlinedIcon sx={{ fontSize: 15, color: "text.secondary" }} />
+          <strong>{t("network.ops.title")}</strong>
+          <span>{t("network.ops.fleet", { count: q.operations.fleet_total })}</span>
+          <span>· {t("network.ops.km", { km: q.operations.veh_km_year.toLocaleString() })}</span>
+          <span>· {t("network.ops.cost", { cost: fmtMoney(q.operations.cost_year, q.operations.currency) })}</span>
+          {q.operations.limits?.max_vehicles != null && <Chip size="small" color={q.operations.fleet_total > q.operations.limits.max_vehicles ? "error" : "success"} label={t("network.ops.cap", { max: q.operations.limits.max_vehicles })} sx={{ height: 18, fontSize: "0.62rem" }} />}
+          {q.operations.limits?.max_cost_year != null && <Chip size="small" color={q.operations.cost_year > q.operations.limits.max_cost_year ? "error" : "success"} label={t("network.ops.budget", { budget: fmtMoney(q.operations.limits.max_cost_year, q.operations.currency) })} sx={{ height: 18, fontSize: "0.62rem" }} />}
+        </Box>
+      )}
       {findings.length > 0 ? (
         <Box sx={{ display: "flex", flexDirection: "column", gap: 0.35 }}>
           {findings.map((x, i) => {

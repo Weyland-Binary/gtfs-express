@@ -207,6 +207,103 @@ const fetchPois = async (bbox, fetchImpl) => {
   return { categories: counts, items };
 };
 
+// ── Population grid (dasymetric: residents over the residential land) ─────
+//
+// OpenStreetMap's landuse=residential polygons say where people live; the
+// known population of the place (OSM/Wikidata) says how many. Spreading the
+// total over the residential area at uniform density gives a 250 m grid
+// that is wrong in detail and right in shape — enough to measure "residents
+// within 400 m of a stop" and to weigh the demand hubs, worldwide, without
+// a raster download. Without a known population, a default density gives an
+// estimate flagged as such.
+
+const GRID_CELL_M = 250;
+const MAX_GRID_CELLS = 2500;
+const MAX_RESIDENTIAL_WAYS = 600;
+const DEFAULT_RESIDENTIAL_DENSITY_PER_KM2 = 4000;
+
+const fetchResidential = async (bbox, fetchImpl) => {
+  const ql = `[out:json][timeout:25];way["landuse"="residential"](${bboxStr(bbox)});out geom ${MAX_RESIDENTIAL_WAYS};`;
+  const elements = await overpass(ql, fetchImpl);
+  const polygons = [];
+  for (const e of elements) {
+    if (e.type !== "way" || !Array.isArray(e.geometry) || e.geometry.length < 4) continue;
+    const pts = e.geometry.filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lon));
+    if (pts.length >= 4) polygons.push(pts);
+  }
+  return polygons;
+};
+
+const polygonAreaM2 = (pts) => {
+  const lat0 = pts.reduce((s, p) => s + p.lat, 0) / pts.length;
+  const kx = 111320 * Math.cos((lat0 * Math.PI) / 180);
+  const ky = 111320;
+  let a = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const p = pts[i];
+    const q = pts[(i + 1) % pts.length];
+    a += p.lon * kx * (q.lat * ky) - q.lon * kx * (p.lat * ky);
+  }
+  return Math.abs(a) / 2;
+};
+
+const pointInPolygon = (lat, lon, pts) => {
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const yi = pts[i].lat;
+    const xi = pts[i].lon;
+    const yj = pts[j].lat;
+    const xj = pts[j].lon;
+    if (yi > lat !== yj > lat && lon < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+};
+
+/** Residential polygons + a total → { cell_m, total, estimated, residential_km2, cells: [{lat, lon, pop}] }. */
+const populationGrid = (polygons, total, { cellM = GRID_CELL_M } = {}) => {
+  if (!polygons.length) return null;
+  const areaByCell = new Map();
+  const centreOf = new Map();
+  let totalArea = 0;
+  for (const pts of polygons) {
+    const area = polygonAreaM2(pts);
+    if (!(area > 0)) continue;
+    totalArea += area;
+    const lat0 = pts.reduce((s, p) => s + p.lat, 0) / pts.length;
+    const dLat = cellM / 111320;
+    const dLon = cellM / (111320 * Math.cos((lat0 * Math.PI) / 180));
+    const minLat = Math.min(...pts.map((p) => p.lat));
+    const maxLat = Math.max(...pts.map((p) => p.lat));
+    const minLon = Math.min(...pts.map((p) => p.lon));
+    const maxLon = Math.max(...pts.map((p) => p.lon));
+    const covered = [];
+    for (let i = Math.floor(minLat / dLat); i <= Math.ceil(maxLat / dLat); i++) {
+      for (let j = Math.floor(minLon / dLon); j <= Math.ceil(maxLon / dLon); j++) {
+        const lat = (i + 0.5) * dLat;
+        const lon = (j + 0.5) * dLon;
+        if (pointInPolygon(lat, lon, pts)) covered.push({ key: `${i}:${j}`, lat, lon });
+      }
+    }
+    if (!covered.length) {
+      // Smaller than a cell: all of it goes to the cell of its centroid.
+      const lat = lat0;
+      const lon = pts.reduce((s, p) => s + p.lon, 0) / pts.length;
+      covered.push({ key: `${Math.floor(lat / dLat)}:${Math.floor(lon / dLon)}`, lat: (Math.floor(lat / dLat) + 0.5) * dLat, lon: (Math.floor(lon / dLon) + 0.5) * dLon });
+    }
+    const share = area / covered.length;
+    for (const c of covered) {
+      areaByCell.set(c.key, (areaByCell.get(c.key) || 0) + share);
+      if (!centreOf.has(c.key)) centreOf.set(c.key, c);
+    }
+  }
+  if (!(totalArea > 0)) return null;
+  const estimated = !(total > 0);
+  const pop = estimated ? (totalArea / 1e6) * DEFAULT_RESIDENTIAL_DENSITY_PER_KM2 : total;
+  const cells = [...areaByCell.entries()].map(([key, area]) => ({ lat: Number(centreOf.get(key).lat.toFixed(5)), lon: Number(centreOf.get(key).lon.toFixed(5)), pop: Math.round((pop * area) / totalArea) })).filter((c) => c.pop >= 1);
+  cells.sort((a, b) => b.pop - a.pop);
+  return { cell_m: cellM, total: Math.round(pop), estimated, residential_km2: Math.round((totalArea / 1e6) * 100) / 100, cells: cells.slice(0, MAX_GRID_CELLS) };
+};
+
 const fetchPopulationWikidata = async (qid, fetchImpl) => {
   if (!qid || !/^Q\d+$/.test(qid)) return null;
   const query = `SELECT ?pop WHERE { wd:${qid} wdt:P1082 ?pop } LIMIT 1`;
@@ -270,10 +367,11 @@ const buildTerritory = async (query, { fetchImpl = null, force = false } = {}) =
   const place = await resolvePlace(q, doFetch);
   if (!place) throw Object.assign(new Error(`No place found for "${q}".`), { status: 404, code: "PLACE_NOT_FOUND" });
   const year = new Date().getFullYear();
-  const [stops, lines, pois, tz, holidays, schoolHolidays] = await Promise.all([
+  const [stops, lines, pois, residential, tz, holidays, schoolHolidays] = await Promise.all([
     soft("overpass stops", () => fetchStops(place.bbox, doFetch), []),
     soft("overpass lines", () => fetchLines(place.bbox, doFetch), []),
     soft("overpass pois", () => fetchPois(place.bbox, doFetch), { categories: {}, items: [] }),
+    soft("overpass residential", () => fetchResidential(place.bbox, doFetch), []),
     soft("open-meteo", () => fetchTimezone(place.lat, place.lon, doFetch), { timezone: null, elevation_m: null }),
     place.country_code ? soft("nager", () => fetchHolidays(place.country_code, [year, year + 1], doFetch), []) : Promise.resolve([]),
     place.country_code ? soft("openholidays", () => fetchSchoolHolidays(place.country_code, `${year}-01-01`, `${year + 1}-12-31`, doFetch), []) : Promise.resolve([]),
@@ -283,11 +381,13 @@ const buildTerritory = async (query, { fetchImpl = null, force = false } = {}) =
     const v = await soft("wikidata", () => fetchPopulationWikidata(place.wikidata, doFetch), null);
     if (v != null) population = { value: v, source: "wikidata" };
   }
+  const grid = populationGrid(residential, population ? population.value : null);
   const dossier = {
     place: { query: place.query, name: place.name, display_name: place.display_name, country_code: place.country_code, country: place.country, lat: place.lat, lon: place.lon, bbox: place.bbox, wikidata: place.wikidata, osm: place.osm_type && place.osm_id ? `${place.osm_type}/${place.osm_id}` : null },
     timezone: tz.timezone,
     elevation_m: tz.elevation_m,
     population,
+    population_grid: grid,
     existing_stops: stops,
     existing_lines: lines,
     pois,
@@ -316,6 +416,10 @@ const summarizeForModel = (d) => {
   const lines = [];
   lines.push(`[Territory] ${d.place.display_name} (country ${d.place.country_code || "?"}; centre ${d.place.lat.toFixed(4)}, ${d.place.lon.toFixed(4)}; box S${d.place.bbox[0].toFixed(3)} W${d.place.bbox[1].toFixed(3)} N${d.place.bbox[2].toFixed(3)} E${d.place.bbox[3].toFixed(3)})`);
   lines.push(`Timezone: ${d.timezone || "unknown"}. Population: ${d.population ? `${d.population.value} (${d.population.source})` : "unknown"}.`);
+  if (d.population_grid) {
+    const g = d.population_grid;
+    lines.push(`Residents on a ${g.cell_m} m grid over ${g.residential_km2} km² of residential land (${g.estimated ? "estimated from a default density" : "scaled to the known population"}; ${g.cells.length} cells). Densest areas: ${g.cells.slice(0, 6).map((c) => `~${c.pop} at ${c.lat.toFixed(4)},${c.lon.toFixed(4)}`).join("; ")}. Lines must pass through them; coverage_score reports the share of residents within 400 m of a stop.`);
+  }
   const named = d.existing_stops.filter((s) => s.name);
   lines.push(`Existing stops (OpenStreetMap): ${d.existing_stops.length} (${named.length} named). Reuse them: same names and coordinates, id = their id. Sample:`);
   const seen = new Set();
@@ -356,11 +460,21 @@ const coverageOf = (spec, d) => {
   const weight = (list) => list.reduce((a, p) => a + p.weight, 0);
   const reused = active.filter((s) => d.existing_stops.some((e) => haversineMeters(s.lat, s.lon, e.lat, e.lon) <= REUSE_RADIUS_M)).length;
   const missed = pois.filter((p) => !covered.includes(p)).sort((a, b) => b.weight - a.weight).slice(0, 10).map((p) => ({ name: p.name, category: p.category, lat: p.lat, lon: p.lon }));
+  // Residents: grid cells whose centre is within the radius of a served stop.
+  let population = null;
+  if (d.population_grid && d.population_grid.cells.length) {
+    const cells = d.population_grid.cells;
+    const total = cells.reduce((s, c) => s + c.pop, 0);
+    const coveredPop = cells.filter((c) => near(c.lat, c.lon, COVERAGE_RADIUS_M)).reduce((s, c) => s + c.pop, 0);
+    const missedCells = cells.filter((c) => !near(c.lat, c.lon, COVERAGE_RADIUS_M)).slice(0, 5).map((c) => ({ lat: c.lat, lon: c.lon, pop: c.pop }));
+    population = { total, covered: coveredPop, pct: total ? Math.round((coveredPop / total) * 100) : null, estimated: d.population_grid.estimated, top_missed: missedCells };
+  }
   return {
     pois_total: pois.length,
     pois_covered: covered.length,
     coverage_pct: pois.length ? Math.round((weight(covered) / Math.max(1, weight(pois))) * 100) : null,
     by_category: byCat,
+    population,
     stops_planned: active.length,
     existing_stops_reused: reused,
     top_missed: missed,
@@ -390,4 +504,4 @@ const findStops = (d, query, near = null, limit = 8) => {
   return scored.slice(0, limit).map((x) => ({ ...x.s, distance_m: Math.round(haversineMeters(centre.lat, centre.lon, x.s.lat, x.s.lon)) }));
 };
 
-module.exports = { buildTerritory, getCachedTerritory, summarizeForModel, coverageOf, findStops, SOURCES, POI_CATEGORIES, _internals: { resolvePlace, fetchStops, fetchLines, fetchPois, fetchHolidays, fetchSchoolHolidays, fetchTimezone, fetchPopulationWikidata, _cache } };
+module.exports = { buildTerritory, getCachedTerritory, summarizeForModel, coverageOf, findStops, populationGrid, SOURCES, POI_CATEGORIES, _internals: { resolvePlace, fetchStops, fetchLines, fetchPois, fetchResidential, fetchHolidays, fetchSchoolHolidays, fetchTimezone, fetchPopulationWikidata, polygonAreaM2, pointInPolygon, _cache } };

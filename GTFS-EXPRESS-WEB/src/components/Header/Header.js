@@ -27,6 +27,7 @@ import LanguageSelector from "./LanguageSelector";
 import EditModeToggle from "../edit/EditModeToggle";
 import ProjectMenu from "../edit/ProjectMenu";
 import { TablesBrowserButton } from "../TablesBrowserDrawer";
+import ShareButton from "../share/ShareButton";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { useDestructiveGuard } from "../../contexts/DestructiveGuardContext";
 import { useEditMode } from "../../contexts/EditModeContext";
@@ -290,6 +291,7 @@ function Header({
           {agenciesLoaded && <GlobalSearch />}
           {agenciesLoaded && <ProjectMenu />}
           {agenciesLoaded && <TablesBrowserButton />}
+          {agenciesLoaded && <ShareButton />}
           {agenciesLoaded && <EditModeToggle />}
           {agenciesLoaded && reportBadge && (
             <Tooltip

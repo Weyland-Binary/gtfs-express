@@ -403,6 +403,36 @@ const normalizeSpec = (raw) => {
     transfers.push({ from: from.id, to: to.id, min_minutes: minutes != null && minutes >= 0 ? minutes : 3, type: str(t.type) || "2" });
   });
 
+  // Operations (optional): what running the network costs, and the caps the
+  // brief imposes. Kept as given; the operations estimate reads them.
+  let operations;
+  if (input.operations && typeof input.operations === "object") {
+    const o = input.operations;
+    const nonNeg = (v, path) => {
+      const n = num(v);
+      if (n != null && n < 0) err("invalid_operations", path, "Operations figures must be ≥ 0.");
+      return n != null && n >= 0 ? n : undefined;
+    };
+    const currency = str(o.currency).toUpperCase();
+    let costPerKm;
+    if (o.cost_per_km && typeof o.cost_per_km === "object") {
+      costPerKm = {};
+      for (const [k, v] of Object.entries(o.cost_per_km)) {
+        const n = nonNeg(v, `operations.cost_per_km.${k}`);
+        if (n != null) costPerKm[k] = n;
+      }
+    } else costPerKm = nonNeg(o.cost_per_km, "operations.cost_per_km");
+    operations = {
+      currency: /^[A-Z]{3}$/.test(currency) ? currency : "EUR",
+      cost_per_km: costPerKm,
+      cost_per_hour: nonNeg(o.cost_per_hour, "operations.cost_per_hour"),
+      layover_min: nonNeg(o.layover_min, "operations.layover_min"),
+      max_vehicles: nonNeg(o.max_vehicles, "operations.max_vehicles"),
+      max_cost_year: nonNeg(o.max_cost_year, "operations.max_cost_year"),
+    };
+    for (const k of Object.keys(operations)) if (operations[k] === undefined) delete operations[k];
+  }
+
   // Coordinates: the blockers.
   const unresolved = stops.filter((s) => s.lat == null);
   for (const s of unresolved) err("stop_needs_coordinates", `stops.${s.id}`, `Stop "${s.name}" has no coordinates.`, { stopId: s.id, stopName: s.name, address: s.address || null });
@@ -420,6 +450,7 @@ const normalizeSpec = (raw) => {
     holidays,
     holiday_service: holidayService,
     transfers,
+    ...(operations ? { operations } : {}),
   };
   const estimate = estimateSpec(spec);
   if (estimate.trips > LIMITS.trips) err("too_many_trips", "lines", `The network would have ${estimate.trips} trips; the limit is ${LIMITS.trips}. Reduce the periods or headways.`);

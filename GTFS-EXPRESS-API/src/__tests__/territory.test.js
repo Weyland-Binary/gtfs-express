@@ -65,6 +65,7 @@ const fakeFetch = jest.fn(async (url, init = {}) => {
       ] });
     }
     if (body.includes('"type"="route"')) return ok({ elements: [{ type: "relation", id: 9, tags: { type: "route", route: "bus", ref: "1", name: "Bus 1", from: "Gare", to: "Hôpital", operator: "TVM" } }] });
+    if (body.includes('"landuse"="residential"')) return ok({ elements: [{ type: "way", id: 30, geometry: [{ lat: 47.79, lon: 1.06 }, { lat: 47.79, lon: 1.075 }, { lat: 47.8, lon: 1.075 }, { lat: 47.8, lon: 1.06 }, { lat: 47.79, lon: 1.06 }] }] });
     return ok({ elements: [
       { type: "node", id: 20, lat: 47.801, lon: 1.061, tags: { amenity: "hospital", name: "Centre hospitalier" } },
       { type: "way", id: 21, center: { lat: 47.79, lon: 1.05 }, tags: { amenity: "school", name: "Lycée Ronsard" } },
@@ -94,6 +95,11 @@ describe("territory dossier", () => {
     expect(dossier.timezone).toBe("Europe/Paris");
     expect(dossier.elevation_m).toBe(84);
     expect(dossier.population).toEqual({ value: 16879, source: "wikidata" });
+    // Residents spread over the residential polygon (≈ 1.1 km × 1.1 km) on a 250 m grid.
+    expect(dossier.population_grid.estimated).toBe(false);
+    expect(dossier.population_grid.total).toBe(16879);
+    expect(dossier.population_grid.cells.length).toBeGreaterThanOrEqual(16);
+    expect(dossier.population_grid.cells.reduce((s, c) => s + c.pop, 0)).toBeGreaterThan(16000);
     expect(dossier.existing_stops).toHaveLength(4);
     expect(dossier.existing_stops[0]).toMatchObject({ id: "osm:1", name: "Gare SNCF", kind: "bus_stop", operator: "TVM" });
     expect(dossier.existing_stops[2].kind).toBe("station");

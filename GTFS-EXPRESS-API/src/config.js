@@ -23,6 +23,10 @@ const MAX_KEYLESS_SESSIONS =
 module.exports = {
   GTFS_UPLOAD_DIR:
     process.env.GTFS_UPLOAD_DIR || path.resolve(__dirname, "..", "uploads"),
+  // Public shares (read-only snapshots of a feed behind a token). Beside the
+  // uploads by default; they outlive sessions (SHARE_TTL_DAYS, default 90).
+  SHARES_DIR: process.env.SHARES_DIR || null,
+  SHARE_TTL_DAYS: process.env.SHARE_TTL_DAYS || null,
   PORT: process.env.PORT || 3004,
 
   // 🌐 CORS

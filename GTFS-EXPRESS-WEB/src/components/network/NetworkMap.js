@@ -5,7 +5,7 @@
  */
 
 import React, { useEffect, useMemo } from "react";
-import { MapContainer, TileLayer, Polyline, CircleMarker, Marker, Tooltip as LeafletTooltip, useMap, useMapEvents } from "react-leaflet";
+import { MapContainer, TileLayer, Polyline, CircleMarker, Marker, Rectangle, Tooltip as LeafletTooltip, useMap, useMapEvents } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
 import { Box, useTheme } from "@mui/material";
@@ -42,7 +42,7 @@ const stopIcon = (color, selected) =>
 
 const POI_COLOR = { school: "#F9A825", college: "#F57F17", hospital: "#D32F2F", civic: "#5E35B1", market: "#00897B", station: "#1E88E5", leisure: "#43A047", work: "#6D4C41" };
 
-export default function NetworkMap({ stops = [], lines = [], geometry = [], existingStops = [], pois = [], corridors = [], selectedStopId = null, placingStopId = null, onSelectStop = null, onMoveStop = null, onPlaceStop = null, onPickExistingStop = null, fitEpoch = 0, height = "100%" }) {
+export default function NetworkMap({ stops = [], lines = [], geometry = [], existingStops = [], pois = [], corridors = [], population = null, selectedStopId = null, placingStopId = null, onSelectStop = null, onMoveStop = null, onPlaceStop = null, onPickExistingStop = null, fitEpoch = 0, height = "100%" }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const located = useMemo(() => stops.filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lon)), [stops]);
@@ -57,6 +57,17 @@ export default function NetworkMap({ stops = [], lines = [], geometry = [], exis
     return m;
   }, [lines]);
   const center = points.length ? points[0] : [48.85, 2.35];
+  // Residents: one translucent square per grid cell, darker where denser.
+  const popCells = useMemo(() => {
+    if (!population || !population.cells?.length) return [];
+    const max = Math.max(...population.cells.map((c) => c.pop));
+    const half = (population.cell_m || 250) / 2;
+    return population.cells.slice(0, 1500).map((c) => {
+      const dLat = half / 111320;
+      const dLon = half / (111320 * Math.cos((c.lat * Math.PI) / 180));
+      return { key: `${c.lat},${c.lon}`, bounds: [[c.lat - dLat, c.lon - dLon], [c.lat + dLat, c.lon + dLon]], opacity: 0.08 + 0.42 * (c.pop / max), pop: c.pop };
+    });
+  }, [population]);
 
   return (
     <Box sx={{ height, width: "100%", position: "relative", "& .leaflet-container": { height: "100%", width: "100%", background: isDark ? "#0f172a" : "#e5e7eb", cursor: placingStopId ? "crosshair" : undefined } }} data-testid="network-map">
@@ -68,6 +79,9 @@ export default function NetworkMap({ stops = [], lines = [], geometry = [], exis
         />
         <FitBounds points={points} epoch={fitEpoch} />
         <ClickToPlace active={Boolean(placingStopId)} onPlace={(lat, lon) => onPlaceStop && onPlaceStop(placingStopId, lat, lon)} />
+        {popCells.map((c) => (
+          <Rectangle key={c.key} bounds={c.bounds} pathOptions={{ color: "transparent", fillColor: isDark ? "#fbbf24" : "#7c3aed", fillOpacity: c.opacity, weight: 0 }} interactive={false} />
+        ))}
         {pois.map((p) => (
           <CircleMarker key={p.id} center={[p.lat, p.lon]} radius={3 + Math.min(3, p.weight || 1)} pathOptions={{ color: POI_COLOR[p.category] || "#888", fillColor: POI_COLOR[p.category] || "#888", fillOpacity: 0.55, weight: 1 }}>
             <LeafletTooltip direction="top" offset={[0, -4]}>{`${p.name}`}</LeafletTooltip>

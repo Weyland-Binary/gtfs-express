@@ -44,6 +44,8 @@ import ShapeStudio from "./shapeStudio/ShapeStudio";
 import FeedDiffPage from "./diff/FeedDiffPage";
 import NetworkStudio from "./network/NetworkStudio";
 import NetworkReportDialog from "./network/NetworkReportDialog";
+import SharedFeedLanding from "./share/SharedFeedLanding";
+import { shareTokenFromLocation, clearShareFromLocation } from "../utils/shareApi";
 import PricingDialog, { PRICING_EVENT } from "./PricingDialog";
 // Import of the advanced analysis component
 
@@ -193,6 +195,7 @@ function GTFSApp() {
   // tile, the command palette, or the "gtfs:open-network-studio" event.
   const [studioOpen, setStudioOpen] = useState(false);
   const [networkReport, setNetworkReport] = useState(null); // the report of a network the studio just projected
+  const [shareToken, setShareToken] = useState(shareTokenFromLocation); // the page was opened from a share link
   useEffect(() => {
     const handler = () => setStudioOpen(true);
     window.addEventListener("gtfs:open-network-studio", handler);
@@ -653,6 +656,38 @@ function GTFSApp() {
       setError(
         err.isRateLimit ? t("app.rateLimitSample") : t("app.errorAgencies"),
       );
+    } finally {
+      setDataLoading(false);
+    }
+  };
+
+  // A share link opened: the server built the visitor's own session from
+  // the snapshot; adopt it like the sample and drop the token from the URL.
+  const handleShareOpened = async (result) => {
+    clearShareFromLocation();
+    setShareToken(null);
+    if (!result?.sessionId) return;
+    try {
+      setDataLoading(true);
+      setError("");
+      if (editing) await exitEditMode();
+      setSessionId(result.sessionId);
+      setFeedEpoch((e) => e + 1);
+      if (result.validationReport) {
+        setValidationReport(result.validationReport);
+        setValidationBaseline(summarizeReport(result.validationReport));
+      } else {
+        setValidationReport(null);
+        setValidationBaseline(null);
+      }
+      setShowValidationReport(false);
+      await fetchAgencies();
+      await refreshStatus();
+      setSelectedMainTab(0);
+      showToast(t("share.opened", { title: result.share?.title || "" }), "success");
+    } catch (err) {
+      console.error("Failed to open the shared feed:", err);
+      setError(t("app.errorAgencies"));
     } finally {
       setDataLoading(false);
     }
@@ -1541,6 +1576,17 @@ function GTFSApp() {
               backgroundValidating={backgroundValidating}
               importAdjustments={importAdjustments}
             />
+          ) : !agencies.length && shareToken ? (
+            <Box flexGrow={1} sx={{ overflowY: "auto", px: 2 }}>
+              <SharedFeedLanding
+                token={shareToken}
+                onOpened={handleShareOpened}
+                onCancel={() => {
+                  clearShareFromLocation();
+                  setShareToken(null);
+                }}
+              />
+            </Box>
           ) : !agencies.length ? (
             <Box
               display="flex"

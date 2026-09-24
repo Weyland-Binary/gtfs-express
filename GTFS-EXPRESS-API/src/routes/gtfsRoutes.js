@@ -347,6 +347,13 @@ router.get("/network/report", networkController.getNetworkReport);
 router.post("/network/territory", networkController.getTerritory);
 router.post("/network/coverage", networkController.getCoverage);
 // The planner: brief → Network Spec, grounded by tools (SSE, gated like the chat).
+// Public shares: a read-only snapshot of a feed behind a token.
+const shareService = require("../services/shareService");
+router.post("/share", shareService.postShare);
+router.get("/share/:token", shareService.getShare);
+router.post("/share/:token/open", shareService.postOpenShare);
+router.get("/share/:token/gtfs.zip", shareService.getShareZip);
+
 const { planNetworkTurn } = require("../services/network/networkPlanController");
 router.post("/network/plan", chatAccessGate, planNetworkTurn);
 

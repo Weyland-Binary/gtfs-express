@@ -148,6 +148,8 @@ const sampleLimiter = rateLimit({
 
 app.post("/gtfs/upload", uploadLimiter);
 app.get("/gtfs/load-sample", sampleLimiter);
+// Opening a share creates a session like the sample does: same budget.
+app.post("/gtfs/share/:token/open", sampleLimiter);
 
 // 🚦 Strict rate limiting for revalidation: max 5 calls/min per session.
 // Revalidation runs all validator rules — CPU-intensive operation.

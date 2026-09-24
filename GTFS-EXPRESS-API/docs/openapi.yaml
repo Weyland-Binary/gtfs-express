@@ -91,6 +91,8 @@ tags:
     description: "SQL console: read-only public surface plus the edit-mode mutation surface."
   - name: AI
     description: NL2SQL one-shot generation and multi-turn chat (Anthropic Claude, beta-gated, read-only).
+  - name: Share
+    description: Public read-only shares of a feed (snapshot behind a token, card, hosted GTFS zip).
   - name: Network Studio
     description: Build a GTFS from a Network Spec (stops, lines, services) — validation, geocoding, road routing, compilation.
   - name: Project
@@ -817,6 +819,79 @@ paths:
           $ref: "#/components/responses/OkJson"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/share:
+    post:
+      tags:
+        - Share
+      summary: "Create a public read-only share of the loaded feed: a snapshot behind a token, with its card (counts, validation, Diagnostic, network report)."
+      security:
+        - SessionId: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "201":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/share/{token}:
+    get:
+      tags:
+        - Share
+      summary: The card of a share (title, counts, validation, Diagnostic, design quality, sources).
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/share/{token}/open:
+    post:
+      tags:
+        - Share
+      summary: "Open a share: a fresh session built from the snapshot (the visitor's own copy)."
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "201":
+          $ref: "#/components/responses/OkJson"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/BadRequest"
+  /gtfs/share/{token}/gtfs.zip:
+    get:
+      tags:
+        - Share
+      summary: The shared feed as a GTFS zip (a stable URL).
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: application/zip
         "404":
           $ref: "#/components/responses/NotFound"
   /gtfs/network/validate:

@@ -108,6 +108,11 @@ export default function TerritoryPanel({ territory, onTerritory, layers, onToggl
               <Tooltip title={t("territory.layer.poisHint")}>
                 <Chip size="small" icon={<PlaceOutlinedIcon sx={{ fontSize: 14 }} />} label={t("territory.pois", { count: d.pois.items.length })} color={layers.pois ? "primary" : "default"} variant={layers.pois ? "filled" : "outlined"} onClick={() => onToggleLayer("pois")} data-testid="territory-layer-pois" sx={{ height: 22, fontSize: "0.66rem", fontWeight: 700 }} />
               </Tooltip>
+              {d.population_grid?.cells?.length > 0 && (
+                <Tooltip title={t("territory.layer.populationHint", { km2: d.population_grid.residential_km2 })}>
+                  <Chip size="small" icon={<GroupsOutlinedIcon sx={{ fontSize: 14 }} />} label={`${t("territory.residents", { count: fmtNumber(d.population_grid.total) })}${d.population_grid.estimated ? " ≈" : ""}`} color={layers.population ? "primary" : "default"} variant={layers.population ? "filled" : "outlined"} onClick={() => onToggleLayer("population")} data-testid="territory-layer-population" sx={{ height: 22, fontSize: "0.66rem", fontWeight: 700 }} />
+                </Tooltip>
+              )}
               {d.existing_lines.length > 0 && <Chip size="small" label={t("territory.lines", { count: d.existing_lines.length })} variant="outlined" sx={{ height: 22, fontSize: "0.66rem" }} />}
               {d.holidays.length > 0 && <Chip size="small" icon={<EventOutlinedIcon sx={{ fontSize: 14 }} />} label={t("territory.holidays", { count: d.holidays.length })} variant="outlined" sx={{ height: 22, fontSize: "0.66rem" }} />}
               {d.school_holidays.length > 0 && <Chip size="small" icon={<SchoolOutlinedIcon sx={{ fontSize: 14 }} />} label={t("territory.schoolHolidays", { count: d.school_holidays.length })} variant="outlined" sx={{ height: 22, fontSize: "0.66rem" }} />}
@@ -120,11 +125,14 @@ export default function TerritoryPanel({ territory, onTerritory, layers, onToggl
                 })}
               </Box>
             )}
-            {coverage && coverage.pois_total > 0 && (
+            {coverage && (coverage.pois_total > 0 || coverage.population) && (
               <Box data-testid="territory-coverage" sx={{ display: "flex", alignItems: "center", gap: 1, px: 1, py: 0.6, borderRadius: 1.5, background: alpha(theme.palette.success.main, 0.06), border: `1px solid ${alpha(theme.palette.success.main, 0.3)}` }}>
                 <GroupsOutlinedIcon sx={{ fontSize: 16, color: theme.palette.success.main }} />
                 <Box sx={{ flex: 1, minWidth: 0 }}>
-                  <Typography sx={{ fontSize: "0.74rem", fontWeight: 700 }}>{t("territory.coverage", { pct: coverage.coverage_pct ?? 0, covered: coverage.pois_covered, total: coverage.pois_total })}</Typography>
+                  <Typography sx={{ fontSize: "0.74rem", fontWeight: 700 }}>
+                    {t("territory.coverage", { pct: coverage.coverage_pct ?? 0, covered: coverage.pois_covered, total: coverage.pois_total })}
+                    {coverage.population && coverage.population.pct != null ? ` · ${t("territory.coverageResidents", { pct: coverage.population.pct })}` : ""}
+                  </Typography>
                   <Typography sx={{ fontSize: "0.68rem", color: "text.secondary" }} noWrap>
                     {t("territory.reused", { reused: coverage.existing_stops_reused, total: coverage.stops_planned })}
                     {coverage.top_missed?.length ? ` · ${t("territory.missed", { name: coverage.top_missed[0].name })}` : ""}
