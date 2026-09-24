@@ -112,6 +112,36 @@ test("undo restores the previous stop name", async () => {
   ).not.toHaveText("E2E Renamed Stop", { timeout: 30_000 });
 });
 
+test("schedule cells are keyboard-navigable and open the editor with Enter", async () => {
+  const firstCell = page.locator('[data-cell="0:0"]');
+  await expect(firstCell).toBeVisible({ timeout: 30_000 });
+  await firstCell.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.locator('[data-cell="0:1"]')).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(page.locator('[data-cell="1:1"]')).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.getByTestId("schedule-edit-popover")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("schedule-edit-popover")).toBeHidden();
+});
+
+test("shifting a trip's times from the column menu is a single undoable step", async () => {
+  const menuButton = page.getByTestId("trip-col-menu").first();
+  await expect(menuButton).toBeVisible({ timeout: 30_000 });
+  await menuButton.click();
+  await page.getByTestId("col-menu-shift").click();
+  await page.getByTestId("shift-minutes").fill("5");
+  await page.getByTestId("shift-apply").click();
+  // Success toast (English locale forced in beforeAll).
+  await expect(page.getByText(/shifted by \+5 min/)).toBeVisible({
+    timeout: 30_000,
+  });
+  // One undo reverts the whole shift.
+  await page.getByTestId("edit-undo").click();
+  await expect(page.getByText(/Undone:/)).toBeVisible({ timeout: 30_000 });
+});
+
 test("export produces a GTFS zip", async () => {
   test.setTimeout(180_000);
   await page.getByTestId("edit-export").click();

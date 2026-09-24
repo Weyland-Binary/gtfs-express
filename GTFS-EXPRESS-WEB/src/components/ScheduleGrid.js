@@ -1014,6 +1014,8 @@ const ScheduleGrid = ({
                   >
                     <IconButton
                       size="small"
+                      data-testid="trip-col-menu"
+                      aria-label={t("schedule.colMenu.tooltip")}
                       onClick={(e) => {
                         e.stopPropagation();
                         setColMenu({ anchorEl: e.currentTarget, tripId });
@@ -1314,7 +1316,10 @@ const ScheduleGrid = ({
           const stopName =
             stopsMap[editCell.stopId]?.stop_name || editCell.stopId;
           return (
-            <Box sx={{ minWidth: 280, maxWidth: 340 }}>
+            <Box
+              sx={{ minWidth: 280, maxWidth: 340 }}
+              data-testid="schedule-edit-popover"
+            >
               {/* Header — context strip */}
               <Box
                 sx={{
