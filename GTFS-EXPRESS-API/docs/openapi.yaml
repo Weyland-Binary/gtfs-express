@@ -1023,6 +1023,40 @@ paths:
           $ref: "#/components/responses/OkJson"
         "400":
           $ref: "#/components/responses/BadRequest"
+  /gtfs/network/catalog:
+    get:
+      tags:
+        - Network Studio
+      summary: "The public GTFS feeds covering a territory (Mobility Database catalog): provider, name, url, licence — most local first."
+      security: []
+      parameters:
+        - name: place
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /gtfs/network/catalog/import:
+    post:
+      tags:
+        - Network Studio
+      summary: "Download a public GTFS feed and reverse-compile it into a Network Spec (dominant stop sequences, calendars, departures) with its baseline design report."
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
   /gtfs/network/evaluate:
     post:
       tags:

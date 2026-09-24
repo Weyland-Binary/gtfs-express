@@ -21,13 +21,14 @@ import FactCheckOutlinedIcon from "@mui/icons-material/FactCheckOutlined";
 import AltRouteOutlinedIcon from "@mui/icons-material/AltRouteOutlined";
 import AutoFixHighOutlinedIcon from "@mui/icons-material/AutoFixHighOutlined";
 import VerifiedOutlinedIcon from "@mui/icons-material/VerifiedOutlined";
+import CloudDownloadOutlinedIcon from "@mui/icons-material/CloudDownloadOutlined";
 import { useLanguage } from "../../contexts/LanguageContext";
 import MarkdownText from "../chat/MarkdownText";
 import GTFSAIIcon from "../chat/GTFSAIIcon";
 import { readBriefFile } from "../../utils/networkStudioApi";
 import { RequirementsCard, QualityCard, qualityColor } from "./PlanCards";
 
-const STEP_ICON = { geocode: PlaceOutlinedIcon, spec: RuleOutlinedIcon, geometry: RouteOutlinedIcon, questions: HelpOutlineIcon, territory: PlaceOutlinedIcon, requirements: FactCheckOutlinedIcon, corridors: AltRouteOutlinedIcon, refine: AutoFixHighOutlinedIcon, quality: VerifiedOutlinedIcon };
+const STEP_ICON = { geocode: PlaceOutlinedIcon, spec: RuleOutlinedIcon, geometry: RouteOutlinedIcon, questions: HelpOutlineIcon, territory: PlaceOutlinedIcon, requirements: FactCheckOutlinedIcon, corridors: AltRouteOutlinedIcon, refine: AutoFixHighOutlinedIcon, quality: VerifiedOutlinedIcon, feeds: CloudDownloadOutlinedIcon, import: CloudDownloadOutlinedIcon };
 
 function StepChip({ step }) {
   const { t } = useLanguage();
@@ -40,6 +41,8 @@ function StepChip({ step }) {
   if (step.kind === "territory") label = t("network.step.territory", { place: step.place || "" });
   if (step.kind === "corridors") label = t("network.step.corridors", { count: step.corridors ?? 0 });
   if (step.kind === "refine") label = t("network.step.refine", { snapped: step.snapped ?? 0, inserted: step.inserted ?? 0 });
+  if (step.kind === "feeds") label = t("network.step.feeds", { count: step.count ?? 0 });
+  if (step.kind === "import") label = t("network.step.import", { lines: step.lines ?? 0, stops: step.stops ?? 0 });
   if (step.kind === "quality") {
     label = t("network.step.quality", { score: step.score ?? "–" });
     sx = { color: qualityColor(step.score, theme), borderColor: alpha(qualityColor(step.score, theme), 0.6) };

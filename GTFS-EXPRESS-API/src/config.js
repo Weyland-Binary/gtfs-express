@@ -150,6 +150,9 @@ module.exports = {
   NAGER_URL: process.env.NAGER_URL || "https://date.nager.at",
   OPENHOLIDAYS_URL: process.env.OPENHOLIDAYS_URL || "https://openholidaysapi.org",
   OPEN_METEO_URL: process.env.OPEN_METEO_URL || "https://api.open-meteo.com",
+  // The Mobility Database catalog (CSV, public): the existing GTFS feeds of
+  // the world, to start a design from the network that already runs.
+  MOBILITY_CATALOG_URL: process.env.MOBILITY_CATALOG_URL || "https://storage.googleapis.com/storage/v1/b/mdb-csv/o/sources.csv?alt=media",
   // Planner model: designing a network from a brief is the reasoning-heavy
   // step, so it defaults to the strongest tier; falls back to the chat model.
   NETWORK_PLANNER_MODEL: process.env.NETWORK_PLANNER_MODEL || "claude-opus-5-5",

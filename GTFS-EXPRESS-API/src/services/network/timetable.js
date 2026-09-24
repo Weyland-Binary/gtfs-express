@@ -43,6 +43,27 @@ const runningTimes = (legDistancesM, { speedKmh, dwellS = 0, legDurationsS = nul
 };
 
 /**
+ * Departures of a headway service aligned on a hub: the trip reaches the
+ * hub (hubOffsetS after departure) at `minute` past the hour, modulo the
+ * headway of each period — a pulse timetable. Explicit departures are kept
+ * as they are.
+ */
+const departuresOfSynced = (service, { hubOffsetS, minute = 0 }) => {
+  const { timeToSec } = _internals;
+  const times = new Set(service.departures.map(timeToSec));
+  const target = minute * 60;
+  for (const p of service.periods) {
+    const from = timeToSec(p.from);
+    const to = timeToSec(p.to);
+    const step = Math.round(p.headway_min * 60);
+    // First departure ≥ from whose arrival at the hub ≡ target (mod step).
+    const shift = (((target - (from + hubOffsetS)) % step) + step) % step;
+    for (let t = from + shift; t <= to; t += step) times.add(t);
+  }
+  return [...times].filter((t) => t != null).sort((a, b) => a - b);
+};
+
+/**
  * The trips of one direction for one service.
  * @returns {{ trip_id, departure, stop_times: [{ stop_id, stop_sequence, arrival_time, departure_time, timepoint }] }[]}
  */
@@ -64,4 +85,4 @@ const buildTrips = ({ lineId, directionId, serviceId, stopIds, offsets, departur
   return trips;
 };
 
-module.exports = { runningTimes, buildTrips, departuresOf, GRANULARITY_S, MIN_LEG_S };
+module.exports = { runningTimes, buildTrips, departuresOf, departuresOfSynced, GRANULARITY_S, MIN_LEG_S };

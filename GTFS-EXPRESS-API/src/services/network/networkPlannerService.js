@@ -50,7 +50,8 @@ const MAX_HISTORY = 20;
 const LANG_NAMES = { en: "English", fr: "French", es: "Spanish", de: "German", pt: "Portuguese", zh: "Chinese", ar: "Arabic", hi: "Hindi" };
 
 // Injectable for tests (no network).
-const deps = { geocode: geocoderModule.geocode, createRouter: roadRouter.createRouter, buildTerritory: territoryService.buildTerritory };
+const catalogService = require("./catalogService");
+const deps = { geocode: geocoderModule.geocode, createRouter: roadRouter.createRouter, buildTerritory: territoryService.buildTerritory, findFeeds: (territory) => catalogService.findFeeds(territory), importFeed: (url, opts) => catalogService.importFeed(url, opts) };
 
 const clip = (s, n) => (typeof s === "string" && s.length > n ? `${s.slice(0, n)}…` : s);
 const str = (v) => (typeof v === "string" ? v.trim() : v == null ? "" : String(v).trim());
@@ -74,6 +75,7 @@ You NEVER write GTFS rows yourself. You produce a Network Spec through the set_s
   } ],
   "holidays"?: ["YYYYMMDD"], "holiday_service"?: "sunday"|"none",
   "transfers"?: [ { "from", "to", "min_minutes" } ],
+  "sync"?: { "stop": stop id or name, "minute"?: 0 },   // pulse timetable: every headway service reaches this hub at that minute (mod its headway); services[].sync overrides or opts out (false)
   "operations"?: { "currency"?: "EUR", "cost_per_km"?: number | {mode: number}, "cost_per_hour"?, "layover_min"?, "max_vehicles"?, "max_cost_year"? }
 }
 Limits: ≤ ${LIMITS.lines} lines, ≤ ${LIMITS.stops} stops, ≤ ${LIMITS.stopsPerDirection} stops per direction, ≤ ${LIMITS.trips} trips.
@@ -87,6 +89,7 @@ An open question has impact "high" when two plausible answers give materially di
 ## 2. Ground (get_territory, suggest_corridors)
 Real networks start from the ground: call get_territory with the town or area (once; the dossier is cached) unless a [Territory] block is already in the message. It gives the timezone, the population, the EXISTING stops and stations from OpenStreetMap (reuse their names, coordinates and ids — passengers know them), the existing transit lines (do not duplicate a line that already runs; connect to it), the trip generators that the lines must serve, and the holidays for the calendars.
 When the brief does not name the lines precisely ("a bus network for the town", "3 lines serving the essentials"), call suggest_corridors: it computes the demand hubs and the strongest corridors between them from the generators and the population. Use them as skeletons; keep the brief's own lines first.
+When the brief asks to improve, extend or restructure the EXISTING network, or when the territory lists existing transit lines and the brief does not say to start from scratch: call find_existing_feeds, then import_existing_network on the most local feed. It loads the network that runs today as the current spec (its score is the baseline); design your changes on it and quote the before/after score in the summary.
 
 ## 3. Design (find_existing_stops, geocode_stops, set_spec, refine_stops, estimate_routes)
 - Stops need real coordinates. Resolve a named stop with find_existing_stops first; geocode_stops the rest in ONE batch (add the town to each query, \`near\` = area centre); take the chosen candidate unless the context contradicts it. Never invent coordinates. A stop that cannot be located stays in the spec without coordinates: the user places it on the map.
@@ -94,7 +97,7 @@ When the brief does not name the lines precisely ("a bus network for the town", 
 - Then call refine_stops once: it snaps the planned stops onto the existing ones and fills long gaps with the existing stops along the way, so a line serves the neighbourhoods it crosses. Then estimate_routes: check distances and running times are plausible for the mode (a 12 km urban bus line runs ~35–45 min); adjust speed_kmh or the stop order when they are not.
 
 ## 4. Evaluate (evaluate_plan, coverage_score)
-Call evaluate_plan: the design quality report (coverage of the generators, stop spacing, directness, service level for the population, connectivity, plausibility, compliance) with a score out of 100 and recommendations. Fix the MAJOR findings unless the brief imposes them, then evaluate again (at most two rounds). Aim for a score ≥ 70 with no major finding. coverage_score gives the detail of the unserved places when you need it.
+Call evaluate_plan: the design quality report (coverage of the generators and residents, stop spacing, directness, service level for the population, connectivity, plausibility, compliance) with a score out of 100, the operations bill, the accessibility of the main places (share of residents reaching the station, the hospital, the centre within 30/45/60 min at 08:00) and recommendations. Fix the MAJOR findings unless the brief imposes them, then evaluate again (at most two rounds). Aim for a score ≥ 70 with no major finding. coverage_score gives the detail of the unserved places when you need it.
 
 ## 5. Deliver
 Answer in markdown, in the user's language, briefly: the network (lines, stops, service) in a few lines, the **quality score** and what limits it, the ASSUMPTIONS as a bullet list, what the user should check on the map. When the plan is ready (spec ok, no missing coordinates), say it can be projected into the application. Do not repeat the requirements card; the UI shows it.
@@ -108,6 +111,7 @@ Answer in markdown, in the user's language, briefly: the network (lines, stops, 
 - Stop naming: proper case, no codes; termini names as headsigns.
 - Ids: short and stable (line short name; stop slug); the compiler slugs missing ids.
 - Operations: evaluate_plan reports the fleet (vehicles at peak per line, no interlining), the vehicle-km and vehicle-hours per year and the yearly cost (per-mode cost per km; the brief's figures go in operations.cost_per_km / cost_per_hour / currency). When the brief caps the fleet or the budget, put it in operations.max_vehicles / max_cost_year: the report flags an overrun as a major finding, and you must fit within it (wider headways off-peak, shorter lines, fewer lines) before delivering. Always quote the fleet and the yearly cost in your summary.
+- Pulse timetable: in a small town with radial lines and headways of 20 min or more, set sync to the hub (station or centre, minute 0) so every line meets there and transfers work; say it in the assumptions.
 - Line design: stops every 300–600 m in town, termini at generators or existing stops, no detour over ×1.5 of the straight distance, every line meets another at a hub (station, centre) so passengers can transfer; a small town gets radial lines through the centre, a bigger one adds a cross-town line.
 
 # Style
@@ -339,7 +343,16 @@ const createTools = (ctx) => {
           geometry = null;
         }
       }
-      const report = design.evaluatePlan(ctx.spec, { territory: ctx.territory, geometry });
+      let report = design.evaluatePlan(ctx.spec, { territory: ctx.territory, geometry });
+      // Accessibility needs a timetable: compile in memory (straight legs, no shapes) when the residents are known.
+      if (ctx.territory?.population_grid?.cells?.length && ctx.specOk) {
+        try {
+          const compiled = await compiler.compileSpec(ctx.spec, { router: roadRouter.createRouter({ mode: "straight" }), shapes: false });
+          report = design.attachAccessibility(report, compiled.tables, ctx.spec, ctx.territory);
+        } catch {
+          /* the report stands without it */
+        }
+      }
       ctx.quality = report;
       ctx.emit("quality", report);
       ctx.emit("step", { kind: "quality", score: report.score, grade: report.grade, majors: report.majors });
@@ -407,7 +420,51 @@ const createTools = (ctx) => {
     },
   };
 
-  const tools = [setRequirements, askUser, getTerritory, suggestCorridors, findExistingStops, geocodeStops, setSpec, refineStops, estimateRoutes, evaluatePlan, coverageScore];
+  const findExistingFeeds = {
+    definition: {
+      name: "find_existing_feeds",
+      description: "The public GTFS feeds (Mobility Database catalog) whose area covers the territory: provider, name, download url, licence. Most local first. Needs get_territory.",
+      input_schema: { type: "object", properties: {} },
+    },
+    async run() {
+      if (!ctx.territory) return { content: "Error: call get_territory first.", isError: true };
+      try {
+        const feeds = await deps.findFeeds(ctx.territory);
+        ctx.emit("feeds", { feeds });
+        ctx.emit("step", { kind: "feeds", count: feeds.length });
+        if (!feeds.length) return { content: "No public feed covers this territory in the catalog. Design from scratch." };
+        return { content: `Feeds covering the territory:\n${feeds.map((f, i) => `${i + 1}. ${f.provider}${f.name ? ` — ${f.name}` : ""} (${f.country}${f.municipality ? `, ${f.municipality}` : f.region ? `, ${f.region}` : ""}; box ${f.area_deg2}°²${f.covers_centre ? ", covers the centre" : ""}) url: ${f.url}${f.license ? ` licence: ${f.license}` : ""}`).join("\n")}\nImport the most local one with import_existing_network when the brief builds on the existing network.` };
+      } catch (err) {
+        return { content: `Catalog unavailable: ${err.message}. Design from the territory.`, isError: true };
+      }
+    },
+  };
+
+  const importExistingNetwork = {
+    definition: {
+      name: "import_existing_network",
+      description: "Download a public GTFS feed and load the network it describes as the current spec (lines with their dominant stop sequence, stops, calendars, explicit departures). The user sees it on the map; evaluate_plan then gives the baseline score. Use the url from find_existing_feeds.",
+      input_schema: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+    },
+    async run(input) {
+      const url = String(input?.url || "").trim();
+      if (!/^https?:\/\//i.test(url)) return { content: "Error: a http(s) url is required.", isError: true };
+      try {
+        const r = await deps.importFeed(url, { maxLines: Number.isFinite(ctx.maxLines) ? ctx.maxLines : undefined });
+        const norm = normalizeSpec(r.spec);
+        ctx.spec = norm.spec;
+        ctx.specOk = norm.ok;
+        ctx.geometry = null;
+        ctx.emit("spec", { spec: norm.spec, issues: norm.issues, blockers: norm.blockers, estimate: norm.estimate, ok: norm.ok, imported: true });
+        ctx.emit("step", { kind: "import", lines: r.stats.lines, stops: r.stats.stops, routes: r.stats.routes });
+        return { content: [`Imported: ${r.stats.lines} line(s) of ${r.stats.routes} route(s), ${r.stats.stops} stops, from ${r.stats.trips} trips. Spec ok: ${norm.ok}${norm.ok ? "" : ` (${norm.blockers.length} blocker(s): ${norm.blockers.slice(0, 5).map((b) => b.message).join("; ")})`}.`, ...r.warnings.map((w) => `- ${w}`), "Lines: " + norm.spec.lines.slice(0, 40).map((l) => `${l.short_name} (${l.mode}, ${l.directions[0].stops.length} stops)`).join(", "), "Call estimate_routes then evaluate_plan for the baseline, then design your changes with set_spec."].join("\n") };
+      } catch (err) {
+        return { content: `Import failed: ${err.message}. Design from the territory instead.`, isError: true };
+      }
+    },
+  };
+
+  const tools = [setRequirements, askUser, getTerritory, suggestCorridors, findExistingFeeds, importExistingNetwork, findExistingStops, geocodeStops, setSpec, refineStops, estimateRoutes, evaluatePlan, coverageScore];
   return { definitions: tools.map((t) => t.definition), byName: Object.fromEntries(tools.map((t) => [t.definition.name, t])) };
 };
 

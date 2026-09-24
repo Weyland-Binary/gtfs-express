@@ -24,13 +24,14 @@ import EventOutlinedIcon from "@mui/icons-material/EventOutlined";
 import GroupsOutlinedIcon from "@mui/icons-material/GroupsOutlined";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { fetchTerritory } from "../../utils/networkStudioApi";
+import ExistingFeeds from "./ExistingFeeds";
 
 export const CATEGORY_ICON = { school: SchoolOutlinedIcon, college: SchoolOutlinedIcon, hospital: LocalHospitalOutlinedIcon, civic: AccountBalanceOutlinedIcon, market: StorefrontOutlinedIcon, station: TrainOutlinedIcon, leisure: StadiumOutlinedIcon, work: FactoryOutlinedIcon };
 export const CATEGORY_COLOR = { school: "#F9A825", college: "#F57F17", hospital: "#D32F2F", civic: "#5E35B1", market: "#00897B", station: "#1E88E5", leisure: "#43A047", work: "#6D4C41" };
 
 const fmtNumber = (n) => (typeof n === "number" ? n.toLocaleString() : "—");
 
-export default function TerritoryPanel({ territory, onTerritory, layers, onToggleLayer, coverage, onUseExistingStops, onRefineStops = null, canRefine = false, refining = false }) {
+export default function TerritoryPanel({ territory, onTerritory, layers, onToggleLayer, coverage, onUseExistingStops, onRefineStops = null, canRefine = false, refining = false, onImportedFeed = null, busy = false }) {
   const { t } = useLanguage();
   const theme = useTheme();
   const [query, setQuery] = useState(territory?.place?.query || "");
@@ -167,6 +168,7 @@ export default function TerritoryPanel({ territory, onTerritory, layers, onToggl
                 ))}
               </Typography>
             </Box>
+            {onImportedFeed && <ExistingFeeds key={d.place.query} place={d.place.query} onImported={onImportedFeed} disabled={busy} />}
             {d.warnings.length > 0 && <Typography sx={{ fontSize: "0.66rem", color: "warning.dark" }}>{t("territory.partial", { count: d.warnings.length })}</Typography>}
           </Box>
         </Collapse>

@@ -143,8 +143,26 @@ export function LinesEditor({ spec, onChange }) {
       ...spec,
       lines: [...lines, { short_name: String(lines.length + 1), mode: "bus", directions: [{ id: "0", headsign: "", stops: [] }], services: [{ calendar: "weekday", periods: [{ from: "06:00", to: "20:00", headway_min: 30 }] }] }],
     });
+  const syncStop = spec.sync && spec.sync !== false ? spec.sync.stop_id || spec.sync.stop || "" : "";
+  const setSync = (stop, minute) => onChange({ ...spec, sync: stop ? { stop, minute: Number.isFinite(minute) ? minute : 0 } : undefined });
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 1.25 }} data-testid="lines-editor">
+      {lines.length > 0 && stops.length > 0 && (
+        <Tooltip title={t("network.sync.hint")}>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 1.25, py: 0.75, borderRadius: 2, border: `1px solid ${alpha(theme.palette.divider, 1)}` }} data-testid="sync-editor">
+            <Typography sx={{ fontSize: "0.74rem", fontWeight: 700, minWidth: 120 }}>{t("network.sync.title")}</Typography>
+            <TextField select size="small" value={stops.some((s) => s.id === syncStop) ? syncStop : ""} onChange={(e) => setSync(e.target.value, spec.sync?.minute)} sx={{ minWidth: 200 }} inputProps={{ "data-testid": "sync-stop" }}>
+              <MenuItem value="">{t("network.sync.none")}</MenuItem>
+              {stops.map((s) => (
+                <MenuItem key={s.id} value={s.id}>
+                  {s.name}
+                </MenuItem>
+              ))}
+            </TextField>
+            {syncStop && <TextField size="small" type="number" label={t("network.sync.minute")} value={spec.sync?.minute ?? 0} onChange={(e) => setSync(syncStop, Math.max(0, Math.min(59, parseInt(e.target.value, 10) || 0)))} sx={{ width: 90 }} inputProps={{ min: 0, max: 59, "data-testid": "sync-minute" }} />}
+          </Box>
+        </Tooltip>
+      )}
       {lines.map((line, i) => (
         <Box key={line.id || i} sx={{ borderRadius: 2, border: `1px solid ${alpha(`#${line.color || "1E88E5"}`, 0.6)}`, overflow: "hidden" }} data-testid="line-card">
           <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 1.25, py: 0.75, background: alpha(`#${line.color || "1E88E5"}`, 0.08) }}>

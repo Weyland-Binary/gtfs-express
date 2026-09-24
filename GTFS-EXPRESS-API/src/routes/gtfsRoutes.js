@@ -346,6 +346,8 @@ router.get("/network/report", networkController.getNetworkReport);
 // Territory dossier from public worldwide data, and the coverage of a plan.
 router.post("/network/territory", networkController.getTerritory);
 router.post("/network/coverage", networkController.getCoverage);
+router.get("/network/catalog", networkController.getCatalog);
+router.post("/network/catalog/import", networkController.importCatalogFeed);
 // The planner: brief → Network Spec, grounded by tools (SSE, gated like the chat).
 // Public shares: a read-only snapshot of a feed behind a token.
 const shareService = require("../services/shareService");

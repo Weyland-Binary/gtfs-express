@@ -258,6 +258,8 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
               case "corridors":
                 setCorridors(data.corridors || []);
                 break;
+              case "feeds":
+                break;
               case "quality":
                 setQuality(data);
                 patch(() => ({ quality: data }));
@@ -365,6 +367,18 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
     }
   }, [territory, refining, spec, updateSpec, t]);
 
+  // The existing network, reverse-compiled from a public feed, becomes the plan (its score is the baseline).
+  const importedFeed = useCallback(
+    (r, feed) => {
+      updateSpec(editableFromNormalized(r.spec));
+      if (r.report) setQuality(r.report);
+      setTab("map");
+      setFitEpoch((e) => e + 1);
+      setNotice(t("feeds.imported", { lines: r.stats?.lines ?? 0, stops: r.stats?.stops ?? 0, score: r.report?.score ?? "–", provider: feed?.provider || "" }));
+    },
+    [updateSpec, t],
+  );
+
   const reset = useCallback(() => {
     abortRef.current?.abort();
     setSpec(EMPTY_SPEC);
@@ -448,7 +462,7 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
       {/* Body */}
       <Box sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: isMobile ? "column" : "row" }}>
         <Box sx={{ width: isMobile ? "100%" : 440, flexShrink: 0, borderRight: isMobile ? "none" : `1px solid ${alpha(theme.palette.divider, 1)}`, background: theme.palette.background.paper, minHeight: isMobile ? 320 : 0, display: "flex", flexDirection: "column" }}>
-          <TerritoryPanel territory={territory} onTerritory={(d) => { setTerritory(d); setFitEpoch((e) => e + 1); }} layers={layers} onToggleLayer={(k) => setLayers((l) => ({ ...l, [k]: !l[k] }))} coverage={coverage} onUseExistingStops={useExistingStops} onRefineStops={refineStops} canRefine={Boolean(validation && (validation.spec?.lines || []).length) && !streaming} refining={refining} />
+          <TerritoryPanel territory={territory} onTerritory={(d) => { setTerritory(d); setFitEpoch((e) => e + 1); }} layers={layers} onToggleLayer={(k) => setLayers((l) => ({ ...l, [k]: !l[k] }))} coverage={coverage} onUseExistingStops={useExistingStops} onRefineStops={refineStops} canRefine={Boolean(validation && (validation.spec?.lines || []).length) && !streaming} refining={refining} onImportedFeed={importedFeed} busy={streaming} />
           <PlanChat turns={turns} streaming={streaming} pendingTool={pendingTool} onSend={runPlan} onStop={stopPlan} canPlan={canPlan} disabledReason={disabledReason} />
         </Box>
         <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column" }}>

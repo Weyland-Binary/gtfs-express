@@ -21,6 +21,7 @@ const { createRouter } = require("./roadRouter");
 const { compileSpec, estimateGeometry, createSessionFromSpec, loadStoredSpec, saveStoredSpec, loadStoredReport } = require("./compiler");
 const territoryService = require("./territoryService");
 const design = require("./networkDesignService");
+const catalogService = require("./catalogService");
 const { requireSession } = require("../edit/_editCore");
 const { recordEvent, extractReqMeta } = require("../eventLogger");
 
@@ -183,8 +184,47 @@ const evaluateNetwork = async (req, res) => {
   const place = typeof req.body?.place === "string" ? req.body.place.trim() : "";
   const territory = place.length >= 2 ? territoryService.getCachedTerritory(place) : null;
   const norm = normalizeSpec(spec);
-  const report = design.evaluatePlan(norm.spec, { territory, geometry: geometryFromClient(req.body?.geometry) });
+  let report = design.evaluatePlan(norm.spec, { territory, geometry: geometryFromClient(req.body?.geometry) });
+  if (territory?.population_grid?.cells?.length && norm.ok && req.body?.accessibility !== false) {
+    try {
+      const compiled = await compileSpec(norm.spec, { router: createRouter({ mode: "straight" }), shapes: false });
+      report = design.attachAccessibility(report, compiled.tables, norm.spec, territory);
+    } catch {
+      /* the report stands without it */
+    }
+  }
   res.json({ ok: norm.ok, territory: Boolean(territory), ...report });
+};
+
+/** GET /network/catalog?place= → the public feeds covering the territory (Mobility Database). */
+const getCatalog = async (req, res) => {
+  const place = typeof req.query?.place === "string" ? req.query.place.trim() : "";
+  if (place.length < 2) return res.status(400).json({ error: "INVALID_INPUT", message: "place is required." });
+  try {
+    const dossier = territoryService.getCachedTerritory(place) || (await territoryService.buildTerritory(place));
+    const feeds = await catalogService.findFeeds(dossier);
+    res.json({ place: dossier.place.display_name, feeds });
+  } catch (err) {
+    res.status(err.status || 502).json({ error: err.code || "CATALOG_FAILED", message: err.message });
+  }
+};
+
+/** POST /network/catalog/import { url, place? } → the existing network as a spec, with its baseline report. */
+const importCatalogFeed = async (req, res) => {
+  const url = typeof req.body?.url === "string" ? req.body.url.trim() : "";
+  if (!/^https?:\/\//i.test(url)) return res.status(400).json({ error: "INVALID_INPUT", message: "url (http/https) is required." });
+  const place = typeof req.body?.place === "string" ? req.body.place.trim() : "";
+  const limits = planLimits(req);
+  try {
+    const r = await catalogService.importFeed(url, { maxLines: Number.isFinite(limits.maxLines) ? limits.maxLines : undefined });
+    const norm = normalizeSpec(r.spec);
+    const territory = place.length >= 2 ? territoryService.getCachedTerritory(place) : null;
+    const report = design.evaluatePlan(norm.spec, { territory });
+    recordEvent("network.catalog_import", { ...extractReqMeta(req), lines: r.stats.lines, stops: r.stats.stops, score: report.score });
+    res.json({ spec: norm.spec, ok: norm.ok, issues: norm.issues, blockers: norm.blockers, estimate: norm.estimate, stats: r.stats, warnings: r.warnings, report });
+  } catch (err) {
+    res.status(err.status || 502).json({ error: err.code || "IMPORT_FAILED", message: err.message });
+  }
 };
 
 /** POST /network/refine { spec, place } → the spec snapped onto and densified with the existing stops. */
@@ -213,4 +253,4 @@ const getNetworkReport = (req, res) => {
   res.json(stored);
 };
 
-module.exports = { validateNetworkSpec, geocodeStops, estimateNetwork, compileNetwork, evaluateNetwork, refineNetwork, getNetworkSpec, putNetworkSpec, getNetworkReport, getTerritory, getCoverage, _internals: { planLimits, compileSpec, geometryFromClient } };
+module.exports = { validateNetworkSpec, geocodeStops, estimateNetwork, compileNetwork, evaluateNetwork, refineNetwork, getNetworkSpec, putNetworkSpec, getNetworkReport, getTerritory, getCoverage, getCatalog, importCatalogFeed, _internals: { planLimits, compileSpec, geometryFromClient } };

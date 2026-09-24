@@ -16,6 +16,7 @@ import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import DirectionsBusFilledOutlinedIcon from "@mui/icons-material/DirectionsBusFilledOutlined";
+import DirectionsWalkOutlinedIcon from "@mui/icons-material/DirectionsWalkOutlined";
 import { useLanguage } from "../../contexts/LanguageContext";
 
 export const DIMENSIONS = ["coverage", "spacing", "directness", "service", "connectivity", "plausibility", "compliance"];
@@ -178,6 +179,29 @@ export function QualityCard({ quality, dense = false }) {
           <span>· {t("network.ops.cost", { cost: fmtMoney(q.operations.cost_year, q.operations.currency) })}</span>
           {q.operations.limits?.max_vehicles != null && <Chip size="small" color={q.operations.fleet_total > q.operations.limits.max_vehicles ? "error" : "success"} label={t("network.ops.cap", { max: q.operations.limits.max_vehicles })} sx={{ height: 18, fontSize: "0.62rem" }} />}
           {q.operations.limits?.max_cost_year != null && <Chip size="small" color={q.operations.cost_year > q.operations.limits.max_cost_year ? "error" : "success"} label={t("network.ops.budget", { budget: fmtMoney(q.operations.limits.max_cost_year, q.operations.currency) })} sx={{ height: 18, fontSize: "0.62rem" }} />}
+        </Box>
+      )}
+      {q.accessibility && q.accessibility.targets?.length > 0 && (
+        <Box data-testid="quality-accessibility" sx={{ display: "flex", flexDirection: "column", gap: 0.3, px: 1, py: 0.6, borderRadius: 1.5, background: alpha(theme.palette.text.primary, 0.04), fontSize: "0.7rem" }}>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, fontWeight: 700 }}>
+            <DirectionsWalkOutlinedIcon sx={{ fontSize: 14, color: "text.secondary" }} />
+            {t("network.access.title", { at: q.accessibility.at })}
+            <span style={{ fontWeight: 400, color: theme.palette.text.secondary }}>· {t("network.access.served", { pct: q.accessibility.residents_served_pct })}</span>
+          </Box>
+          {q.accessibility.targets.map((x) => (
+            <Box key={`${x.category}-${x.name}`} sx={{ display: "flex", gap: 0.75, alignItems: "baseline" }}>
+              <span style={{ minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{x.name}</span>
+              {x.served ? (
+                q.accessibility.cutoffs_min.map((m) => (
+                  <span key={m} style={{ color: qualityColor(x.within[m], theme), fontWeight: 700, minWidth: 52, textAlign: "right" }}>
+                    {x.within[m]}% <span style={{ fontWeight: 400, color: theme.palette.text.secondary }}>{m}′</span>
+                  </span>
+                ))
+              ) : (
+                <span style={{ color: theme.palette.error.main, fontWeight: 700 }}>{t("network.access.unserved")}</span>
+              )}
+            </Box>
+          ))}
         </Box>
       )}
       {findings.length > 0 ? (

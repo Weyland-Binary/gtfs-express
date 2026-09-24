@@ -403,6 +403,35 @@ const normalizeSpec = (raw) => {
     transfers.push({ from: from.id, to: to.id, min_minutes: minutes != null && minutes >= 0 ? minutes : 3, type: str(t.type) || "2" });
   });
 
+  // Pulse timetable (optional): every headway service arrives at the hub at
+  // the same minute past the hour (mod its headway), so lines meet there.
+  //   sync: { stop, minute? }            network-wide default
+  //   services[].sync: {…} | false       per-service override / opt-out
+  let sync;
+  const parseSync = (raw, path) => {
+    if (raw === false) return false;
+    if (!raw || typeof raw !== "object") return undefined;
+    const key = str(raw.stop ?? raw.stop_id ?? raw.hub);
+    const stop = stopById.get(key) || stopByName.get(nameKey(key)) || null;
+    if (!stop) {
+      err("invalid_sync", path, "sync.stop must name a stop of the network.");
+      return undefined;
+    }
+    const minute = num(raw.minute) ?? 0;
+    if (minute < 0 || minute > 59) {
+      err("invalid_sync", `${path}.minute`, "sync.minute must be between 0 and 59.");
+      return undefined;
+    }
+    return { stop_id: stop.id, minute: Math.round(minute) };
+  };
+  if (input.sync !== undefined) sync = parseSync(input.sync, "sync");
+  lines.forEach((l, li) => {
+    l.services.forEach((s, si) => {
+      const raw = (Array.isArray(rawLines[li]?.services) ? rawLines[li].services[si] : null)?.sync;
+      if (raw !== undefined) s.sync = parseSync(raw, `lines[${li}].services[${si}].sync`);
+    });
+  });
+
   // Operations (optional): what running the network costs, and the caps the
   // brief imposes. Kept as given; the operations estimate reads them.
   let operations;
@@ -450,6 +479,7 @@ const normalizeSpec = (raw) => {
     holidays,
     holiday_service: holidayService,
     transfers,
+    ...(sync ? { sync } : {}),
     ...(operations ? { operations } : {}),
   };
   const estimate = estimateSpec(spec);

@@ -19,7 +19,7 @@ const fsp = require("fs/promises");
 const path = require("path");
 const crypto = require("crypto");
 const { normalizeSpec, estimateSpec } = require("./networkSpec");
-const { runningTimes, buildTrips, departuresOf } = require("./timetable");
+const { runningTimes, buildTrips, departuresOf, departuresOfSynced } = require("./timetable");
 const { createRouter } = require("./roadRouter");
 const { GTFS_UPLOAD_DIR, getActiveSessionsCount, MAX_SESSIONS, clearSessionCache } = require("../sessionManager");
 
@@ -160,10 +160,17 @@ const compileSpec = async (spec, { router = null, signal = null, shapes = true, 
     for (const svc of line.services) {
       usedCalendars.add(svc.calendar_id);
       const deps = departuresOf(svc);
+      // Pulse: the service's own sync, else the network's, unless opted out.
+      const sync = svc.sync === false ? null : svc.sync || spec.sync || null;
       for (const [dirId, data] of dirData) {
         if (svc.direction !== "both" && svc.direction !== dirId) continue;
         let departures = deps;
-        if (dirId === "1" && svc.direction === "both" && svc.reverse_offset_min != null) departures = deps.map((t) => t + Math.round(svc.reverse_offset_min * 60)).filter((t) => t >= 0);
+        const hubIndex = sync ? data.dir.stops.indexOf(sync.stop_id) : -1;
+        if (hubIndex >= 0 && svc.periods.length) {
+          departures = departuresOfSynced(svc, { hubOffsetS: data.offsets[hubIndex].arrival, minute: sync.minute });
+          if (!stats.synced_directions) stats.synced_directions = 0;
+          stats.synced_directions += 1;
+        } else if (dirId === "1" && svc.direction === "both" && svc.reverse_offset_min != null) departures = deps.map((t) => t + Math.round(svc.reverse_offset_min * 60)).filter((t) => t >= 0);
         const prefix = `${line.id}_${svc.calendar_id}_${dirId}`;
         const start = (counters.get(prefix) || 0) + 1;
         const trips = buildTrips({ lineId: line.id, directionId: dirId, serviceId: svc.calendar_id, stopIds: data.dir.stops, offsets: data.offsets, departuresSec: departures, tripPrefix: prefix, startIndex: start });
@@ -310,6 +317,7 @@ const buildReport = ({ spec, compiled, ingested, sessionId, territoryPlace = nul
   let designReport = null;
   try {
     designReport = design.evaluatePlan(spec, { territory, geometry });
+    if (territory) designReport = design.attachAccessibility(designReport, compiled.tables, spec, territory);
   } catch (err) {
     console.warn("network report: evaluatePlan failed:", err.message);
   }

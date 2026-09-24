@@ -27,6 +27,7 @@ const { haversineMeters } = require("../../utils/geoUtils");
 const { departuresOf, MODES } = require("./networkSpec");
 const { coverageOf } = require("./territoryService");
 const { estimateOperations, summarizeOperations, fmtMoney } = require("./operationsService");
+const accessibilityService = require("./accessibilityService");
 
 const HUB_CELL_M = 500;
 const HUB_MERGE_M = 350;
@@ -571,6 +572,24 @@ const evaluatePlan = (spec, { territory = null, geometry = null } = {}) => {
   return { score, grade, majors, dimensions: dims, recommendations, operations, generatedAt: new Date().toISOString() };
 };
 
+/**
+ * Add the accessibility measure (needs compiled tables) to a report: its
+ * findings join the recommendations and the majors count.
+ */
+const attachAccessibility = (report, tables, spec, territory) => {
+  let a = null;
+  try {
+    a = accessibilityService.accessibility(tables, spec, territory);
+  } catch {
+    a = null;
+  }
+  if (!a) return report;
+  const findings = accessibilityService.accessibilityFindings(a);
+  const order = { major: 0, minor: 1, info: 2 };
+  const recs = [...report.recommendations, ...findings.map((x) => ({ dimension: "accessibility", ...x }))].sort((x, y) => order[x.level] - order[y.level]).slice(0, 10);
+  return { ...report, accessibility: a, recommendations: recs, majors: report.majors + findings.filter((x) => x.level === "major").length };
+};
+
 /** The report as text for the model. */
 const summarizeReport = (r) => {
   const out = [`Design quality: ${r.score == null ? "n/a" : `${r.score}/100 (grade ${r.grade})`}, ${r.majors} major finding(s).`];
@@ -579,6 +598,7 @@ const summarizeReport = (r) => {
     out.push(`- ${d.id} (weight ${d.weight}): ${d.score == null ? "not measurable" : d.score}${top.length ? ` — ${top.join(" | ")}` : ""}`);
   }
   if (r.operations) out.push(summarizeOperations(r.operations));
+  if (r.accessibility) out.push(accessibilityService.summarizeAccessibility(r.accessibility));
   if (r.recommendations.length) {
     out.push("Recommendations:");
     for (const rec of r.recommendations) out.push(`- [${rec.level}] ${rec.hint}`);
@@ -587,4 +607,4 @@ const summarizeReport = (r) => {
   return out.join("\n");
 };
 
-module.exports = { demandHubs, suggestCorridors, summarizeCorridors, refineStops, evaluatePlan, summarizeReport, MODE_PROFILE, _internals: { projectOnSegment, serviceProfile, WEIGHTS } };
+module.exports = { demandHubs, suggestCorridors, summarizeCorridors, refineStops, evaluatePlan, attachAccessibility, summarizeReport, MODE_PROFILE, _internals: { projectOnSegment, serviceProfile, WEIGHTS } };

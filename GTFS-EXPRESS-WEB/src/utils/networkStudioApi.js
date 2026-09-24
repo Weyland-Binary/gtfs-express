@@ -50,6 +50,19 @@ export const fetchCoverage = (spec, place) => post("/network/coverage", { spec, 
 export const evaluateSpec = (spec, place = null, geometry = null) => post("/network/evaluate", { spec, place, geometry });
 /** Snap the planned stops onto the territory's existing stops and fill the long gaps. */
 export const refineSpec = (spec, place) => post("/network/refine", { spec, place });
+/** The public GTFS feeds covering a place (Mobility Database catalog). */
+export const fetchCatalog = async (place) => {
+  const res = await fetch(`${API_BASE_URL}/network/catalog?place=${encodeURIComponent(place)}`, { headers: betaHeaders() });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(data.message || data.error || `HTTP ${res.status}`);
+    err.code = data.error || `HTTP_${res.status}`;
+    throw err;
+  }
+  return data;
+};
+/** Download a public feed and reverse-compile it into a spec with its baseline report. */
+export const importCatalogFeed = (url, place) => post("/network/catalog/import", { url, place });
 /** The network report stored with the current session (null when the session was not built by the studio). */
 export const fetchNetworkReport = async () => {
   const res = await fetchWithSession(`${API_BASE_URL}/network/report`);
