@@ -18,6 +18,7 @@ import {
   Accordion,
   AccordionSummary,
   AccordionDetails,
+  IconButton,
 } from "@mui/material";
 import EditIcon from "@mui/icons-material/Edit";
 import AddIcon from "@mui/icons-material/Add";
@@ -32,6 +33,7 @@ import { useEditMode } from "../../contexts/EditModeContext";
 import { useLanguage } from "../../contexts/LanguageContext";
 import EntityAutocomplete from "./EntityAutocomplete";
 import TranslationsRecordPanel from "./TranslationsRecordPanel";
+import NewServiceDialog from "./NewServiceDialog";
 
 const TRIP_TRANSLATABLE_FIELDS = ["trip_headsign", "trip_short_name"];
 
@@ -114,6 +116,7 @@ function EditTripDialog({
     serviceIdProp || trip?.service_id || "",
   );
   const [timeOffset, setTimeOffset] = useState(""); // minutes offset for duplicate
+  const [newServiceOpen, setNewServiceOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [availableShapes, setAvailableShapes] = useState([]);
@@ -391,12 +394,21 @@ function EditTripDialog({
   if (!isCreate && !trip) return null;
 
   return (
+    <>
     <Dialog
       open={open}
       onClose={handleClose}
       maxWidth="sm"
       fullWidth
       disableEscapeKeyDown={saving}
+      // Ctrl/Cmd+Enter submits from any field (Enter alone is left to
+      // multi-line fields and autocompletes).
+      onKeyDown={(e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && !saving) {
+          e.preventDefault();
+          handleSave();
+        }
+      }}
       PaperProps={{
         sx: {
           borderTop: (theme) => `3px solid ${mc.borderColor(theme)}`,
@@ -495,6 +507,16 @@ function EditTripDialog({
                   size="small"
                   sx={{ flex: 1 }}
                 />
+                <Tooltip title={t("edit.calendar.createTitle")} arrow>
+                  <IconButton
+                    size="small"
+                    onClick={() => setNewServiceOpen(true)}
+                    aria-label={t("edit.calendar.createTitle")}
+                    data-testid="trip-new-service"
+                  >
+                    <AddIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
               </Box>
               {isDuplicate && (
                 <TextField
@@ -537,6 +559,15 @@ function EditTripDialog({
                 size="small"
                 sx={{ flex: 1 }}
               />
+              <Tooltip title={t("edit.calendar.createTitle")} arrow>
+                <IconButton
+                  size="small"
+                  onClick={() => setNewServiceOpen(true)}
+                  aria-label={t("edit.calendar.createTitle")}
+                >
+                  <AddIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
             </Box>
           )}
 
@@ -813,6 +844,12 @@ function EditTripDialog({
         </Button>
       </DialogActions>
     </Dialog>
+      <NewServiceDialog
+        open={newServiceOpen}
+        onClose={() => setNewServiceOpen(false)}
+        onCreated={(id) => setServiceId(id)}
+      />
+    </>
   );
 }
 

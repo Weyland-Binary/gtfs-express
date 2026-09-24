@@ -15,6 +15,7 @@ import {
   Button,
   ToggleButton,
   ToggleButtonGroup,
+  Alert,
   alpha,
 } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
@@ -34,6 +35,7 @@ import { useEditMode } from "../../contexts/EditModeContext";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { useDetailPanel } from "../../contexts/DetailPanelContext";
 import PanelSkeleton from "../common/PanelSkeleton";
+import NewServiceDialog from "../edit/NewServiceDialog";
 
 const DAY_KEYS = [
   "monday",
@@ -71,6 +73,7 @@ const formatGTFSDate = (d) => {
 
 function CalendarDetail({ serviceId }) {
   const [data, setData] = useState(null);
+  const [createServiceOpen, setCreateServiceOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -349,7 +352,35 @@ function CalendarDetail({ serviceId }) {
     return <PanelSkeleton />;
   }
   if (!data) {
-    return <Typography color="error">{t("edit.calendar.notFound")}</Typography>;
+    // No calendar.txt row: offer to create it right here instead of a dead
+    // end (services defined only by calendar_dates, or a typo in a trip's
+    // service_id, both landed on a bare "Calendar not found").
+    return (
+      <Box display="flex" flexDirection="column" gap={1.5}>
+        <Alert severity="warning">
+          <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>
+            {t("edit.calendar.notFound")}
+          </Typography>
+          <Typography variant="body2">{t("edit.calendar.notFoundHint")}</Typography>
+        </Alert>
+        {editing && (
+          <Button
+            variant="contained"
+            size="small"
+            onClick={() => setCreateServiceOpen(true)}
+            data-testid="calendar-create-service"
+            sx={{ alignSelf: "flex-start", textTransform: "none", fontWeight: 600 }}
+          >
+            {t("edit.calendar.createThisService")}
+          </Button>
+        )}
+        <NewServiceDialog
+          open={createServiceOpen}
+          initialServiceId={serviceId}
+          onClose={() => setCreateServiceOpen(false)}
+        />
+      </Box>
+    );
   }
 
   const dirty = isDirty();

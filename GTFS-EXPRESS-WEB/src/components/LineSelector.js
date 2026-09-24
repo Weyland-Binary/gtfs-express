@@ -8,13 +8,6 @@ import {
   Paper,
   IconButton,
   Tooltip,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogContentText,
-  DialogActions,
-  Button,
-  CircularProgress,
   Chip,
   Popover,
   Typography,
@@ -36,6 +29,9 @@ import CalendarMonthIcon from "@mui/icons-material/CalendarMonth";
 import CalendarTodayIcon from "@mui/icons-material/CalendarToday";
 import CalendarPicker from "./CalendarPicker";
 import EditAgencyDialog from "./edit/EditAgencyDialog";
+import EditRouteDialog from "./edit/EditRouteDialog";
+import CascadePreviewDialog from "./edit/CascadePreviewDialog";
+import AddIcon from "@mui/icons-material/Add";
 import { getActiveServiceIds } from "../utils/calendarUtils";
 import { useLanguage } from "../contexts/LanguageContext";
 import { useEditMode } from "../contexts/EditModeContext";
@@ -126,7 +122,8 @@ function LineSelector({
   const [servicePopoverAnchor, setServicePopoverAnchor] = useState(null);
 
   // Cap how many active service_id chips render inline before collapsing into a +N pill
-  const MAX_VISIBLE_CHIPS = 3;
+  const NEW_ROUTE_VALUE = "__new_route__";
+const MAX_VISIBLE_CHIPS = 3;
 
   const handleDeleteClick = useCallback((e, route) => {
     e.stopPropagation();
@@ -242,6 +239,8 @@ function LineSelector({
   const selectWidth = `${maxRouteNameLength * 10}px`;
 
   const [editAgencyTarget, setEditAgencyTarget] = useState(null);
+  // "+ New route…" entry of the route dropdown (edit mode only).
+  const [createRouteOpen, setCreateRouteOpen] = useState(false);
   // Local overrides for edited agencies (agency_id → updated data)
   const [agencyOverrides, setAgencyOverrides] = useState({});
 
@@ -341,7 +340,13 @@ function LineSelector({
             labelId="route-label"
             fullWidth
             value={selectedRoute || ""}
-            onChange={onRouteChange}
+            onChange={(e) => {
+              if (e.target.value === NEW_ROUTE_VALUE) {
+                setCreateRouteOpen(true);
+                return;
+              }
+              onRouteChange(e);
+            }}
             label={t("selector.route")}
             renderValue={(value) => {
               const route = sortedRoutes.find((r) => r.route_id === value);
@@ -480,6 +485,16 @@ function LineSelector({
                 )}
               </MenuItem>
             ))}
+            {editing && (
+              <MenuItem
+                value={NEW_ROUTE_VALUE}
+                data-testid="route-select-new"
+                sx={{ fontWeight: 600, color: "primary.main" }}
+              >
+                <AddIcon sx={{ fontSize: 16, mr: 0.75 }} />
+                {t("edit.route.newRoute")}
+              </MenuItem>
+            )}
           </Select>
         </StyledFormControl>
 
@@ -701,37 +716,33 @@ function LineSelector({
         </StyledFormControl>
       </Box>
 
-      {/* Delete route confirmation dialog */}
-      <Dialog
+      {/* Delete route: same cascade preview (trips / stop_times / orphans)
+          as the route panel — the former plain confirm said "permanently"
+          without counts although the delete is undoable. */}
+      <CascadePreviewDialog
         open={Boolean(deleteTarget)}
-        onClose={() => !deleting && setDeleteTarget(null)}
-      >
-        <DialogTitle>{t("edit.route.deleteTitle")}</DialogTitle>
-        <DialogContent>
-          <DialogContentText>
-            {t("edit.route.deleteConfirm").replace(
-              "{name}",
-              deleteTarget
-                ? deleteTarget.route_short_name || deleteTarget.route_id
-                : "",
-            )}
-          </DialogContentText>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setDeleteTarget(null)} disabled={deleting}>
-            {t("edit.route.deleteCancel")}
-          </Button>
-          <Button
-            onClick={handleDeleteConfirm}
-            color="error"
-            variant="contained"
-            disabled={deleting}
-            startIcon={deleting ? <CircularProgress size={16} /> : null}
-          >
-            {t("edit.route.deleteButton")}
-          </Button>
-        </DialogActions>
-      </Dialog>
+        entity="route"
+        entityId={deleteTarget?.route_id || ""}
+        entityLabel={
+          deleteTarget
+            ? deleteTarget.route_short_name || deleteTarget.route_id
+            : ""
+        }
+        onCancel={() => !deleting && setDeleteTarget(null)}
+        onConfirm={handleDeleteConfirm}
+      />
+
+      {/* Create a route from scratch */}
+      <EditRouteDialog
+        open={createRouteOpen}
+        route={null}
+        mode="create"
+        agencyId={selectedAgency}
+        onClose={() => setCreateRouteOpen(false)}
+        onCreated={(created) => {
+          if (created?.route_id && openPanel) openPanel("route", created.route_id);
+        }}
+      />
 
       {/* Edit agency dialog */}
       {editAgencyTarget && (

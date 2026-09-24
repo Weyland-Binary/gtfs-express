@@ -20,6 +20,7 @@ import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import EditIcon from "@mui/icons-material/Edit";
 import TranslateIcon from "@mui/icons-material/Translate";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
+import AddIcon from "@mui/icons-material/Add";
 import API_BASE_URL from "../../config";
 import { fetchWithSession } from "../../utils/sessionManager";
 import { useEditMode } from "../../contexts/EditModeContext";
@@ -90,13 +91,25 @@ function EditRouteDialog({
   mode = "edit",
   onCreated,
   highlightFields = [],
+  // Create mode: agency the new route belongs to (pre-filled, editable
+  // through the advanced fields).
+  agencyId = "",
 }) {
   const { t } = useLanguage();
   const { recordEdit } = useEditMode();
   const dialogContentRef = useRef(null);
   const isDuplicate = mode === "duplicate";
+  const isCreate = mode === "create";
+  // Both create and duplicate POST a new row.
+  const isNew = isDuplicate || isCreate;
 
-  const initial = useMemo(() => buildInitialForm(route), [route]);
+  const initial = useMemo(
+    () =>
+      isCreate
+        ? { ...buildInitialForm(null), agency_id: agencyId || "" }
+        : buildInitialForm(route),
+    [route, isCreate, agencyId],
+  );
   const [form, setForm] = useState(initial);
   const [routeId, setRouteId] = useState("");
   const [saving, setSaving] = useState(false);
@@ -118,7 +131,8 @@ function EditRouteDialog({
     () =>
       isDuplicate
         ? routeId.trim().length > 0
-        : Object.keys(initial).some((k) => form[k] !== initial[k]),
+        : routeId.trim().length > 0 ||
+          Object.keys(initial).some((k) => form[k] !== initial[k]),
     [form, initial, isDuplicate, routeId],
   );
 
@@ -152,7 +166,7 @@ function EditRouteDialog({
   };
 
   const handleSave = async () => {
-    if (!route) return;
+    if (!route && !isCreate) return;
     setSaving(true);
     setError(null);
 
@@ -168,14 +182,20 @@ function EditRouteDialog({
     }
 
     try {
-      if (isDuplicate) {
-        if (!routeId.trim()) {
+      if (isNew) {
+        if (isDuplicate && !routeId.trim()) {
           setError(t("edit.route.errorIdRequired") || "route_id is required.");
           setSaving(false);
           return;
         }
+        if (isCreate && !form.route_short_name && !form.route_long_name) {
+          setError(t("edit.route.errorNameRequired"));
+          setSaving(false);
+          return;
+        }
         const payload = {
-          route_id: routeId.trim(),
+          // Empty in create mode → generated server-side from the short name.
+          route_id: routeId.trim() || undefined,
           agency_id: form.agency_id || null,
           route_short_name: form.route_short_name || null,
           route_long_name: form.route_long_name || null,
@@ -203,15 +223,20 @@ function EditRouteDialog({
           setSaving(false);
           return;
         }
+        const createdId = body.route?.route_id || payload.route_id;
         const label =
           body.route?.route_short_name ||
           payload.route_short_name ||
-          payload.route_id;
-        recordEdit(t("edit.route.duplicatedToast", { name: label }), body.validation, {
-          entity: "route",
-          entityId: payload.route_id,
-        });
-        onCreated?.(body.route || payload);
+          createdId;
+        recordEdit(
+          t(
+            isCreate ? "edit.route.createdToast" : "edit.route.duplicatedToast",
+            { name: label },
+          ),
+          body.validation,
+          { entity: "route", entityId: createdId },
+        );
+        onCreated?.(body.route || { ...payload, route_id: createdId });
         onClose();
         return;
       }
@@ -285,7 +310,7 @@ function EditRouteDialog({
     };
   };
 
-  if (!route) return null;
+  if (!route && !isCreate) return null;
 
   const colorPreview = (hex) =>
     hex && HEX_RE.test(hex) ? `#${hex}` : "transparent";
@@ -300,6 +325,14 @@ function EditRouteDialog({
       maxWidth="sm"
       fullWidth
       disableEscapeKeyDown={saving}
+      // Ctrl/Cmd+Enter submits from any field (Enter alone is left to
+      // multi-line fields and autocompletes).
+      onKeyDown={(e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && !saving) {
+          e.preventDefault();
+          handleSave();
+        }
+      }}
       PaperProps={{
         sx: {
           borderTop: (theme) =>
@@ -335,6 +368,8 @@ function EditRouteDialog({
           >
             {isDuplicate ? (
               <ContentCopyIcon sx={{ fontSize: 18 }} />
+            ) : isCreate ? (
+              <AddIcon sx={{ fontSize: 18 }} />
             ) : (
               <EditIcon sx={{ fontSize: 18 }} />
             )}
@@ -344,7 +379,9 @@ function EditRouteDialog({
               {t(
                 isDuplicate
                   ? "edit.route.duplicateTitle"
-                  : "edit.route.dialogTitle",
+                  : isCreate
+                    ? "edit.route.createTitle"
+                    : "edit.route.dialogTitle",
               )}
             </Typography>
             <Typography
@@ -354,7 +391,9 @@ function EditRouteDialog({
             >
               {isDuplicate
                 ? t("edit.route.duplicateFrom", { id: route.route_id })
-                : route.route_id}
+                : isCreate
+                  ? t("edit.route.createSubtitle")
+                  : route.route_id}
             </Typography>
           </Box>
           {dirty && (
@@ -369,14 +408,15 @@ function EditRouteDialog({
       </DialogTitle>
       <DialogContent dividers ref={dialogContentRef}>
         <Box display="flex" flexDirection="column" gap={2} pt={1}>
-          {isDuplicate && (
+          {isNew && (
             <TextField
               label="route_id"
               value={routeId}
               onChange={(e) => setRouteId(e.target.value)}
               size="small"
-              required
-              autoFocus
+              required={isDuplicate}
+              autoFocus={isDuplicate}
+              placeholder={isCreate ? t("edit.route.routeIdAuto") : undefined}
               inputProps={{ style: { fontFamily: "monospace" } }}
             />
           )}

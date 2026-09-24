@@ -381,6 +381,14 @@ function EditStopDialog({
       maxWidth="sm"
       fullWidth
       disableEscapeKeyDown={saving}
+      // Ctrl/Cmd+Enter submits from any field (Enter alone is left to
+      // multi-line fields and autocompletes).
+      onKeyDown={(e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && !saving) {
+          e.preventDefault();
+          handleSave();
+        }
+      }}
       PaperProps={{
         sx: {
           borderTop: (theme) =>
