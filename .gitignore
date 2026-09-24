@@ -59,6 +59,7 @@ docs/
 !GTFS-EXPRESS-API/docs/
 GTFS-EXPRESS-API/docs/*
 !GTFS-EXPRESS-API/docs/openapi.yaml
+!GTFS-EXPRESS-API/docs/INTEGRATION.md
 
 # HTTP client
 requests.http
