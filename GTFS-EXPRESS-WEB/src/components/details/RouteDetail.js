@@ -17,6 +17,8 @@ import { useTheme } from "@mui/material/styles";
 import PlaceIcon from "@mui/icons-material/Place";
 import SwapVertIcon from "@mui/icons-material/SwapVert";
 import EditIcon from "@mui/icons-material/Edit";
+import PrintOutlinedIcon from "@mui/icons-material/PrintOutlined";
+import { openTimetable } from "../../utils/documentsApi";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import AddIcon from "@mui/icons-material/Add";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
@@ -49,7 +51,7 @@ function RouteDetail({ routeId }) {
   const isDark = theme.palette.mode === "dark";
   const { openPanel, closePanel } = useDetailPanel();
   const { editing, dataVersion, recordEdit, showToast } = useEditMode();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [createTripOpen, setCreateTripOpen] = useState(false);
@@ -277,6 +279,17 @@ function RouteDetail({ routeId }) {
             >
               {route.route_long_name || route.route_id}
             </Typography>
+            <Tooltip title={t("documents.timetable")} arrow>
+              <IconButton
+                size="small"
+                onClick={() => openTimetable(route.route_id, { lang: language }).catch(() => {})}
+                data-testid="route-print-timetable"
+                aria-label={t("documents.timetable")}
+                sx={{ color: textColor, opacity: 0.8, p: 0.25, mt: 0.25, "&:hover": { opacity: 1, background: "rgba(255,255,255,0.18)" } }}
+              >
+                <PrintOutlinedIcon sx={{ fontSize: 15 }} />
+              </IconButton>
+            </Tooltip>
             {agency && (
               <Box display="flex" alignItems="center" gap={0.5}>
                 <Typography variant="caption" sx={{ opacity: 0.8 }}>

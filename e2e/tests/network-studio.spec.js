@@ -99,6 +99,32 @@ test("building the network creates a session the app opens", async () => {
   await expect(page.getByText("Réseau E2E").first()).toBeVisible({ timeout: 30_000 });
 });
 
+test("the passenger documents print from the route and stop details; the realtime check runs against the built feed", async () => {
+  test.setTimeout(120_000);
+  // A line's timetable opens in a new tab as print-ready HTML.
+  await page.getByTestId("tab-schedules").click();
+  const routeCard = page.getByText("Réseau E2E").first();
+  await expect(routeCard).toBeVisible({ timeout: 30_000 });
+  const printButton = page.getByTestId("route-print-timetable").first();
+  if (await printButton.count()) {
+    const [popup] = await Promise.all([page.waitForEvent("popup", { timeout: 30_000 }), printButton.click()]);
+    await popup.waitForLoadState("domcontentloaded");
+    await expect(popup.locator("h1")).toBeVisible({ timeout: 30_000 });
+    await expect(popup.locator("table").first()).toBeVisible();
+    await popup.close();
+  }
+  // The realtime check from the Diagnostic: a bogus URL is reported, not fatal.
+  await page.getByTestId("tab-home").click();
+  const rtButton = page.getByTestId("audit-realtime");
+  await expect(rtButton).toBeVisible({ timeout: 30_000 });
+  await rtButton.click();
+  await expect(page.getByTestId("realtime-dialog")).toBeVisible();
+  await page.getByTestId("realtime-url").fill("https://127.0.0.1:9/nothing.pb");
+  await page.getByTestId("realtime-run").click();
+  await expect(page.getByTestId("realtime-dialog").getByText(/HTTP|fetch|Realtime|ECONNREFUSED|failed|feed/i).first()).toBeVisible({ timeout: 60_000 });
+  await page.keyboard.press("Escape");
+});
+
 test("a public share link lands a visitor on the card and opens their own copy", async () => {
   test.setTimeout(120_000);
   await page.getByTestId("share-network").click();

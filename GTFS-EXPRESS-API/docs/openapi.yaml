@@ -92,7 +92,11 @@ tags:
   - name: AI
     description: NL2SQL one-shot generation and multi-turn chat (Anthropic Claude, beta-gated, read-only).
   - name: Share
-    description: Public read-only shares of a feed (snapshot behind a token, card, hosted GTFS zip).
+    description: Public read-only shares of a feed (snapshot behind a token, card, hosted GTFS zip, published versions with a changelog).
+  - name: Documents
+    description: Passenger-facing documents (line timetables, stop posters) as print-ready HTML.
+  - name: Realtime
+    description: GTFS-Realtime feeds checked against the loaded static feed.
   - name: Network Studio
     description: Build a GTFS from a Network Spec (stops, lines, services) — validation, geocoding, road routing, compilation.
   - name: Project
@@ -876,6 +880,110 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "503":
+          $ref: "#/components/responses/BadRequest"
+  /gtfs/share/{token}/versions:
+    post:
+      tags:
+        - Share
+      summary: "Publish the session's current feed as a new version of a share (X-Share-Secret): the link and the zip serve the latest, with a changelog (counts, routes and stops added or removed)."
+      security:
+        - SessionId: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "201":
+          $ref: "#/components/responses/OkJson"
+        "403":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/documents/timetable:
+    get:
+      tags:
+        - Documents
+      summary: "A line's timetable as print-ready HTML (matrix or hour/minutes grid), for a date."
+      security:
+        - SessionId: []
+      parameters:
+        - name: route_id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: date
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: lang
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: text/html
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/documents/stop:
+    get:
+      tags:
+        - Documents
+      summary: "A stop's departure poster as print-ready HTML (per line and direction, hour/minutes), for a date."
+      security:
+        - SessionId: []
+      parameters:
+        - name: stop_id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: date
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: lang
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: text/html
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/realtime/validate:
+    post:
+      tags:
+        - Realtime
+      summary: "Check a GTFS-Realtime feed (protobuf body, { feed } JSON, or { url }) against the loaded static feed: unknown trips/stops/routes, sequence and time order, absurd delays, vehicles outside the network, stale timestamps, alerts pointing nowhere."
+      security:
+        - SessionId: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
           $ref: "#/components/responses/BadRequest"
   /gtfs/share/{token}/gtfs.zip:
     get:

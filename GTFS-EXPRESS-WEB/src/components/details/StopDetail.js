@@ -17,6 +17,8 @@ import {
 import { useTheme } from "@mui/material/styles";
 import PlaceIcon from "@mui/icons-material/Place";
 import RouteIcon from "@mui/icons-material/Route";
+import PrintOutlinedIcon from "@mui/icons-material/PrintOutlined";
+import { openStopPoster } from "../../utils/documentsApi";
 import AccessibleIcon from "@mui/icons-material/Accessible";
 import ScheduleIcon from "@mui/icons-material/Schedule";
 import DirectionsBusIcon from "@mui/icons-material/DirectionsBus";
@@ -71,7 +73,7 @@ function StopDetail({ stopId }) {
   const isDark = theme.palette.mode === "dark";
   const { openPanel, closePanel } = useDetailPanel();
   const { editing, dataVersion, recordEdit, showToast } = useEditMode();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -239,6 +241,17 @@ function StopDetail({ stopId }) {
           >
             {stop.stop_name}
           </Typography>
+          <Tooltip title={t("documents.stopPoster")} arrow placement="left">
+            <IconButton
+              size="small"
+              onClick={() => openStopPoster(stop.stop_id, { lang: language }).catch(() => {})}
+              data-testid="stop-print-poster"
+              aria-label={t("documents.stopPoster")}
+              sx={{ color: "#fff", background: "rgba(255,255,255,0.18)", "&:hover": { background: "rgba(255,255,255,0.3)" } }}
+            >
+              <PrintOutlinedIcon sx={{ fontSize: 16 }} />
+            </IconButton>
+          </Tooltip>
           {editing && (
             <Box display="flex" flexDirection="column" gap={0.5}>
               <Tooltip

@@ -354,7 +354,15 @@ const shareService = require("../services/shareService");
 router.post("/share", shareService.postShare);
 router.get("/share/:token", shareService.getShare);
 router.post("/share/:token/open", shareService.postOpenShare);
+router.post("/share/:token/versions", shareService.postShareVersion);
 router.get("/share/:token/gtfs.zip", shareService.getShareZip);
+
+// Passenger documents (print-ready HTML) and the GTFS-Realtime check.
+const documentsService = require("../services/documentsService");
+router.get("/documents/timetable", documentsService.getTimetable);
+router.get("/documents/stop", documentsService.getStopPoster);
+const realtimeService = require("../services/realtimeService");
+router.post("/realtime/validate", express.raw({ type: ["application/x-protobuf", "application/octet-stream"], limit: "20mb" }), realtimeService.validateRealtime);
 
 const { planNetworkTurn } = require("../services/network/networkPlanController");
 router.post("/network/plan", chatAccessGate, planNetworkTurn);

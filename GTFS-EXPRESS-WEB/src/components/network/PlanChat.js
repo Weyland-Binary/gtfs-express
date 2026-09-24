@@ -28,6 +28,9 @@ import GTFSAIIcon from "../chat/GTFSAIIcon";
 import { readBriefFile } from "../../utils/networkStudioApi";
 import { RequirementsCard, QualityCard, qualityColor } from "./PlanCards";
 
+// Brief templates: a specification skeleton per typical situation, with the blanks to fill.
+const TEMPLATES = ["smallTown", "school", "city", "seasonal", "existing"];
+
 const STEP_ICON = { geocode: PlaceOutlinedIcon, spec: RuleOutlinedIcon, geometry: RouteOutlinedIcon, questions: HelpOutlineIcon, territory: PlaceOutlinedIcon, requirements: FactCheckOutlinedIcon, corridors: AltRouteOutlinedIcon, refine: AutoFixHighOutlinedIcon, quality: VerifiedOutlinedIcon, feeds: CloudDownloadOutlinedIcon, import: CloudDownloadOutlinedIcon };
 
 function StepChip({ step }) {
@@ -148,6 +151,12 @@ export default function PlanChat({ turns, streaming, pendingTool, onSend, onStop
                 <Box key={k} component="button" type="button" onClick={() => setDraft(t(k))} data-testid="plan-example" sx={{ all: "unset", cursor: "pointer", fontSize: "0.76rem", lineHeight: 1.45, px: 1.25, py: 0.8, borderRadius: 1.5, border: `1px solid ${alpha(theme.palette.ai.main, 0.25)}`, background: alpha(theme.palette.ai.main, 0.04), "&:hover": { background: alpha(theme.palette.ai.main, 0.1) } }}>
                   {t(k)}
                 </Box>
+              ))}
+            </Box>
+            <Typography sx={{ fontSize: "0.7rem", fontWeight: 700, color: "text.secondary", textTransform: "uppercase", letterSpacing: 0.3, mt: 1.25, mb: 0.5 }}>{t("network.templates.title")}</Typography>
+            <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
+              {TEMPLATES.map((k) => (
+                <Chip key={k} size="small" label={t(`network.templates.${k}.label`)} onClick={() => prefill(t(`network.templates.${k}.brief`))} data-testid="plan-template" variant="outlined" sx={{ height: 24, fontSize: "0.7rem", fontWeight: 600 }} />
               ))}
             </Box>
           </Box>

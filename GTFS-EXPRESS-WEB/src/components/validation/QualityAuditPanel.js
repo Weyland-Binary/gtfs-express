@@ -35,6 +35,8 @@ import VisibilityOffOutlinedIcon from "@mui/icons-material/VisibilityOffOutlined
 import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
 import useAssistantMemory from "../chat/useAssistantMemory";
 import MergeStopsDialog from "./MergeStopsDialog";
+import RealtimeCheckDialog from "./RealtimeCheckDialog";
+import SensorsOutlinedIcon from "@mui/icons-material/SensorsOutlined";
 import API_BASE_URL from "../../config";
 import { fetchWithSession } from "../../utils/sessionManager";
 import { useLanguage } from "../../contexts/LanguageContext";
@@ -217,6 +219,7 @@ export default function QualityAuditPanel({ compact = false, onSeeAll = null, ma
   const [error, setError] = useState(null);
   const [mergePair, setMergePair] = useState(null); // { a, b }
   const [showIgnored, setShowIgnored] = useState(false);
+  const [realtimeOpen, setRealtimeOpen] = useState(false);
   const { memory, update: updateMemory } = useAssistantMemory({ enabled: true });
   const ignoredSet = useMemo(() => new Set(memory?.ignoredFindings || []), [memory]);
 
@@ -322,6 +325,11 @@ export default function QualityAuditPanel({ compact = false, onSeeAll = null, ma
                 : t("audit.subtitle", { warnings, infos })}
           </Typography>
         </Box>
+        <Tooltip title={t("realtime.title")}>
+          <IconButton size="small" onClick={() => setRealtimeOpen(true)} aria-label={t("realtime.title")} data-testid="audit-realtime">
+            <SensorsOutlinedIcon sx={{ fontSize: 18 }} />
+          </IconButton>
+        </Tooltip>
         {loading ? (
           <CircularProgress size={18} />
         ) : (
@@ -332,6 +340,7 @@ export default function QualityAuditPanel({ compact = false, onSeeAll = null, ma
           </Tooltip>
         )}
       </Box>
+      <RealtimeCheckDialog open={realtimeOpen} onClose={() => setRealtimeOpen(false)} />
 
       {error && (
         <Typography sx={{ fontSize: "0.78rem", color: "error.main" }}>{t("audit.error")}</Typography>

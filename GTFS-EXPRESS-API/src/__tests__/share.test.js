@@ -8,6 +8,7 @@
 "use strict";
 
 process.env.BETA_GATE_DISABLED = "true";
+process.env.SHARES_DIR = require("path").join(require("os").tmpdir(), `gtfs-shares-share-${process.pid}`);
 
 const fs = require("fs");
 const path = require("path");

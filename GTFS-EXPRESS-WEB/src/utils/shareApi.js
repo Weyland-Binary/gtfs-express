@@ -19,8 +19,46 @@ const asError = async (res) => {
   return err;
 };
 
+const SHARES_KEY = "gtfs:shares";
+
+/** The shares this browser created (token, secret, title) — the secret lets it publish new versions. */
+export const rememberedShares = () => {
+  try {
+    const raw = localStorage.getItem(SHARES_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    return Array.isArray(list) ? list.filter((s) => s && s.token && s.secret) : [];
+  } catch {
+    return [];
+  }
+};
+const rememberShare = (entry) => {
+  try {
+    const list = rememberedShares().filter((s) => s.token !== entry.token);
+    list.unshift(entry);
+    localStorage.setItem(SHARES_KEY, JSON.stringify(list.slice(0, 20)));
+  } catch {
+    /* storage disabled */
+  }
+};
+export const forgetShare = (token) => {
+  try {
+    localStorage.setItem(SHARES_KEY, JSON.stringify(rememberedShares().filter((s) => s.token !== token)));
+  } catch {
+    /* storage disabled */
+  }
+};
+
 export const createShare = async (title = null) => {
   const res = await fetchWithSession(`${API_BASE_URL}/share`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(title ? { title } : {}) });
+  if (!res.ok) throw await asError(res);
+  const data = await res.json();
+  if (data.secret) rememberShare({ token: data.token, secret: data.secret, title: data.card?.title || "", createdAt: new Date().toISOString() });
+  return data;
+};
+
+/** Publish the current session's feed as a new version of a share this browser created. */
+export const publishShareVersion = async (token, secret, note = null) => {
+  const res = await fetchWithSession(`${API_BASE_URL}/share/${encodeURIComponent(token)}/versions`, { method: "POST", headers: { "Content-Type": "application/json", "X-Share-Secret": secret }, body: JSON.stringify(note ? { note } : {}) });
   if (!res.ok) throw await asError(res);
   return res.json();
 };

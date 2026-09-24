@@ -104,6 +104,23 @@ export default function SharedFeedLanding({ token, onOpened, onCancel }) {
           </Box>
         </Box>
       )}
+      {card.versions?.length > 1 && (
+        <Box sx={{ display: "flex", flexDirection: "column", gap: 0.3, fontSize: "0.72rem" }} data-testid="share-versions">
+          <Typography sx={{ fontSize: "0.7rem", fontWeight: 700, color: "text.secondary", textTransform: "uppercase", letterSpacing: 0.3 }}>{t("share.versions", { count: card.versions.length })}</Typography>
+          {[...card.versions].reverse().slice(0, 5).map((v) => (
+            <Box key={v.n} sx={{ display: "flex", gap: 0.75, alignItems: "baseline" }}>
+              <strong>v{v.n}</strong>
+              <span style={{ color: theme.palette.text.secondary }}>{new Date(v.createdAt).toLocaleDateString()}</span>
+              <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.note || (v.changelog ? t("share.changelog", { routes: v.changelog.counts?.routes ?? 0, stops: v.changelog.counts?.stops ?? 0, trips: v.changelog.counts?.trips ?? 0 }) : "")}</span>
+              {v.n !== card.current_version && (
+                <Link href={`${shareZipUrl(token)}?v=${v.n}`} underline="hover" sx={{ fontSize: "0.68rem" }}>
+                  zip
+                </Link>
+              )}
+            </Box>
+          ))}
+        </Box>
+      )}
       {error && <Typography sx={{ fontSize: "0.8rem", color: "error.main" }}>{error}</Typography>}
       <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", alignItems: "center" }}>
         <Button variant="contained" disableElevation disabled={opening} onClick={explore} startIcon={opening ? <CircularProgress size={14} color="inherit" /> : <ExploreOutlinedIcon />} data-testid="share-explore" sx={{ textTransform: "none", fontWeight: 800 }}>
