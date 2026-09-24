@@ -24,6 +24,7 @@ const { createRouter } = require("./roadRouter");
 const { GTFS_UPLOAD_DIR, getActiveSessionsCount, MAX_SESSIONS, clearSessionCache } = require("../sessionManager");
 
 const SPEC_FILE = "_network_spec.json";
+const REPORT_FILE = "_network_report.json";
 const KM = (m) => Math.round((m / 1000) * 1000) / 1000;
 const DAY_COL = { mon: "monday", tue: "tuesday", wed: "wednesday", thu: "thursday", fri: "friday", sat: "saturday", sun: "sunday" };
 const DAY_OF_WEEK = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
@@ -290,11 +291,57 @@ const writeGtfsDir = async (tables, dir) => {
 
 // ── Session ────────────────────────────────────────────────────────────────
 
+const validationSummary = (report) => {
+  const counts = report?.counts || {};
+  return { errors: counts.errors ?? (report?.valid === false ? 1 : 0), warnings: counts.warnings ?? 0, valid: report ? report.valid !== false : null };
+};
+
+/**
+ * The network report: the design quality (evaluatePlan on the compiled
+ * geometry and the territory), the GTFS validation summary and the semantic
+ * audit of the built session, with the requirements the plan answered.
+ * Every part fails soft: a missing dossier or a failing audit leaves null.
+ */
+const buildReport = ({ spec, compiled, ingested, sessionId, territoryPlace = null, requirements = null }) => {
+  const design = require("./networkDesignService");
+  const territoryService = require("./territoryService");
+  const territory = territoryPlace ? territoryService.getCachedTerritory(territoryPlace) : null;
+  const geometry = { lines: compiled.stats.lines.map((l) => ({ id: l.id, short_name: l.short_name, directions: l.directions.map((d) => ({ id: d.id, routable: true, distance_km: d.distance_km, running_min: d.running_min })) })) };
+  let designReport = null;
+  try {
+    designReport = design.evaluatePlan(spec, { territory, geometry });
+  } catch (err) {
+    console.warn("network report: evaluatePlan failed:", err.message);
+  }
+  let audit = null;
+  try {
+    const { ensureDbHandle } = require("../db/connection");
+    const { auditForSession } = require("../qualityAuditService");
+    const db = ensureDbHandle(sessionId);
+    if (db) {
+      const a = auditForSession(db, sessionId);
+      audit = { counts: a.counts, partial: a.partial, findings: a.findings.slice(0, 20).map((f) => ({ code: f.code, severity: f.severity, count: f.count, unit: f.unit, entityType: f.entityType, samples: (f.samples || []).slice(0, 3) })) };
+    }
+  } catch (err) {
+    console.warn("network report: audit failed:", err.message);
+  }
+  return {
+    design: designReport,
+    validation: validationSummary(ingested?.validationReport),
+    audit,
+    territory: territory ? { place: territory.place.display_name, query: territory.place.query, population: territory.population?.value ?? null, sources: territory.sources } : null,
+    requirements: requirements || null,
+    counts: ingested?.counts || compiled.stats.counts,
+    routing_fallback_legs: compiled.stats.routing_fallback_legs,
+    savedAt: new Date().toISOString(),
+  };
+};
+
 /**
  * Compile and ingest as a brand-new session (validated, migrated to SQLite,
  * ready for the app). Throws {status, message} on capacity or ingestion errors.
  */
-const createSessionFromSpec = async (rawSpec, { router = null, routing = null, shapes = true, req = null, signal = null, onProgress = null } = {}) => {
+const createSessionFromSpec = async (rawSpec, { router = null, routing = null, shapes = true, req = null, signal = null, onProgress = null, territoryPlace = null, requirements = null } = {}) => {
   const norm = normalizeSpec(rawSpec);
   if (!norm.ok) throw Object.assign(new Error("The network spec has blocking issues."), { status: 400, issues: norm.issues, blockers: norm.blockers });
   if (getActiveSessionsCount() >= MAX_SESSIONS) throw Object.assign(new Error(`Server at capacity (${MAX_SESSIONS} sessions). Please try again later.`), { status: 503 });
@@ -306,7 +353,9 @@ const createSessionFromSpec = async (rawSpec, { router = null, routing = null, s
     await writeGtfsDir(compiled.tables, uploadPath);
     await fsp.writeFile(path.join(uploadPath, SPEC_FILE), JSON.stringify({ spec: norm.spec, savedAt: new Date().toISOString() }), "utf8");
     const ingested = await ingestPreparedDir({ sessionId, uploadPath, source: "network_studio", sourceName: norm.spec.agency.name, req });
-    return { sessionId, ...ingested, spec: norm.spec, issues: norm.issues, estimate: norm.estimate, stats: compiled.stats, warnings: compiled.warnings, geometry: compiled.geometry };
+    const report = buildReport({ spec: norm.spec, compiled, ingested, sessionId, territoryPlace, requirements });
+    await fsp.writeFile(path.join(uploadPath, REPORT_FILE), JSON.stringify(report), "utf8").catch(() => {});
+    return { sessionId, ...ingested, spec: norm.spec, issues: norm.issues, estimate: norm.estimate, stats: compiled.stats, warnings: compiled.warnings, geometry: compiled.geometry, report };
   } catch (err) {
     await fsp.rm(uploadPath, { recursive: true, force: true }).catch(() => {});
     clearSessionCache(sessionId);
@@ -330,4 +379,12 @@ const saveStoredSpec = (sessionId, spec) => {
   return true;
 };
 
-module.exports = { compileSpec, estimateGeometry, writeGtfsDir, createSessionFromSpec, loadStoredSpec, saveStoredSpec, estimateSpec, COLUMNS, _internals: { toCsv, csvCell, simplifyPoints, weekdayOf } };
+const loadStoredReport = (sessionId) => {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(GTFS_UPLOAD_DIR, sessionId, REPORT_FILE), "utf8"));
+  } catch {
+    return null;
+  }
+};
+
+module.exports = { compileSpec, estimateGeometry, writeGtfsDir, createSessionFromSpec, loadStoredSpec, saveStoredSpec, loadStoredReport, estimateSpec, COLUMNS, _internals: { toCsv, csvCell, simplifyPoints, weekdayOf, buildReport, validationSummary } };

@@ -163,7 +163,7 @@ describe("territory dossier", () => {
     expect(results(4)).toMatch(/Main unserved places: Lycée Ronsard/);
     expect(result.specOk).toBe(true);
     // The system prompt tells the model to start from the territory.
-    expect(__captured[0].system[0].text).toMatch(/# Territory first/);
+    expect(__captured[0].system[0].text).toMatch(/## 2\. Ground \(get_territory, suggest_corridors\)/);
   });
 
   test("a dossier loaded by the studio rides along as a [Territory] block", async () => {

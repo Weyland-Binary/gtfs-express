@@ -25,6 +25,8 @@ const planNetworkTurn = async (req, res) => {
   const history = Array.isArray(body.messages) ? body.messages.slice(-20) : [];
   const spec = body.spec && typeof body.spec === "object" ? body.spec : null;
   const territoryPlace = typeof body.territory === "string" ? body.territory.slice(0, 200) : typeof body.territory?.place === "string" ? body.territory.place.slice(0, 200) : null;
+  const requirements = body.requirements && typeof body.requirements === "object" && JSON.stringify(body.requirements).length < 20000 ? body.requirements : null;
+  const { maxLines } = require("./networkController")._internals.planLimits(req);
 
   // Access: identical to a chat turn (the planner is the most expensive call).
   const anonKey = `anon:${req.ip || "ip"}`;
@@ -59,7 +61,7 @@ const planNetworkTurn = async (req, res) => {
     }
   };
   try {
-    await planNetwork({ brief, spec, history, language, near, territoryPlace, freeTier: Boolean(req.freeTier), rateKey, aiLimits, signal: abort.signal, emit, req });
+    await planNetwork({ brief, spec, history, language, near, territoryPlace, requirements, maxLines: Number.isFinite(maxLines) ? maxLines : null, freeTier: Boolean(req.freeTier), rateKey, aiLimits, signal: abort.signal, emit, req });
   } catch (err) {
     emit("error", { code: err.code || "UPSTREAM_ERROR", message: err.message || "Planner request failed.", ...(err.retryAfterSec ? { retryAfterSec: err.retryAfterSec } : {}), ...(err.status ? { status: err.status } : {}) });
     emit("done", { reason: "error" });

@@ -338,8 +338,11 @@ router.post("/network/validate", networkController.validateNetworkSpec);
 router.post("/network/geocode", networkController.geocodeStops);
 router.post("/network/estimate", networkController.estimateNetwork);
 router.post("/network/compile", networkController.compileNetwork);
+router.post("/network/evaluate", networkController.evaluateNetwork);
+router.post("/network/refine", networkController.refineNetwork);
 router.get("/network/spec", networkController.getNetworkSpec);
 router.put("/network/spec", networkController.putNetworkSpec);
+router.get("/network/report", networkController.getNetworkReport);
 // Territory dossier from public worldwide data, and the coverage of a plan.
 router.post("/network/territory", networkController.getTerritory);
 router.post("/network/coverage", networkController.getCoverage);

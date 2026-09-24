@@ -231,10 +231,21 @@ const normalizeSpec = (raw) => {
 
   // Calendars.
   const calendars = new Map(); // id -> { id, days, start_date, end_date }
+  // A normalised spec round-trips: its calendars[] are registered first so
+  // services may refer to them by id (calendar_id).
+  (Array.isArray(input.calendars) ? input.calendars : []).forEach((c) => {
+    const id = c && str(c.id);
+    const days = c && parseDays(c.days);
+    if (!id || !days || !days.length) return;
+    const sd = str(c.start_date).replace(/-/g, "") || feed.start_date;
+    const ed = str(c.end_date).replace(/-/g, "") || feed.end_date;
+    if (DATE_RE.test(sd) && DATE_RE.test(ed) && sd <= ed) calendars.set(id, { id, days, start_date: sd, end_date: ed });
+  });
   const resolveCalendar = (raw, path) => {
     if (typeof raw === "string" || raw == null) {
+      if (raw && calendars.has(str(raw))) return calendars.get(str(raw));
       const key = str(raw || "weekday").toLowerCase().replace(/[^a-z]/g, "");
-      const named = NAMED_CALENDARS[key];
+      const named = NAMED_CALENDARS[key] || Object.values(NAMED_CALENDARS).find((c) => c.id.toLowerCase() === key);
       if (!named) {
         err("unknown_calendar", path, `Unknown calendar "${raw}" (use weekday, saturday, sunday, weekend, daily, monsat or {days:[…]}).`);
         return null;
@@ -334,7 +345,7 @@ const normalizeSpec = (raw) => {
     rawServices.forEach((s, si) => {
       if (!s || typeof s !== "object") return;
       const spath = `${path}.services[${si}]`;
-      const cal = resolveCalendar(s.calendar ?? s.days ?? (Array.isArray(s.days) ? { days: s.days } : undefined), `${spath}.calendar`);
+      const cal = resolveCalendar(s.calendar ?? s.calendar_id ?? (Array.isArray(s.days) ? { days: s.days } : undefined), `${spath}.calendar`);
       if (!cal) return;
       const dir = str(s.direction ?? "both");
       const direction = dir === "0" || dir === "1" ? dir : "both";

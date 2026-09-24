@@ -43,6 +43,7 @@ import SqlConsole from "./SqlConsole/SqlConsole";
 import ShapeStudio from "./shapeStudio/ShapeStudio";
 import FeedDiffPage from "./diff/FeedDiffPage";
 import NetworkStudio from "./network/NetworkStudio";
+import NetworkReportDialog from "./network/NetworkReportDialog";
 import PricingDialog, { PRICING_EVENT } from "./PricingDialog";
 // Import of the advanced analysis component
 
@@ -191,6 +192,7 @@ function GTFSApp() {
   // Network Studio (create a network from scratch): opened from the landing
   // tile, the command palette, or the "gtfs:open-network-studio" event.
   const [studioOpen, setStudioOpen] = useState(false);
+  const [networkReport, setNetworkReport] = useState(null); // the report of a network the studio just projected
   useEffect(() => {
     const handler = () => setStudioOpen(true);
     window.addEventListener("gtfs:open-network-studio", handler);
@@ -678,7 +680,8 @@ function GTFSApp() {
       await fetchAgencies();
       await refreshStatus();
       setSelectedMainTab(0);
-      showToast(t("network.toast.opened", { routes: result.counts?.routes ?? 0, trips: result.counts?.trips ?? 0 }), "success");
+      if (result.report) setNetworkReport(result.report);
+      else showToast(t("network.toast.opened", { routes: result.counts?.routes ?? 0, trips: result.counts?.trips ?? 0 }), "success");
     } catch (err) {
       console.error("Failed to open the built network:", err);
       setError(t("app.errorAgencies"));
@@ -2076,6 +2079,15 @@ function GTFSApp() {
       <CommandPalette />
       <ShortcutsHelpDialog />
       <NetworkStudio open={studioOpen} onClose={() => setStudioOpen(false)} onCreated={handleNetworkCreated} />
+      <NetworkReportDialog
+        open={Boolean(networkReport)}
+        report={networkReport}
+        onClose={() => setNetworkReport(null)}
+        onRefine={() => {
+          setNetworkReport(null);
+          setStudioOpen(true);
+        }}
+      />
       <PricingDialog open={Boolean(pricing)} reason={pricing?.reason || null} onClose={() => setPricing(null)} />
       <ChatAssistantFAB
         feedLoaded={agencies.length > 0}

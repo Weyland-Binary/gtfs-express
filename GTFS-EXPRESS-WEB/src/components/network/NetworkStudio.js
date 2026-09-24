@@ -13,7 +13,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Box, Button, Chip, CircularProgress, Collapse, Dialog, IconButton, LinearProgress, Tab, Tabs, Tooltip, Typography, alpha, useMediaQuery, useTheme } from "@mui/material";
+import { Alert, Box, Button, Chip, CircularProgress, Collapse, Dialog, FormControlLabel, IconButton, LinearProgress, Snackbar, Switch, Tab, Tabs, Tooltip, Typography, alpha, useMediaQuery, useTheme } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
 import RestartAltIcon from "@mui/icons-material/RestartAlt";
 import BuildCircleOutlinedIcon from "@mui/icons-material/BuildCircleOutlined";
@@ -29,8 +29,9 @@ import RefreshIcon from "@mui/icons-material/Refresh";
 import LockOutlinedIcon from "@mui/icons-material/LockOutlined";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { useFeatures } from "../../utils/featuresApi";
-import { validateSpec, estimateSpec, compileSpec, streamPlan, loadDraft, saveDraft, fetchCoverage } from "../../utils/networkStudioApi";
+import { validateSpec, estimateSpec, compileSpec, streamPlan, loadDraft, saveDraft, fetchCoverage, evaluateSpec, refineSpec } from "../../utils/networkStudioApi";
 import TerritoryPanel from "./TerritoryPanel";
+import { QualityBadge, QualityCard } from "./PlanCards";
 import NetworkMap from "./NetworkMap";
 import PlanChat from "./PlanChat";
 import { LinesEditor, StopsEditor, JsonEditor } from "./SpecEditors";
@@ -39,7 +40,15 @@ import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import { PRICING_EVENT } from "../PricingDialog";
 
 const EMPTY_SPEC = { agency: { name: "", url: "", timezone: "" }, stops: [], lines: [] };
+const AUTO_PROJECT_KEY = "gtfs:network-autoproject";
 const newId = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+const readAutoProject = () => {
+  try {
+    return localStorage.getItem(AUTO_PROJECT_KEY) !== "0";
+  } catch {
+    return true;
+  }
+};
 
 const centroid = (stops) => {
   const pts = (stops || []).filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lon));
@@ -80,9 +89,19 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
   const [territory, setTerritory] = useState(null);
   const [layers, setLayers] = useState({ stops: true, pois: true });
   const [coverage, setCoverage] = useState(null);
+  const [requirements, setRequirements] = useState(null);
+  const [quality, setQuality] = useState(null);
+  const [qualityOpen, setQualityOpen] = useState(false);
+  const [corridors, setCorridors] = useState([]);
+  const [autoProject, setAutoProject] = useState(readAutoProject);
+  const [ready, setReady] = useState(false);
+  const [refining, setRefining] = useState(false);
+  const [notice, setNotice] = useState(null);
   const coverageTimer = useRef(null);
+  const qualityTimer = useRef(null);
   const abortRef = useRef(null);
   const validateTimer = useRef(null);
+  const projectRef = useRef(null);
 
   // Draft persistence: the plan survives a reload.
   useEffect(() => {
@@ -94,13 +113,22 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
       setGeometryStale(true);
     }
     if (draft && draft.territory) setTerritory(draft.territory);
+    if (draft && draft.requirements) setRequirements(draft.requirements);
     setRestored(true);
   }, [open, restored]);
   useEffect(() => {
     if (!restored) return;
     const hasContent = (spec.lines || []).length > 0 || (spec.stops || []).length > 0 || turns.length > 0 || territory;
-    saveDraft(hasContent ? { spec, turns: turns.slice(-12), territory: territory ? { ...territory, existing_stops: territory.existing_stops.slice(0, 300), pois: { ...territory.pois, items: territory.pois.items.slice(0, 200) } } : null } : null);
-  }, [spec, turns, restored, territory]);
+    saveDraft(hasContent ? { spec, turns: turns.slice(-12).map((x) => ({ ...x, quality: undefined })), requirements, territory: territory ? { ...territory, existing_stops: territory.existing_stops.slice(0, 300), pois: { ...territory.pois, items: territory.pois.items.slice(0, 200) } } : null } : null);
+  }, [spec, turns, restored, territory, requirements]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(AUTO_PROJECT_KEY, autoProject ? "1" : "0");
+    } catch {
+      /* storage disabled */
+    }
+  }, [autoProject]);
 
   // Coverage of the plan against the territory (debounced, after validation).
   useEffect(() => {
@@ -116,6 +144,21 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
     }, 500);
     return () => clearTimeout(coverageTimer.current);
   }, [validation, territory, spec]);
+
+  // Design quality of the plan (debounced; the planner emits its own while it runs).
+  useEffect(() => {
+    if (streaming || !validation || !(validation.spec?.lines || []).length) return undefined;
+    clearTimeout(qualityTimer.current);
+    qualityTimer.current = setTimeout(() => {
+      evaluateSpec(spec, territory?.place?.query || null, geometry.length ? geometry.map((g) => ({ lineId: g.lineId, directionId: g.directionId, distance_km: g.distance_km, running_min: g.running_min })) : null)
+        .then((q) => setQuality(q))
+        .catch(() => {});
+    }, 700);
+    return () => clearTimeout(qualityTimer.current);
+  }, [validation, territory, spec, geometry, streaming]);
+  useEffect(() => {
+    if (!(spec.lines || []).length) setQuality(null);
+  }, [spec.lines]);
 
   // Live validation (debounced) on every change.
   useEffect(() => {
@@ -193,6 +236,8 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
       const patch = (fn) => setTurns((prev) => prev.map((x) => (x.id === assistantTurn.id ? { ...x, ...fn(x) } : x)));
       const history = turns.filter((x) => x.content).map((x) => ({ role: x.role, content: x.content }));
       const hasSpec = (spec.lines || []).length > 0;
+      setReady(false);
+      setCorridors([]);
       try {
         await streamPlan({
           brief: message,
@@ -201,9 +246,21 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
           language,
           near,
           territory: territory ? { place: territory.place.query } : null,
+          requirements,
           signal: abort.signal,
           onEvent: (event, data) => {
             switch (event) {
+              case "requirements":
+                setRequirements(data);
+                patch(() => ({ requirements: data }));
+                break;
+              case "corridors":
+                setCorridors(data.corridors || []);
+                break;
+              case "quality":
+                setQuality(data);
+                patch(() => ({ quality: data }));
+                break;
               case "token":
                 patch((x) => ({ content: x.content + (data.text || "") }));
                 break;
@@ -244,6 +301,11 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
                 break;
               case "done":
                 patch((x) => ({ status: x.status === "error" ? "error" : "complete" }));
+                if (data.ready) {
+                  setReady(true);
+                  // The plan is complete: project it into the application (exploration mode).
+                  if (readAutoProject() && projectRef.current) setTimeout(() => projectRef.current({ auto: true }), 0);
+                }
                 break;
               default:
             }
@@ -257,22 +319,50 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
         setPendingTool(null);
       }
     },
-    [streaming, turns, spec, language, near, territory, t, validation],
+    [streaming, turns, spec, language, near, territory, requirements, t, validation],
   );
 
   const stopPlan = useCallback(() => abortRef.current?.abort(), []);
 
-  // ── Build ────────────────────────────────────────────────────────────────
-  const build = useCallback(async () => {
-    if (compile.state === "running") return;
-    setCompile({ state: "running" });
+  // ── Build / project ──────────────────────────────────────────────────────
+  // `auto`: the planner finished a ready plan — build and open it in the
+  // application straight away (the draft stays, so the user can come back
+  // and refine). Otherwise the result dialog lets the user choose.
+  const build = useCallback(
+    async ({ auto = false } = {}) => {
+      if (compile.state === "running") return;
+      setCompile({ state: "running", auto });
+      try {
+        const result = await compileSpec(spec, { shapes: true, place: territory?.place?.query || null, requirements });
+        if (auto) {
+          setCompile({ state: "idle" });
+          setReady(false);
+          onCreated({ ...result, auto: true });
+        } else setCompile({ state: "done", result });
+      } catch (err) {
+        setCompile({ state: "error", error: err.message, code: err.code, issues: err.body?.issues || null });
+      }
+    },
+    [compile.state, spec, territory, requirements, onCreated],
+  );
+  projectRef.current = build;
+
+  const refineStops = useCallback(async () => {
+    if (!territory || refining) return;
+    setRefining(true);
     try {
-      const result = await compileSpec(spec, { shapes: true });
-      setCompile({ state: "done", result });
+      const r = await refineSpec(spec, territory.place.query);
+      if (r.changes?.length) {
+        updateSpec(editableFromNormalized(r.spec));
+        setNotice(t("network.refineDone", { snapped: r.snapped, inserted: r.inserted }));
+        setFitEpoch((e) => e + 1);
+      } else setNotice(t("network.refineNone"));
     } catch (err) {
-      setCompile({ state: "error", error: err.message, code: err.code, issues: err.body?.issues || null });
+      setNotice(err.message);
+    } finally {
+      setRefining(false);
     }
-  }, [compile.state, spec]);
+  }, [territory, refining, spec, updateSpec, t]);
 
   const reset = useCallback(() => {
     abortRef.current?.abort();
@@ -285,13 +375,16 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
     setPlacingStopId(null);
     setTerritory(null);
     setCoverage(null);
+    setRequirements(null);
+    setQuality(null);
+    setCorridors([]);
+    setReady(false);
     saveDraft(null);
   }, []);
 
   const openResult = useCallback(() => {
     if (compile.state !== "done") return;
     const result = compile.result;
-    saveDraft(null);
     setCompile({ state: "idle" });
     onCreated(result);
   }, [compile, onCreated]);
@@ -336,6 +429,9 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
             <Chip size="small" icon={<LockOutlinedIcon sx={{ fontSize: 13 }} />} label={t("network.plan.free", { max: plan.max_lines })} color={plan.over_limit ? "warning" : "default"} onClick={() => window.dispatchEvent(new CustomEvent(PRICING_EVENT, { detail: { reason: plan.over_limit ? "network_limit" : null } }))} data-testid="network-plan-chip" sx={{ height: 22, fontSize: "0.66rem", fontWeight: 700 }} />
           </Tooltip>
         )}
+        <Tooltip title={t("network.autoProjectHint")}>
+          <FormControlLabel control={<Switch size="small" checked={autoProject} onChange={(e) => setAutoProject(e.target.checked)} inputProps={{ "data-testid": "network-autoproject" }} />} label={t("network.autoProject")} sx={{ mr: 0.5, "& .MuiFormControlLabel-label": { fontSize: "0.72rem", fontWeight: 600, color: "text.secondary" } }} />
+        </Tooltip>
         <Tooltip title={t("network.startOver")}>
           <span>
             <IconButton size="small" onClick={reset} disabled={streaming} aria-label={t("network.startOver")} data-testid="network-reset">
@@ -351,7 +447,7 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
       {/* Body */}
       <Box sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: isMobile ? "column" : "row" }}>
         <Box sx={{ width: isMobile ? "100%" : 440, flexShrink: 0, borderRight: isMobile ? "none" : `1px solid ${alpha(theme.palette.divider, 1)}`, background: theme.palette.background.paper, minHeight: isMobile ? 320 : 0, display: "flex", flexDirection: "column" }}>
-          <TerritoryPanel territory={territory} onTerritory={(d) => { setTerritory(d); setFitEpoch((e) => e + 1); }} layers={layers} onToggleLayer={(k) => setLayers((l) => ({ ...l, [k]: !l[k] }))} coverage={coverage} onUseExistingStops={useExistingStops} />
+          <TerritoryPanel territory={territory} onTerritory={(d) => { setTerritory(d); setFitEpoch((e) => e + 1); }} layers={layers} onToggleLayer={(k) => setLayers((l) => ({ ...l, [k]: !l[k] }))} coverage={coverage} onUseExistingStops={useExistingStops} onRefineStops={refineStops} canRefine={Boolean(validation && (validation.spec?.lines || []).length) && !streaming} refining={refining} />
           <PlanChat turns={turns} streaming={streaming} pendingTool={pendingTool} onSend={runPlan} onStop={stopPlan} canPlan={canPlan} disabledReason={disabledReason} />
         </Box>
         <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column" }}>
@@ -374,7 +470,7 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
           <Box sx={{ flex: 1, minHeight: 0, position: "relative", overflow: tab === "map" ? "hidden" : "auto", p: tab === "map" ? 0 : 1.5 }}>
             {tab === "map" && (
               <>
-                <NetworkMap stops={spec.stops || []} lines={validation?.spec?.lines || spec.lines || []} geometry={geometry} existingStops={territory && layers.stops ? territory.existing_stops : []} pois={territory && layers.pois ? territory.pois.items : []} onPickExistingStop={(s) => { if (!(spec.stops || []).some((x) => x.id === s.id)) updateSpec({ ...spec, stops: [...(spec.stops || []), { id: s.id, name: s.name || s.kind, lat: s.lat, lon: s.lon, source: "osm" }] }); }} selectedStopId={selectedStopId} placingStopId={placingStopId} onSelectStop={setSelectedStopId} onMoveStop={(id, lat, lon) => updateSpec({ ...spec, stops: spec.stops.map((s) => (s.id === id ? { ...s, lat, lon } : s)) })} onPlaceStop={(id, lat, lon) => { updateSpec({ ...spec, stops: spec.stops.map((s) => (s.id === id ? { ...s, lat, lon } : s)) }); setPlacingStopId(null); }} fitEpoch={fitEpoch} />
+                <NetworkMap stops={spec.stops || []} lines={validation?.spec?.lines || spec.lines || []} geometry={geometry} corridors={corridors} existingStops={territory && layers.stops ? territory.existing_stops : []} pois={territory && layers.pois ? territory.pois.items : []} onPickExistingStop={(s) => { if (!(spec.stops || []).some((x) => x.id === s.id)) updateSpec({ ...spec, stops: [...(spec.stops || []), { id: s.id, name: s.name || s.kind, lat: s.lat, lon: s.lon, source: "osm" }] }); }} selectedStopId={selectedStopId} placingStopId={placingStopId} onSelectStop={setSelectedStopId} onMoveStop={(id, lat, lon) => updateSpec({ ...spec, stops: spec.stops.map((s) => (s.id === id ? { ...s, lat, lon } : s)) })} onPlaceStop={(id, lat, lon) => { updateSpec({ ...spec, stops: spec.stops.map((s) => (s.id === id ? { ...s, lat, lon } : s)) }); setPlacingStopId(null); }} fitEpoch={fitEpoch} />
                 {placingStopId && (
                   <Box sx={{ position: "absolute", top: 12, left: "50%", transform: "translateX(-50%)", zIndex: 1000, px: 1.5, py: 0.6, borderRadius: 99, background: theme.palette.warning.main, color: theme.palette.warning.contrastText, fontSize: "0.76rem", fontWeight: 700, boxShadow: 3 }}>
                     {t("network.placingHint", { name: (spec.stops || []).find((s) => s.id === placingStopId)?.name || "" })}
@@ -394,6 +490,15 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
 
           {/* Footer: estimate, issues, build */}
           <Box sx={{ borderTop: `1px solid ${alpha(theme.palette.divider, 1)}`, background: theme.palette.background.paper }}>
+            <Collapse in={ready && !streaming && canBuild && compile.state !== "running"}>
+              <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 2, py: 0.75, background: alpha(theme.palette.success.main, 0.08), borderBottom: `1px solid ${alpha(theme.palette.success.main, 0.3)}` }} data-testid="network-ready">
+                <CheckCircleOutlineIcon sx={{ fontSize: 16, color: "success.main" }} />
+                <Typography sx={{ fontSize: "0.78rem", fontWeight: 700, flex: 1 }}>{t("network.ready")}</Typography>
+                <Button size="small" variant="contained" color="success" disableElevation onClick={() => build({ auto: true })} data-testid="network-project-now" sx={{ textTransform: "none", fontWeight: 800 }}>
+                  {t("network.projectNow")}
+                </Button>
+              </Box>
+            </Collapse>
             <Collapse in={issuesOpen && issues.length > 0}>
               <Box sx={{ maxHeight: 180, overflowY: "auto", px: 2, py: 1, display: "flex", flexDirection: "column", gap: 0.3 }} data-testid="network-issues">
                 {[...blockers, ...warnings].slice(0, 60).map((i, k) => (
@@ -413,6 +518,7 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
                   <Chip size="small" label={t("network.estimate.stops", { count: estimate.stops })} color={estimate.stops_without_coordinates ? "warning" : "default"} sx={{ height: 22, fontSize: "0.68rem" }} />
                   <Chip size="small" label={t("network.estimate.trips", { count: estimate.trips })} sx={{ height: 22, fontSize: "0.68rem" }} />
                   {geometry.length > 0 && <Chip size="small" label={t("network.estimate.km", { km: Math.round(geometry.reduce((a, g) => a + (g.distance_km || 0), 0)) })} sx={{ height: 22, fontSize: "0.68rem" }} />}
+                  <QualityBadge quality={quality} onClick={() => setQualityOpen(true)} />
                   <Box component="button" type="button" onClick={() => setIssuesOpen((v) => !v)} data-testid="network-issues-toggle" sx={{ all: "unset", cursor: issues.length ? "pointer" : "default", display: "flex", alignItems: "center", gap: 0.5, fontSize: "0.74rem", fontWeight: 700, color: blockers.length ? "error.main" : warnings.length ? "warning.dark" : "success.main" }}>
                     {blockers.length ? <ErrorOutlineIcon sx={{ fontSize: 15 }} /> : warnings.length ? <WarningAmberIcon sx={{ fontSize: 15 }} /> : <CheckCircleOutlineIcon sx={{ fontSize: 15 }} />}
                     {blockers.length ? t("network.issues.blockers", { count: blockers.length }) : warnings.length ? t("network.issues.warnings", { count: warnings.length }) : t("network.issues.none")}
@@ -423,8 +529,8 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
                 <Typography sx={{ fontSize: "0.76rem", color: "text.disabled" }}>{t("network.estimate.empty")}</Typography>
               )}
               <Box sx={{ flex: 1 }} />
-              <Button variant="contained" disableElevation disabled={!canBuild} onClick={build} startIcon={compile.state === "running" ? <CircularProgress size={14} color="inherit" /> : <BuildCircleOutlinedIcon />} data-testid="network-build" sx={{ textTransform: "none", fontWeight: 800 }}>
-                {compile.state === "running" ? t("network.building") : t("network.build")}
+              <Button variant="contained" disableElevation disabled={!canBuild} onClick={() => build()} startIcon={compile.state === "running" ? <CircularProgress size={14} color="inherit" /> : <BuildCircleOutlinedIcon />} data-testid="network-build" sx={{ textTransform: "none", fontWeight: 800 }}>
+                {compile.state === "running" ? (compile.auto ? t("network.projecting") : t("network.building")) : t("network.build")}
               </Button>
             </Box>
             {compile.state === "running" && <LinearProgress sx={{ height: 3 }} />}
@@ -441,6 +547,12 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
           </Box>
         </Box>
       </Box>
+
+      {/* Quality report */}
+      <Dialog open={qualityOpen} onClose={() => setQualityOpen(false)} maxWidth="sm" fullWidth data-testid="network-quality-dialog">
+        <Box sx={{ p: 2 }}>{quality && <QualityCard quality={quality} />}</Box>
+      </Dialog>
+      <Snackbar open={Boolean(notice)} autoHideDuration={4000} onClose={() => setNotice(null)} message={notice || ""} anchorOrigin={{ vertical: "bottom", horizontal: "center" }} />
 
       {/* Result */}
       <Dialog open={compile.state === "done"} onClose={() => setCompile({ state: "idle" })} maxWidth="xs" fullWidth data-testid="network-result">

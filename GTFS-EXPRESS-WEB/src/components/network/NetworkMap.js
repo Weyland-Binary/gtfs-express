@@ -42,7 +42,7 @@ const stopIcon = (color, selected) =>
 
 const POI_COLOR = { school: "#F9A825", college: "#F57F17", hospital: "#D32F2F", civic: "#5E35B1", market: "#00897B", station: "#1E88E5", leisure: "#43A047", work: "#6D4C41" };
 
-export default function NetworkMap({ stops = [], lines = [], geometry = [], existingStops = [], pois = [], selectedStopId = null, placingStopId = null, onSelectStop = null, onMoveStop = null, onPlaceStop = null, onPickExistingStop = null, fitEpoch = 0, height = "100%" }) {
+export default function NetworkMap({ stops = [], lines = [], geometry = [], existingStops = [], pois = [], corridors = [], selectedStopId = null, placingStopId = null, onSelectStop = null, onMoveStop = null, onPlaceStop = null, onPickExistingStop = null, fitEpoch = 0, height = "100%" }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const located = useMemo(() => stops.filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lon)), [stops]);
@@ -83,6 +83,11 @@ export default function NetworkMap({ stops = [], lines = [], geometry = [], exis
           >
             <LeafletTooltip direction="top" offset={[0, -4]}>{s.name || s.kind}</LeafletTooltip>
           </CircleMarker>
+        ))}
+        {corridors.map((c) => (
+          <Polyline key={c.id} positions={c.points} pathOptions={{ color: isDark ? "#94a3b8" : "#64748b", weight: 2, opacity: 0.55, dashArray: "3 8" }}>
+            <LeafletTooltip sticky>{`${c.from} → ${c.to}`}</LeafletTooltip>
+          </Polyline>
         ))}
         {geometry.map((g) => (
           <Polyline key={`${g.lineId}_${g.directionId}`} positions={g.points} pathOptions={{ color: `#${g.color || "1E88E5"}`, weight: g.directionId === "0" ? 5 : 3, opacity: g.directionId === "0" ? 0.85 : 0.5, dashArray: g.directionId === "0" ? null : "6 6" }} />

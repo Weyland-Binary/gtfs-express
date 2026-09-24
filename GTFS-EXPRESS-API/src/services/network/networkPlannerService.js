@@ -11,12 +11,16 @@
  *     near?:     { lat, lon }               // area hint for geocoding
  *   }
  *
- * The model never writes GTFS rows. It calls tools: geocode_stops (real
- * coordinates), set_spec (validated by networkSpec → issues back to the
- * model until the spec is clean), estimate_routes (road distances and
- * running times), ask_user (questions when the brief is ambiguous). Every
- * event the UI needs streams over SSE: `token` (markdown), `tool_pending`,
- * `step`, `spec`, `geometry`, `questions`, `usage`, `error`, `done`.
+ * The model never writes GTFS rows. It works in phases, each grounded by a
+ * tool: understand (set_requirements → what the brief states, what is
+ * assumed, what must be asked; ask_user with defaults), ground
+ * (get_territory, suggest_corridors), design (find_existing_stops /
+ * geocode_stops, set_spec validated by networkSpec, refine_stops,
+ * estimate_routes), evaluate (evaluate_plan → the design quality report;
+ * fix the majors, re-evaluate). Every event the UI needs streams over SSE:
+ * `token` (markdown), `tool_pending`, `step`, `requirements`, `territory`,
+ * `corridors`, `spec`, `geometry`, `coverage`, `quality`, `questions`,
+ * `usage`, `error`, `done` (with `ready` when the plan can be projected).
  *
  * LLM → tools → LLM, up to MAX_ROUNDS; the strongest model tier is used
  * for this design step (NETWORK_PLANNER_MODEL), the chat model for the
@@ -35,9 +39,10 @@ const geocoderModule = require("./geocoder");
 const roadRouter = require("./roadRouter");
 const compiler = require("./compiler");
 const territoryService = require("./territoryService");
+const design = require("./networkDesignService");
 const { haversineMeters } = require("../../utils/geoUtils");
 
-const MAX_ROUNDS = 14;
+const MAX_ROUNDS = 20;
 const MAX_CONSECUTIVE_ERRORS = 4;
 const MAX_TOKENS = 6000;
 const MAX_BRIEF_CHARS = 60000;
@@ -48,6 +53,7 @@ const LANG_NAMES = { en: "English", fr: "French", es: "Spanish", de: "German", p
 const deps = { geocode: geocoderModule.geocode, createRouter: roadRouter.createRouter, buildTerritory: territoryService.buildTerritory };
 
 const clip = (s, n) => (typeof s === "string" && s.length > n ? `${s.slice(0, n)}…` : s);
+const str = (v) => (typeof v === "string" ? v.trim() : v == null ? "" : String(v).trim());
 
 // ── System prompt ──────────────────────────────────────────────────────────
 
@@ -71,15 +77,26 @@ You NEVER write GTFS rows yourself. You produce a Network Spec through the set_s
 }
 Limits: ≤ ${LIMITS.lines} lines, ≤ ${LIMITS.stops} stops, ≤ ${LIMITS.stopsPerDirection} stops per direction, ≤ ${LIMITS.trips} trips.
 
-# Territory first
-Real networks start from the ground: call get_territory with the town or area named in the brief (once; the dossier is cached) unless a [Territory] block is already in the message. It gives the timezone, the population, the EXISTING stops and stations from OpenStreetMap (reuse their names, coordinates and ids instead of geocoding — passengers know them), the existing transit lines (do not duplicate a line that already runs; connect to it), the trip generators (schools, hospitals, universities, stations, malls, stadiums, industrial areas) that the lines must serve, and the public and school holidays for the calendars. Use find_existing_stops to resolve a stop name mentioned in the brief before geocoding it. After set_spec, call coverage_score and improve the plan if major generators are unserved (add a stop or a via) — say what you left out and why.
+# Method: four phases, each grounded by a tool
 
-# Method
-1. Read the brief. Extract: operator (name, website, timezone from the country/city), area, lines (name, mode, termini, via stops, one-way loops), service (days, first/last departures, headways by period, explicit departures), holidays, constraints. Everything the brief states is law; do not "improve" it silently.
-2. Stops need real coordinates: call geocode_stops with the stop names (add the city/area to each query) and \`near\` set to the area centre; take the candidate the tool marks as chosen unless the brief's context contradicts it. Never invent coordinates. If a stop cannot be geocoded, keep it in the spec without coordinates: the user places it on the map.
-3. Call set_spec. Read the issues: fix every blocker (missing coordinates aside), then call set_spec again. Repeat until ok=true or only "stop_needs_coordinates" blockers remain.
-4. Call estimate_routes once the coordinates are in: check the distances and running times are plausible for the mode (a 12 km urban bus line runs ~35–45 min). Adjust speed_kmh or the stop order when they are not.
-5. Answer in markdown, in the user's language: a short summary of the network (lines, stops, service), the ASSUMPTIONS you made (headways, hours, calendar, speeds, colours) as a bullet list, and what the user should check. If something essential is genuinely ambiguous (two plausible orders of stops, no service hours at all, which town), call ask_user with 1–3 precise questions instead of guessing — but for ordinary gaps, choose a sensible default and state it.
+## 1. Understand (set_requirements, ask_user)
+On a NEW brief (no [Current spec] block), your FIRST call is set_requirements: what the brief states (operator, area, lines with termini and vias, modes, service days and hours, headways, holidays, budget or fleet constraints, must-serve places), what you ASSUME with a confidence level, and the OPEN QUESTIONS with their impact. Everything the brief states is law; do not "improve" it silently. On a refinement, call set_requirements again only when the request changes the scope (new lines, new area, new service policy).
+An open question has impact "high" when two plausible answers give materially different networks: which town when the name is ambiguous, the termini or the order of stops of a requested line, whether existing lines must be kept, a fleet or budget cap, school-only service. Then call ask_user with those questions (1–3, each with options and a default), end your turn, and continue with the answers next time. Everything else gets a sensible default (below), listed as an assumption the user can contest.
+
+## 2. Ground (get_territory, suggest_corridors)
+Real networks start from the ground: call get_territory with the town or area (once; the dossier is cached) unless a [Territory] block is already in the message. It gives the timezone, the population, the EXISTING stops and stations from OpenStreetMap (reuse their names, coordinates and ids — passengers know them), the existing transit lines (do not duplicate a line that already runs; connect to it), the trip generators that the lines must serve, and the holidays for the calendars.
+When the brief does not name the lines precisely ("a bus network for the town", "3 lines serving the essentials"), call suggest_corridors: it computes the demand hubs and the strongest corridors between them from the generators and the population. Use them as skeletons; keep the brief's own lines first.
+
+## 3. Design (find_existing_stops, geocode_stops, set_spec, refine_stops, estimate_routes)
+- Stops need real coordinates. Resolve a named stop with find_existing_stops first; geocode_stops the rest in ONE batch (add the town to each query, \`near\` = area centre); take the chosen candidate unless the context contradicts it. Never invent coordinates. A stop that cannot be located stays in the spec without coordinates: the user places it on the map.
+- Call set_spec. Fix every blocker (missing coordinates aside) and call it again until ok=true.
+- Then call refine_stops once: it snaps the planned stops onto the existing ones and fills long gaps with the existing stops along the way, so a line serves the neighbourhoods it crosses. Then estimate_routes: check distances and running times are plausible for the mode (a 12 km urban bus line runs ~35–45 min); adjust speed_kmh or the stop order when they are not.
+
+## 4. Evaluate (evaluate_plan, coverage_score)
+Call evaluate_plan: the design quality report (coverage of the generators, stop spacing, directness, service level for the population, connectivity, plausibility, compliance) with a score out of 100 and recommendations. Fix the MAJOR findings unless the brief imposes them, then evaluate again (at most two rounds). Aim for a score ≥ 70 with no major finding. coverage_score gives the detail of the unserved places when you need it.
+
+## 5. Deliver
+Answer in markdown, in the user's language, briefly: the network (lines, stops, service) in a few lines, the **quality score** and what limits it, the ASSUMPTIONS as a bullet list, what the user should check on the map. When the plan is ready (spec ok, no missing coordinates), say it can be projected into the application. Do not repeat the requirements card; the UI shows it.
 
 # Defaults when the brief is silent
 - Service: weekday 06:00–21:00, peak (07:00–09:00, 16:30–19:00) headway 15 min, off-peak 30 min; saturday 08:00–20:00 every 30 min; sunday 09:00–19:00 every 60 min. Shuttles/school lines: explicit departures.
@@ -89,6 +106,7 @@ Real networks start from the ground: call get_territory with the town or area na
 - Colours: one distinct colour per line; keep the brief's colours when given.
 - Stop naming: proper case, no codes; termini names as headsigns.
 - Ids: short and stable (line short name; stop slug); the compiler slugs missing ids.
+- Line design: stops every 300–600 m in town, termini at generators or existing stops, no detour over ×1.5 of the straight distance, every line meets another at a hub (station, centre) so passengers can transfer; a small town gets radial lines through the centre, a bigger one adds a cross-town line.
 
 # Style
 Be concise and concrete. No narration of tool calls (the UI shows them). Use **bold** for line names and key numbers. When you refine an existing spec, change only what the user asked and keep the rest byte-identical.`;
@@ -157,6 +175,7 @@ const createTools = (ctx) => {
       const norm = normalizeSpec(spec);
       ctx.spec = norm.spec;
       ctx.specOk = norm.ok;
+      ctx.geometry = null;
       ctx.emit("spec", { spec: norm.spec, issues: norm.issues, blockers: norm.blockers, estimate: norm.estimate, ok: norm.ok });
       const coordBlockers = norm.blockers.filter((b) => b.code === "stop_needs_coordinates");
       const others = norm.blockers.filter((b) => b.code !== "stop_needs_coordinates");
@@ -183,6 +202,7 @@ const createTools = (ctx) => {
     async run() {
       if (!ctx.spec) return { content: "Error: call set_spec first.", isError: true };
       const geo = await compiler.estimateGeometry(ctx.spec, { router: deps.createRouter() });
+      ctx.geometry = geo;
       ctx.emit("geometry", geo);
       const lines = geo.lines.map((l) => `- ${l.short_name}: ${l.directions.map((d) => (d.routable ? `dir ${d.id} ${d.stops} stops, ${d.distance_km} km, ${d.running_min} min${d.fallback_legs ? ` (${d.fallback_legs} straight legs)` : ""}` : `dir ${d.id}: not routable (missing coordinates)`)).join("; ")}`);
       return { content: [`Routing: ${geo.routing}${geo.fallback_legs ? ` (${geo.fallback_legs} leg(s) fell back to straight lines)` : ""}.`, ...lines].join("\n") };
@@ -192,21 +212,137 @@ const createTools = (ctx) => {
   const askUser = {
     definition: {
       name: "ask_user",
-      description: "Ask the user 1–3 precise questions when the brief is genuinely ambiguous on something essential. Give options when you can. After calling it, end your turn: the answers come in the next message.",
+      description: "Ask the user 1–3 precise questions when the brief is genuinely ambiguous on something essential (impact high). Give options and the default you would take, so the user can accept your defaults in one click. After calling it, end your turn: the answers come in the next message.",
       input_schema: {
         type: "object",
         properties: {
-          questions: { type: "array", items: { type: "object", properties: { id: { type: "string" }, question: { type: "string" }, options: { type: "array", items: { type: "string" } } }, required: ["id", "question"] } },
+          questions: { type: "array", items: { type: "object", properties: { id: { type: "string" }, question: { type: "string" }, options: { type: "array", items: { type: "string" } }, default: { type: "string", description: "The answer you would assume; shown as the suggested answer." }, why: { type: "string", description: "One line on what changes with the answer." } }, required: ["id", "question"] } },
         },
         required: ["questions"],
       },
     },
     run(input) {
-      const qs = (Array.isArray(input?.questions) ? input.questions : []).filter((q) => q && typeof q.question === "string").slice(0, 3).map((q, i) => ({ id: String(q.id || `q${i + 1}`).slice(0, 32), question: clip(q.question.trim(), 300), options: Array.isArray(q.options) ? q.options.map((o) => clip(String(o), 80)).slice(0, 5) : [] }));
+      const qs = (Array.isArray(input?.questions) ? input.questions : []).filter((q) => q && typeof q.question === "string").slice(0, 3).map((q, i) => ({ id: String(q.id || `q${i + 1}`).slice(0, 32), question: clip(q.question.trim(), 300), options: Array.isArray(q.options) ? q.options.map((o) => clip(String(o), 80)).slice(0, 5) : [], ...(typeof q.default === "string" && q.default.trim() ? { default: clip(q.default.trim(), 120) } : {}), ...(typeof q.why === "string" && q.why.trim() ? { why: clip(q.why.trim(), 200) } : {}) }));
       if (!qs.length) return { content: "Error: questions[] is required.", isError: true };
       ctx.emit("questions", { questions: qs });
       ctx.asked = true;
       return { content: "Questions shown to the user. End your turn now with a one-line note; do not guess the answers." };
+    },
+  };
+
+  const setRequirements = {
+    definition: {
+      name: "set_requirements",
+      description: "Record the specification as you understood it: what the brief states, what you assume (with confidence), and the open questions with their impact. Shown to the user as a card they can contest. Call it first on a new brief, and again when a refinement changes the scope.",
+      input_schema: {
+        type: "object",
+        properties: {
+          requirements: {
+            type: "object",
+            properties: {
+              operator: { type: "string" },
+              area: { type: "string", description: "Town or area, with the country." },
+              objectives: { type: "array", items: { type: "string" }, description: "What the network must achieve (serve the hospital, connect the station, school runs…)." },
+              lines_requested: { type: "array", items: { type: "object", properties: { name: { type: "string" }, mode: { type: "string" }, from: { type: "string" }, to: { type: "string" }, via: { type: "array", items: { type: "string" } }, notes: { type: "string" } } } },
+              service: { type: "object", properties: { days: { type: "string" }, span: { type: "string" }, headways: { type: "string" }, holidays: { type: "string" } } },
+              constraints: { type: "array", items: { type: "string" }, description: "Fleet, budget, must-keep existing lines, accessibility…" },
+              assumptions: { type: "array", items: { type: "object", properties: { topic: { type: "string" }, value: { type: "string" }, confidence: { type: "string", enum: ["high", "medium", "low"] }, reason: { type: "string" } }, required: ["topic", "value", "confidence"] } },
+              open_questions: { type: "array", items: { type: "object", properties: { id: { type: "string" }, question: { type: "string" }, impact: { type: "string", enum: ["high", "low"] }, default: { type: "string" }, options: { type: "array", items: { type: "string" } } }, required: ["id", "question", "impact"] } },
+            },
+          },
+        },
+        required: ["requirements"],
+      },
+    },
+    run(input) {
+      const r = input?.requirements;
+      if (!r || typeof r !== "object") return { content: "Error: requirements object is required.", isError: true };
+      const strList = (v, n = 20, len = 200) => (Array.isArray(v) ? v.map((x) => clip(String(x || ""), len)).filter(Boolean).slice(0, n) : []);
+      const req = {
+        operator: clip(str(r.operator), 120) || null,
+        area: clip(str(r.area), 160) || null,
+        objectives: strList(r.objectives),
+        lines_requested: (Array.isArray(r.lines_requested) ? r.lines_requested : []).filter((l) => l && typeof l === "object").slice(0, LIMITS.lines).map((l) => ({ name: clip(str(l.name), 40), mode: clip(str(l.mode), 20) || "bus", from: clip(str(l.from), 80), to: clip(str(l.to), 80), via: strList(l.via, 30, 80), notes: clip(str(l.notes), 200) || undefined })),
+        service: r.service && typeof r.service === "object" ? { days: clip(str(r.service.days), 120) || null, span: clip(str(r.service.span), 120) || null, headways: clip(str(r.service.headways), 200) || null, holidays: clip(str(r.service.holidays), 120) || null } : null,
+        constraints: strList(r.constraints),
+        assumptions: (Array.isArray(r.assumptions) ? r.assumptions : []).filter((a) => a && typeof a === "object" && str(a.topic)).slice(0, 25).map((a) => ({ topic: clip(str(a.topic), 60), value: clip(str(a.value), 200), confidence: ["high", "medium", "low"].includes(a.confidence) ? a.confidence : "medium", reason: clip(str(a.reason), 200) || undefined })),
+        open_questions: (Array.isArray(r.open_questions) ? r.open_questions : []).filter((q) => q && typeof q === "object" && str(q.question)).slice(0, 8).map((q, i) => ({ id: clip(str(q.id) || `q${i + 1}`, 32), question: clip(str(q.question), 300), impact: q.impact === "high" ? "high" : "low", default: clip(str(q.default), 120) || undefined, options: strList(q.options, 5, 80) })),
+      };
+      ctx.requirements = req;
+      ctx.emit("requirements", req);
+      ctx.emit("step", { kind: "requirements", lines: req.lines_requested.length, assumptions: req.assumptions.length, questions: req.open_questions.length });
+      const high = req.open_questions.filter((q) => q.impact === "high");
+      return {
+        content: high.length
+          ? `Requirements recorded. ${high.length} open question(s) have a high impact (${high.map((q) => q.id).join(", ")}): call ask_user with them now (options + default), then end your turn.`
+          : `Requirements recorded (${req.lines_requested.length} line(s) requested, ${req.assumptions.length} assumption(s)). No high-impact question: proceed with the defaults and list them as assumptions.`,
+      };
+    },
+  };
+
+  const suggestCorridors = {
+    definition: {
+      name: "suggest_corridors",
+      description: "Demand hubs of the territory (weighted clusters of generators, the centre, the stations) and the strongest corridors between them: candidate lines with their termini, the hubs on the way and the existing stops to reuse. Use it when the brief does not name the lines precisely. Needs get_territory.",
+      input_schema: { type: "object", properties: { max_lines: { type: "integer", description: "How many corridors (default: what the plan allows, at most 8)." } } },
+    },
+    run(input) {
+      if (!ctx.territory) return { content: "Error: call get_territory first.", isError: true };
+      const cap = Number.isFinite(ctx.maxLines) ? Math.min(8, ctx.maxLines) : 8;
+      const maxLines = Math.max(1, Math.min(cap, parseInt(input?.max_lines, 10) || cap));
+      const out = design.suggestCorridors(ctx.territory, { maxLines, spec: ctx.spec });
+      ctx.emit("corridors", { hubs: out.hubs.map((h) => ({ id: h.id, name: h.name, lat: h.lat, lon: h.lon, weight: h.weight })), corridors: out.corridors.map((c) => ({ id: c.id, score: c.score, points: [c.from, ...c.via, c.to].map((p) => [p.lat, p.lon]), from: c.from.name, to: c.to.name })) });
+      ctx.emit("step", { kind: "corridors", hubs: out.hubs.length, corridors: out.corridors.length });
+      return { content: design.summarizeCorridors(out) };
+    },
+  };
+
+  const refineStops = {
+    definition: {
+      name: "refine_stops",
+      description: "Improve the current spec with the territory's existing stops: planned stops within 40 m of an existing stop take its exact position; long gaps between consecutive stops are filled with the existing stops along the way (up to 8 per direction). Returns the changes; the spec is updated and re-validated. Needs get_territory and set_spec.",
+      input_schema: { type: "object", properties: { snap: { type: "boolean" }, densify: { type: "boolean" } } },
+    },
+    run(input) {
+      if (!ctx.territory) return { content: "Error: call get_territory first.", isError: true };
+      if (!ctx.spec) return { content: "Error: call set_spec first.", isError: true };
+      const r = design.refineStops(ctx.spec, ctx.territory, { snap: input?.snap !== false, densify: input?.densify !== false });
+      if (!r.changes.length) return { content: "No change: the stops already sit on existing stops and no gap can be filled from the existing network." };
+      const norm = normalizeSpec(r.spec);
+      ctx.spec = norm.spec;
+      ctx.specOk = norm.ok;
+      ctx.geometry = null;
+      ctx.emit("spec", { spec: norm.spec, issues: norm.issues, blockers: norm.blockers, estimate: norm.estimate, ok: norm.ok });
+      ctx.emit("step", { kind: "refine", snapped: r.snapped, inserted: r.inserted });
+      const lines = r.changes.slice(0, 40).map((c) => (c.type === "snap" ? `- snapped "${c.name}" onto existing stop "${c.to}" (${c.distance_m} m)` : `- line ${c.line}: inserted "${c.name}" between ${c.between[0]} and ${c.between[1]} (gap was ${c.gap_m} m)`));
+      return { content: [`${r.snapped} stop(s) snapped, ${r.inserted} stop(s) inserted. Spec ok: ${norm.ok}.`, ...lines, r.changes.length > 40 ? `… and ${r.changes.length - 40} more.` : "", "Call estimate_routes, then evaluate_plan."].filter(Boolean).join("\n") };
+    },
+  };
+
+  const evaluatePlan = {
+    definition: {
+      name: "evaluate_plan",
+      description: "The design quality report of the current spec: coverage of the trip generators, stop spacing, directness, service level for the population, connectivity (transfers), plausibility of the running times, compliance — a score out of 100, the findings per dimension and recommendations. Needs set_spec (and estimate_routes for the running times).",
+      input_schema: { type: "object", properties: {} },
+    },
+    async run() {
+      if (!ctx.spec) return { content: "Error: call set_spec first.", isError: true };
+      let geometry = ctx.geometry;
+      if (!geometry && !ctx.spec.stops.some((s) => s.lat == null) && ctx.spec.lines.length) {
+        try {
+          geometry = await compiler.estimateGeometry(ctx.spec, { router: deps.createRouter() });
+          ctx.geometry = geometry;
+          ctx.emit("geometry", geometry);
+        } catch {
+          geometry = null;
+        }
+      }
+      const report = design.evaluatePlan(ctx.spec, { territory: ctx.territory, geometry });
+      ctx.quality = report;
+      ctx.emit("quality", report);
+      ctx.emit("step", { kind: "quality", score: report.score, grade: report.grade, majors: report.majors });
+      if (ctx.territory) ctx.emit("coverage", territoryService.coverageOf(ctx.spec, ctx.territory));
+      return { content: design.summarizeReport(report) };
     },
   };
 
@@ -268,7 +404,7 @@ const createTools = (ctx) => {
     },
   };
 
-  const tools = [getTerritory, findExistingStops, geocodeStops, setSpec, estimateRoutes, coverageScore, askUser];
+  const tools = [setRequirements, askUser, getTerritory, suggestCorridors, findExistingStops, geocodeStops, setSpec, refineStops, estimateRoutes, evaluatePlan, coverageScore];
   return { definitions: tools.map((t) => t.definition), byName: Object.fromEntries(tools.map((t) => [t.definition.name, t])) };
 };
 
@@ -302,7 +438,7 @@ const runRound = async ({ client, model, messages, tools, signal, emit }) => {
   return { content, toolUses: content.filter((b) => b.type === "tool_use"), stopReason: finalMessage?.stop_reason || null, usage };
 };
 
-const buildMessages = ({ history, brief, spec, language, near, territoryBlock = "" }) => {
+const buildMessages = ({ history, brief, spec, language, near, territoryBlock = "", requirements = null }) => {
   const msgs = [];
   for (const h of (history || []).slice(-MAX_HISTORY)) {
     if (!h || (h.role !== "user" && h.role !== "assistant")) continue;
@@ -314,6 +450,7 @@ const buildMessages = ({ history, brief, spec, language, near, territoryBlock = 
   const blocks = [`[UI language: ${LANG_NAMES[language] || "English"}]`];
   if (near) blocks.push(`[Area hint] lat ${near.lat}, lon ${near.lon}`);
   if (territoryBlock) blocks.push(territoryBlock);
+  if (requirements) blocks.push(`[Requirements as recorded]\n${clip(JSON.stringify(requirements), 6000)}`);
   if (spec) blocks.push(`[Current spec]\n${clip(JSON.stringify(spec), 40000)}`);
   blocks.push(brief);
   const text = blocks.join("\n\n");
@@ -324,7 +461,7 @@ const buildMessages = ({ history, brief, spec, language, near, territoryBlock = 
 };
 
 /** The planner turn. Emits SSE-style events through `emit`. */
-const planNetwork = async ({ brief, spec = null, history = [], language = "en", near = null, territoryPlace = null, freeTier = false, rateKey, aiLimits = {}, signal, emit, req = null }) => {
+const planNetwork = async ({ brief, spec = null, history = [], language = "en", near = null, territoryPlace = null, requirements = null, maxLines = null, freeTier = false, rateKey, aiLimits = {}, signal, emit, req = null }) => {
   const text = String(brief || "").trim();
   if (text.length < 3) throw Object.assign(new Error("brief is required (≥ 3 characters)."), { code: "INVALID_INPUT", status: 400 });
   if (text.length > MAX_BRIEF_CHARS) throw Object.assign(new Error(`brief is too long (max ${MAX_BRIEF_CHARS} characters).`), { code: "INVALID_INPUT", status: 400 });
@@ -335,7 +472,7 @@ const planNetwork = async ({ brief, spec = null, history = [], language = "en", 
   const client = nl2sqlChatService.getClient();
   const model = freeTier ? nl2sqlChatService.resolveChatModel({ freeTier: true }) : config.NETWORK_PLANNER_MODEL || nl2sqlChatService.resolveChatModel({});
   const startedAt = Date.now();
-  const ctx = { spec: spec && typeof spec === "object" ? normalizeSpec(spec).spec : null, specOk: false, near, language, emit, asked: false, territory: null };
+  const ctx = { spec: spec && typeof spec === "object" ? normalizeSpec(spec).spec : null, specOk: false, near, language, emit, asked: false, territory: null, geometry: null, quality: null, requirements: requirements && typeof requirements === "object" ? requirements : null, maxLines: Number.isFinite(maxLines) ? maxLines : null };
   // A dossier the studio already loaded rides along as context (cached server-side).
   let territoryBlock = "";
   if (territoryPlace) {
@@ -347,7 +484,7 @@ const planNetwork = async ({ brief, spec = null, history = [], language = "en", 
     }
   }
   const tools = createTools(ctx);
-  const messages = buildMessages({ history, brief: text, spec: ctx.spec, language, near: ctx.near, territoryBlock });
+  const messages = buildMessages({ history, brief: text, spec: ctx.spec, language, near: ctx.near, territoryBlock, requirements: ctx.requirements });
   emit("meta", { model, mode: "planner" });
   const usageTotals = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
   let rounds = 0;
@@ -400,9 +537,12 @@ const planNetwork = async ({ brief, spec = null, history = [], language = "en", 
       }
     }
     emit("usage", { rounds, toolCalls, ...usageTotals, durationMs: Date.now() - startedAt });
-    emit("done", { reason: "complete", specOk: ctx.specOk, asked: ctx.asked });
-    recordEvent("network.plan", { ...(req ? extractReqMeta(req) : {}), model, rounds, toolCalls, specOk: ctx.specOk, asked: ctx.asked, durationMs: Date.now() - startedAt, anon: freeTier });
-    return { text: finalText, spec: ctx.spec, specOk: ctx.specOk };
+    // Ready: the plan can be projected (valid spec, every stop located, within the plan).
+    const ready = Boolean(ctx.specOk && ctx.spec && !ctx.asked && !ctx.spec.stops.some((s) => s.lat == null) && (!Number.isFinite(ctx.maxLines) || ctx.spec.lines.length <= ctx.maxLines));
+    const quality = ctx.quality ? { score: ctx.quality.score, grade: ctx.quality.grade, majors: ctx.quality.majors } : null;
+    emit("done", { reason: "complete", specOk: ctx.specOk, asked: ctx.asked, ready, quality });
+    recordEvent("network.plan", { ...(req ? extractReqMeta(req) : {}), model, rounds, toolCalls, specOk: ctx.specOk, asked: ctx.asked, ready, score: quality?.score ?? null, durationMs: Date.now() - startedAt, anon: freeTier });
+    return { text: finalText, spec: ctx.spec, specOk: ctx.specOk, ready, quality: ctx.quality, requirements: ctx.requirements };
   } catch (err) {
     if (signal?.aborted) {
       emit("done", { reason: "aborted" });

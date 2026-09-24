@@ -86,6 +86,14 @@ test("building the network creates a session the app opens", async () => {
   await expect(result).toBeVisible({ timeout: 90_000 });
   await expect(result.getByText(/1 routes, 3 stops, 50 trips and 150 stop times/)).toBeVisible();
   await page.getByTestId("network-open").click();
+  // The network report greets the projected network: design quality, GTFS validation, Diagnostic.
+  const report = page.getByTestId("network-report");
+  await expect(report).toBeVisible({ timeout: 60_000 });
+  await expect(report.getByTestId("plan-quality")).toBeVisible();
+  await expect(report.getByTestId("report-validation")).toBeVisible();
+  await expect(report.getByTestId("report-audit")).toBeVisible();
+  await report.getByTestId("report-explore").click();
+  await expect(report).toBeHidden();
   await expect(page.getByTestId("tab-home")).toBeVisible({ timeout: 60_000 });
   await expect(page.getByTestId("dashboard-validation-health")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText("Réseau E2E").first()).toBeVisible({ timeout: 30_000 });

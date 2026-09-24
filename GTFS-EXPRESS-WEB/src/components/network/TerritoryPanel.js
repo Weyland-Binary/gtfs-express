@@ -30,7 +30,7 @@ export const CATEGORY_COLOR = { school: "#F9A825", college: "#F57F17", hospital:
 
 const fmtNumber = (n) => (typeof n === "number" ? n.toLocaleString() : "—");
 
-export default function TerritoryPanel({ territory, onTerritory, layers, onToggleLayer, coverage, onUseExistingStops }) {
+export default function TerritoryPanel({ territory, onTerritory, layers, onToggleLayer, coverage, onUseExistingStops, onRefineStops = null, canRefine = false, refining = false }) {
   const { t } = useLanguage();
   const theme = useTheme();
   const [query, setQuery] = useState(territory?.place?.query || "");
@@ -137,6 +137,15 @@ export default function TerritoryPanel({ territory, onTerritory, layers, onToggl
                 <Button size="small" variant="outlined" onClick={() => onUseExistingStops(d)} data-testid="territory-use-stops" sx={{ textTransform: "none", fontWeight: 600 }}>
                   {t("territory.useStops")}
                 </Button>
+              )}
+              {onRefineStops && canRefine && d.existing_stops.some((s) => s.name) && (
+                <Tooltip title={t("network.refineStopsHint")}>
+                  <span>
+                    <Button size="small" variant="outlined" color="secondary" disabled={refining} onClick={onRefineStops} startIcon={refining ? <CircularProgress size={12} color="inherit" /> : null} data-testid="territory-refine" sx={{ textTransform: "none", fontWeight: 600 }}>
+                      {t("network.refineStops")}
+                    </Button>
+                  </span>
+                </Tooltip>
               )}
               <Typography sx={{ fontSize: "0.62rem", color: "text.disabled", flex: 1 }}>
                 {t("territory.sources")}{" "}

@@ -14,6 +14,7 @@
 
 import API_BASE_URL from "../config";
 import { BETA_CODE_STORAGE_KEY } from "../components/edit/BetaGateDialog";
+import { fetchWithSession } from "./sessionManager";
 
 const betaHeaders = () => {
   const h = { "Content-Type": "application/json" };
@@ -45,12 +46,22 @@ export const geocodeQuery = (query, near = null, lang = null) => post("/network/
 export const compileSpec = (spec, options = {}) => post("/network/compile", { spec, options });
 export const fetchTerritory = (place, force = false) => post("/network/territory", { place, force });
 export const fetchCoverage = (spec, place) => post("/network/coverage", { spec, place });
+/** The design quality report of a plan; `geometry` is the studio's routed lines ([{lineId, directionId, distance_km, running_min}]). */
+export const evaluateSpec = (spec, place = null, geometry = null) => post("/network/evaluate", { spec, place, geometry });
+/** Snap the planned stops onto the territory's existing stops and fill the long gaps. */
+export const refineSpec = (spec, place) => post("/network/refine", { spec, place });
+/** The network report stored with the current session (null when the session was not built by the studio). */
+export const fetchNetworkReport = async () => {
+  const res = await fetchWithSession(`${API_BASE_URL}/network/report`);
+  if (!res.ok) return null;
+  return res.json().catch(() => null);
+};
 
 /** Stream a planner turn; resolves at `done`. Mid-stream errors arrive as `error` events. */
-export async function streamPlan({ brief, spec = null, messages = [], language = "en", near = null, territory = null, signal, onEvent }) {
+export async function streamPlan({ brief, spec = null, messages = [], language = "en", near = null, territory = null, requirements = null, signal, onEvent }) {
   let response;
   try {
-    response = await fetch(`${API_BASE_URL}/network/plan`, { method: "POST", headers: betaHeaders(), body: JSON.stringify({ brief, spec, messages, language, near, territory }), signal });
+    response = await fetch(`${API_BASE_URL}/network/plan`, { method: "POST", headers: betaHeaders(), body: JSON.stringify({ brief, spec, messages, language, near, territory, requirements }), signal });
   } catch (err) {
     const e = new Error(err.name === "AbortError" ? "aborted" : err.message || "Network error");
     e.code = err.name === "AbortError" ? "ABORTED" : "NETWORK_ERROR";

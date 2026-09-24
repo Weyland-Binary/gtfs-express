@@ -4,9 +4,12 @@
  *   POST /gtfs/network/validate   { spec }                   → normalised spec, issues, estimate
  *   POST /gtfs/network/geocode    { query | queries, near? } → coordinate candidates
  *   POST /gtfs/network/estimate   { spec, routing? }         → routed geometry, distances, running times
- *   POST /gtfs/network/compile    { spec, options? }         → a new session (GTFS built, validated)
+ *   POST /gtfs/network/compile    { spec, options? }         → a new session (GTFS built, validated, reported)
+ *   POST /gtfs/network/evaluate   { spec, place?, geometry? } → the design quality report
+ *   POST /gtfs/network/refine     { spec, place }            → the spec snapped/densified with existing stops
  *   GET  /gtfs/network/spec                                  → the spec a session was built from
  *   PUT  /gtfs/network/spec       { spec }                   → store a spec with the session
+ *   GET  /gtfs/network/report                                → the network report of a built session
  */
 
 "use strict";
@@ -15,8 +18,9 @@ const config = require("../../config");
 const { normalizeSpec } = require("./networkSpec");
 const { geocode, geocodeMany } = require("./geocoder");
 const { createRouter } = require("./roadRouter");
-const { compileSpec, estimateGeometry, createSessionFromSpec, loadStoredSpec, saveStoredSpec } = require("./compiler");
+const { compileSpec, estimateGeometry, createSessionFromSpec, loadStoredSpec, saveStoredSpec, loadStoredReport } = require("./compiler");
 const territoryService = require("./territoryService");
+const design = require("./networkDesignService");
 const { requireSession } = require("../edit/_editCore");
 const { recordEvent, extractReqMeta } = require("../eventLogger");
 
@@ -91,8 +95,10 @@ const compileNetwork = async (req, res) => {
   }
   const started = Date.now();
   try {
-    const result = await createSessionFromSpec(spec, { routing: options.routing === "straight" ? "straight" : null, shapes: options.shapes !== false, req });
-    recordEvent("network.compiled", { ...extractReqMeta(req), lines: result.stats.lines.length, trips: result.stats.counts.trips, stops: result.stats.counts.stops, durationMs: Date.now() - started, routing_fallback_legs: result.stats.routing_fallback_legs });
+    const territoryPlace = typeof options.place === "string" ? options.place.slice(0, 200) : null;
+    const requirements = options.requirements && typeof options.requirements === "object" && JSON.stringify(options.requirements).length < 20000 ? options.requirements : null;
+    const result = await createSessionFromSpec(spec, { routing: options.routing === "straight" ? "straight" : null, shapes: options.shapes !== false, req, territoryPlace, requirements });
+    recordEvent("network.compiled", { ...extractReqMeta(req), lines: result.stats.lines.length, trips: result.stats.counts.trips, stops: result.stats.counts.stops, durationMs: Date.now() - started, routing_fallback_legs: result.stats.routing_fallback_legs, score: result.report?.design?.score ?? null });
     res.status(201).json({
       sessionId: result.sessionId,
       validationReport: result.validationReport,
@@ -102,6 +108,7 @@ const compileNetwork = async (req, res) => {
       warnings: result.warnings,
       issues: result.issues,
       geometry: result.geometry,
+      report: result.report,
       durationMs: Date.now() - started,
     });
   } catch (err) {
@@ -157,4 +164,53 @@ const getCoverage = async (req, res) => {
   }
 };
 
-module.exports = { validateNetworkSpec, geocodeStops, estimateNetwork, compileNetwork, getNetworkSpec, putNetworkSpec, getTerritory, getCoverage, _internals: { planLimits, compileSpec } };
+/** The studio's geometry ([{lineId, directionId, distance_km, running_min}]) → the evaluator's shape. */
+const geometryFromClient = (raw) => {
+  if (!Array.isArray(raw) || !raw.length) return null;
+  const byLine = new Map();
+  for (const g of raw.slice(0, 400)) {
+    if (!g || typeof g !== "object" || typeof g.lineId !== "string") continue;
+    if (!byLine.has(g.lineId)) byLine.set(g.lineId, { id: g.lineId, short_name: g.lineId, directions: [] });
+    byLine.get(g.lineId).directions.push({ id: String(g.directionId ?? "0"), routable: Number.isFinite(Number(g.distance_km)), distance_km: Number(g.distance_km), running_min: Number(g.running_min) });
+  }
+  return { lines: [...byLine.values()] };
+};
+
+/** POST /network/evaluate { spec, place?, geometry? } → the design quality report of a plan. */
+const evaluateNetwork = async (req, res) => {
+  const spec = specFromBody(req.body, res);
+  if (!spec) return;
+  const place = typeof req.body?.place === "string" ? req.body.place.trim() : "";
+  const territory = place.length >= 2 ? territoryService.getCachedTerritory(place) : null;
+  const norm = normalizeSpec(spec);
+  const report = design.evaluatePlan(norm.spec, { territory, geometry: geometryFromClient(req.body?.geometry) });
+  res.json({ ok: norm.ok, territory: Boolean(territory), ...report });
+};
+
+/** POST /network/refine { spec, place } → the spec snapped onto and densified with the existing stops. */
+const refineNetwork = async (req, res) => {
+  const spec = specFromBody(req.body, res);
+  if (!spec) return;
+  const place = typeof req.body?.place === "string" ? req.body.place.trim() : "";
+  if (place.length < 2) return res.status(400).json({ error: "INVALID_INPUT", message: "place is required." });
+  try {
+    const dossier = territoryService.getCachedTerritory(place) || (await territoryService.buildTerritory(place));
+    const norm = normalizeSpec(spec);
+    const r = design.refineStops(norm.spec, dossier, { snap: req.body?.snap !== false, densify: req.body?.densify !== false });
+    const again = normalizeSpec(r.spec);
+    res.json({ spec: again.spec, ok: again.ok, issues: again.issues, blockers: again.blockers, estimate: again.estimate, changes: r.changes, snapped: r.snapped, inserted: r.inserted });
+  } catch (err) {
+    res.status(err.status || 502).json({ error: err.code || "TERRITORY_FAILED", message: err.message });
+  }
+};
+
+/** GET /network/report → the network report stored with a built session. */
+const getNetworkReport = (req, res) => {
+  const ctx = requireSession(req, res);
+  if (!ctx) return;
+  const stored = loadStoredReport(ctx.sessionId);
+  if (!stored) return res.status(404).json({ error: "NO_REPORT", message: "This session has no network report." });
+  res.json(stored);
+};
+
+module.exports = { validateNetworkSpec, geocodeStops, estimateNetwork, compileNetwork, evaluateNetwork, refineNetwork, getNetworkSpec, putNetworkSpec, getNetworkReport, getTerritory, getCoverage, _internals: { planLimits, compileSpec, geometryFromClient } };

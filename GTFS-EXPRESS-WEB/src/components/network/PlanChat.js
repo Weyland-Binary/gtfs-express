@@ -1,8 +1,10 @@
 /**
  * PlanChat — the conversation with the planner: the brief (typed or
  * dropped as a text file), the planner's answers (markdown), the tool steps
- * it took, its questions (answer with chips or free text), and a composer
- * to refine ("add a line to the hospital", "every 10 minutes at peak").
+ * it took, the requirements it understood (correctable), its questions
+ * (answer with chips, free text, or accept the suggested answers), the
+ * design quality report, and a composer to refine ("add a line to the
+ * hospital", "every 10 minutes at peak").
  */
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
@@ -15,21 +17,34 @@ import PlaceOutlinedIcon from "@mui/icons-material/PlaceOutlined";
 import RuleOutlinedIcon from "@mui/icons-material/RuleOutlined";
 import RouteOutlinedIcon from "@mui/icons-material/RouteOutlined";
 import HelpOutlineIcon from "@mui/icons-material/HelpOutline";
+import FactCheckOutlinedIcon from "@mui/icons-material/FactCheckOutlined";
+import AltRouteOutlinedIcon from "@mui/icons-material/AltRouteOutlined";
+import AutoFixHighOutlinedIcon from "@mui/icons-material/AutoFixHighOutlined";
+import VerifiedOutlinedIcon from "@mui/icons-material/VerifiedOutlined";
 import { useLanguage } from "../../contexts/LanguageContext";
 import MarkdownText from "../chat/MarkdownText";
 import GTFSAIIcon from "../chat/GTFSAIIcon";
 import { readBriefFile } from "../../utils/networkStudioApi";
+import { RequirementsCard, QualityCard, qualityColor } from "./PlanCards";
 
-const STEP_ICON = { geocode: PlaceOutlinedIcon, spec: RuleOutlinedIcon, geometry: RouteOutlinedIcon, questions: HelpOutlineIcon, territory: PlaceOutlinedIcon };
+const STEP_ICON = { geocode: PlaceOutlinedIcon, spec: RuleOutlinedIcon, geometry: RouteOutlinedIcon, questions: HelpOutlineIcon, territory: PlaceOutlinedIcon, requirements: FactCheckOutlinedIcon, corridors: AltRouteOutlinedIcon, refine: AutoFixHighOutlinedIcon, quality: VerifiedOutlinedIcon };
 
 function StepChip({ step }) {
   const { t } = useLanguage();
+  const theme = useTheme();
   const Icon = STEP_ICON[step.kind] || RuleOutlinedIcon;
   let label = t(`network.step.${step.kind}`);
+  let sx = {};
   if (step.kind === "geocode") label = t("network.step.geocodeResult", { found: step.found, total: step.queries });
   if (step.kind === "spec") label = step.ok ? t("network.step.specOk") : t("network.step.specIssues", { count: step.blockers });
   if (step.kind === "territory") label = t("network.step.territory", { place: step.place || "" });
-  return <Chip size="small" icon={<Icon sx={{ fontSize: 13 }} />} label={label} color={step.kind === "spec" && !step.ok ? "warning" : "default"} variant="outlined" sx={{ height: 20, fontSize: "0.64rem", fontWeight: 600 }} />;
+  if (step.kind === "corridors") label = t("network.step.corridors", { count: step.corridors ?? 0 });
+  if (step.kind === "refine") label = t("network.step.refine", { snapped: step.snapped ?? 0, inserted: step.inserted ?? 0 });
+  if (step.kind === "quality") {
+    label = t("network.step.quality", { score: step.score ?? "–" });
+    sx = { color: qualityColor(step.score, theme), borderColor: alpha(qualityColor(step.score, theme), 0.6) };
+  }
+  return <Chip size="small" icon={<Icon sx={{ fontSize: 13, color: sx.color ? `${sx.color} !important` : undefined }} />} label={label} color={step.kind === "spec" && !step.ok ? "warning" : "default"} variant="outlined" sx={{ height: 20, fontSize: "0.64rem", fontWeight: 600, ...sx }} />;
 }
 
 function Questions({ questions, onAnswer, disabled }) {
@@ -37,24 +52,34 @@ function Questions({ questions, onAnswer, disabled }) {
   const theme = useTheme();
   const [answers, setAnswers] = useState({});
   const complete = questions.every((q) => (answers[q.id] || "").trim().length > 0);
+  const hasDefaults = questions.some((q) => q.default);
+  const send = (values) => onAnswer(questions.map((q) => `${q.question} → ${values[q.id]}`).join("\n"));
   return (
     <Box data-testid="plan-questions" sx={{ mt: 1, borderRadius: 1.5, border: `1px solid ${alpha(theme.palette.warning.main, 0.5)}`, background: alpha(theme.palette.warning.main, 0.05), p: 1.25, display: "flex", flexDirection: "column", gap: 1 }}>
       {questions.map((q) => (
         <Box key={q.id}>
-          <Typography sx={{ fontSize: "0.8rem", fontWeight: 700, mb: 0.5 }}>{q.question}</Typography>
+          <Typography sx={{ fontSize: "0.8rem", fontWeight: 700, mb: 0.25 }}>{q.question}</Typography>
+          {q.why && <Typography sx={{ fontSize: "0.7rem", color: "text.secondary", mb: 0.5 }}>{q.why}</Typography>}
           {q.options && q.options.length > 0 && (
             <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5, mb: 0.5 }}>
               {q.options.map((o) => (
-                <Chip key={o} size="small" label={o} color={answers[q.id] === o ? "primary" : "default"} onClick={() => setAnswers((a) => ({ ...a, [q.id]: o }))} sx={{ height: 24, fontSize: "0.72rem" }} />
+                <Chip key={o} size="small" label={o} color={answers[q.id] === o ? "primary" : "default"} variant={!answers[q.id] && q.default === o ? "outlined" : "filled"} onClick={() => setAnswers((a) => ({ ...a, [q.id]: o }))} sx={{ height: 24, fontSize: "0.72rem", ...(q.default === o && !answers[q.id] ? { borderColor: theme.palette.primary.main, fontWeight: 700 } : {}) }} />
               ))}
             </Box>
           )}
-          <TextField size="small" fullWidth placeholder={t("network.answerPlaceholder")} value={answers[q.id] || ""} onChange={(e) => setAnswers((a) => ({ ...a, [q.id]: e.target.value }))} inputProps={{ "data-testid": `plan-answer-${q.id}` }} />
+          <TextField size="small" fullWidth placeholder={q.default ? t("network.questions.suggested", { value: q.default }) : t("network.answerPlaceholder")} value={answers[q.id] || ""} onChange={(e) => setAnswers((a) => ({ ...a, [q.id]: e.target.value }))} inputProps={{ "data-testid": `plan-answer-${q.id}` }} />
         </Box>
       ))}
-      <Button size="small" variant="contained" disableElevation disabled={!complete || disabled} onClick={() => onAnswer(questions.map((q) => `${q.question} → ${answers[q.id]}`).join("\n"))} data-testid="plan-answers-send" sx={{ alignSelf: "flex-end", textTransform: "none", fontWeight: 700 }}>
-        {t("network.sendAnswers")}
-      </Button>
+      <Box sx={{ display: "flex", gap: 0.75, justifyContent: "flex-end", flexWrap: "wrap" }}>
+        {hasDefaults && (
+          <Button size="small" variant="outlined" disabled={disabled} onClick={() => send(Object.fromEntries(questions.map((q) => [q.id, (answers[q.id] || "").trim() || q.default || "—"])))} data-testid="plan-answers-defaults" sx={{ textTransform: "none", fontWeight: 700 }}>
+            {t("network.questions.useDefaults")}
+          </Button>
+        )}
+        <Button size="small" variant="contained" disableElevation disabled={!complete || disabled} onClick={() => send(answers)} data-testid="plan-answers-send" sx={{ textTransform: "none", fontWeight: 700 }}>
+          {t("network.sendAnswers")}
+        </Button>
+      </Box>
     </Box>
   );
 }
@@ -66,6 +91,7 @@ export default function PlanChat({ turns, streaming, pendingTool, onSend, onStop
   const [fileError, setFileError] = useState(null);
   const fileRef = useRef(null);
   const listRef = useRef(null);
+  const inputRef = useRef(null);
   const empty = turns.length === 0;
 
   useEffect(() => {
@@ -79,6 +105,17 @@ export default function PlanChat({ turns, streaming, pendingTool, onSend, onStop
     onSend(text);
     setDraft("");
   }, [draft, streaming, canPlan, onSend]);
+
+  const prefill = useCallback((text) => {
+    setDraft(text);
+    setTimeout(() => {
+      const el = inputRef.current;
+      if (el) {
+        el.focus();
+        el.setSelectionRange(el.value.length, el.value.length);
+      }
+    }, 0);
+  }, []);
 
   const onFile = async (file) => {
     if (!file) return;
@@ -127,16 +164,18 @@ export default function PlanChat({ turns, streaming, pendingTool, onSend, onStop
                     ))}
                   </Box>
                 )}
+                {turn.requirements && <RequirementsCard requirements={turn.requirements} onCorrect={canPlan && !streaming ? prefill : null} />}
                 {turn.content ? (
-                  <Box sx={{ fontSize: "0.82rem" }}>
+                  <Box sx={{ fontSize: "0.82rem", mt: turn.requirements ? 1 : 0 }}>
                     <MarkdownText text={turn.content} />
                   </Box>
                 ) : turn.status === "streaming" ? (
-                  <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, fontSize: "0.76rem", color: "text.secondary" }}>
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, fontSize: "0.76rem", color: "text.secondary", mt: turn.requirements ? 1 : 0 }}>
                     <CircularProgress size={12} />
                     {pendingTool ? t(`network.working.${pendingTool}`, {}) : t("network.working.thinking")}
                   </Box>
                 ) : null}
+                {turn.quality && turn.status !== "streaming" && <QualityCard quality={turn.quality} />}
                 {turn.error && <Typography sx={{ fontSize: "0.76rem", color: "error.main", mt: 0.5 }}>{turn.error}</Typography>}
                 {turn.questions && turn.questions.length > 0 && turn.status !== "streaming" && !turn.answered && <Questions questions={turn.questions} disabled={streaming} onAnswer={(text) => onSend(text, { answersFor: turn.id })} />}
               </Box>
@@ -161,6 +200,7 @@ export default function PlanChat({ turns, streaming, pendingTool, onSend, onStop
               send();
             }
           }}
+          inputRef={inputRef}
           inputProps={{ "data-testid": "plan-brief" }}
           disabled={!canPlan}
         />
