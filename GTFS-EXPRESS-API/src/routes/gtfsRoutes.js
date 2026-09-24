@@ -37,6 +37,7 @@ const {
   loadSample,
   enterEditMode,
   exitEditMode,
+  sessionHeartbeat,
   getEditModeStatus,
   updateStop,
   updateRoute,
@@ -369,6 +370,8 @@ router.get("/config/features", getFeatures);
 // Read ↔ edit toggle + status
 router.post("/edit/enter", betaGate("edit/enter"), enterEditMode);
 router.post("/edit/exit", exitEditMode);
+// Keep-alive for open tabs (read-only sessions included) — see sessionManager.
+router.post("/session/heartbeat", sessionHeartbeat);
 router.get("/edit/status", getEditModeStatus);
 
 // Mutations (sessionId required in headers, edit DB must be open)

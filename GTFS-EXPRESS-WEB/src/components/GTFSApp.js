@@ -372,6 +372,33 @@ function GTFSApp() {
     importAdjustments,
   ]);
 
+  // ── Session heartbeat ────────────────────────────────────────────────────
+  // Server sessions expire after a period without WRITES (2 h by default,
+  // 1 h in production). A tab left open on a feed — reading a schedule,
+  // thinking, on the phone — used to come back to a wiped session. Ping the
+  // server every 10 minutes while a feed is loaded, and whenever the tab
+  // becomes visible again after being hidden.
+  useEffect(() => {
+    if (!agencies.length) return undefined;
+    let cancelled = false;
+    const ping = () => {
+      if (cancelled || document.hidden) return;
+      fetchWithSession(`${baseUrl}/session/heartbeat`, { method: "POST" }).catch(
+        () => {},
+      );
+    };
+    const interval = setInterval(ping, 10 * 60 * 1000);
+    const onVisible = () => {
+      if (!document.hidden) ping();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [agencies.length, baseUrl]);
+
   // ── Background re-validation ───────────────────────────────────────────
   // In edit mode, once a report exists and something was edited, re-run the
   // canonical validator ~25 s after the last change (debounced, one run at a

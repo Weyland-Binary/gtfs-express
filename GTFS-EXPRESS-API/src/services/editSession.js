@@ -884,6 +884,27 @@ const enterEditMode = async (req, res) => {
   }
 };
 
+// POST /session/heartbeat — keep the session alive while a tab is open.
+// Not gated on edit mode: a read-only session expiring under the user is
+// just as bad. Returns the TTL so the client can pace itself.
+const sessionHeartbeat = async (req, res) => {
+  try {
+    const sessionId = req.headers["x-session-id"];
+    if (!sessionId || !validateSessionId(sessionId)) {
+      return res.status(400).json({ error: "Session ID invalide ou manquant." });
+    }
+    const { touchSession, SESSION_CLEANUP_AGE_MS } = require("./sessionManager");
+    const alive = await touchSession(sessionId);
+    if (!alive) {
+      return res.status(404).json({ error: "SESSION_NOT_FOUND", code: "SESSION_NOT_FOUND" });
+    }
+    res.json({ ok: true, ttlMs: SESSION_CLEANUP_AGE_MS });
+  } catch (err) {
+    console.error("sessionHeartbeat error:", err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
 const exitEditMode = async (req, res) => {
   try {
     const sessionId = req.headers["x-session-id"];
@@ -982,6 +1003,7 @@ const getEditModeStatus = async (req, res) => {
 };
 
 module.exports = {
+  sessionHeartbeat,
   enterEditMode,
   exitEditMode,
   getEditModeStatus,

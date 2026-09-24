@@ -14,8 +14,9 @@ import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import CloseIcon from "@mui/icons-material/Close";
 import AutoFixHighIcon from "@mui/icons-material/AutoFixHigh";
+import HelpOutlineIcon from "@mui/icons-material/HelpOutline";
 import { useLanguage } from "../../contexts/LanguageContext";
-import { getRuleTitle } from "./ruleCatalog";
+import { getRuleTitle, getRuleDocUrl } from "./ruleCatalog";
 import useFixDialog from "./useFixDialog";
 
 /**
@@ -112,6 +113,20 @@ function FixQueueBar({ findings, onClose }) {
               sx={{ height: 20, fontSize: "0.68rem", fontFamily: "monospace" }}
             />
             {loadingId === String(current.entityId) && <CircularProgress size={14} />}
+            {getRuleDocUrl(current.ruleCode) && (
+              <Tooltip title={current.ruleCode} arrow>
+                <IconButton
+                  size="small"
+                  component="a"
+                  href={getRuleDocUrl(current.ruleCode)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={current.ruleCode}
+                >
+                  <HelpOutlineIcon sx={{ fontSize: 16 }} />
+                </IconButton>
+              </Tooltip>
+            )}
           </Box>
         )}
         <Tooltip title={t("validation.fixQueue.prev")} arrow>

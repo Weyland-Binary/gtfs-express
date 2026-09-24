@@ -58,6 +58,7 @@ const {
   enterEditMode,
   exitEditMode,
   getEditModeStatus,
+  sessionHeartbeat,
 } = require("../services/editSession");
 
 const {
@@ -265,6 +266,7 @@ module.exports = {
   enterEditMode,
   exitEditMode,
   getEditModeStatus,
+  sessionHeartbeat,
   // ── Edit mode: mutations ──────────────────────────────────────────
   updateStop,
   updateRoute,

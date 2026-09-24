@@ -906,6 +906,33 @@ paths:
           $ref: "#/components/responses/OkJson"
         "400":
           $ref: "#/components/responses/BadRequest"
+  /gtfs/session/heartbeat:
+    post:
+      tags:
+        - Edit Session
+      summary: Keep the session alive while a tab is open (extends the idle TTL).
+      description: >-
+        Records client activity for the session so the idle sweep spares it.
+        Not gated on edit mode. Returns the configured TTL in milliseconds so
+        the client can pace its heartbeats.
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          description: Session touched.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  ttlMs:
+                    type: integer
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          description: Unknown or expired session.
   /gtfs/edit/status:
     get:
       tags:

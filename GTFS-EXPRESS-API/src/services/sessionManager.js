@@ -177,7 +177,35 @@ const computeEffectiveMtimeMs = async (folderPath, folderStats) => {
   } catch (_) {
     /* no gtfs.db — session without edit mode */
   }
+  // Client heartbeat (POST /session/heartbeat): an open tab keeps its
+  // session alive even when the user only reads or thinks — before this,
+  // only writes extended the TTL and a 2 h reading pause lost the feed.
+  try {
+    const hbStats = await fsp.stat(path.join(folderPath, HEARTBEAT_FILE));
+    if (hbStats.mtimeMs > mtimeMs) mtimeMs = hbStats.mtimeMs;
+  } catch (_) {
+    /* no heartbeat yet */
+  }
   return mtimeMs;
+};
+
+const HEARTBEAT_FILE = ".heartbeat";
+
+/**
+ * Record client activity for a session so the TTL sweep spares it.
+ * Returns false when the session folder does not exist (expired / unknown).
+ */
+const touchSession = async (sessionId) => {
+  if (!validateSessionId(sessionId)) return false;
+  const folderPath = path.join(GTFS_UPLOAD_DIR, sessionId);
+  try {
+    const stats = await fsp.stat(folderPath);
+    if (!stats.isDirectory()) return false;
+  } catch (_) {
+    return false;
+  }
+  await fsp.writeFile(path.join(folderPath, HEARTBEAT_FILE), String(Date.now()));
+  return true;
 };
 
 const cleanupOldSessions = async () => {
@@ -450,6 +478,8 @@ const loadData = async (directory) => {
 };
 
 module.exports = {
+  touchSession,
+  SESSION_CLEANUP_AGE_MS,
   validateSessionId,
   validateDateParam,
   validateAgencyIdParam,
