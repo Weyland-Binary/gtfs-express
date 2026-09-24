@@ -93,7 +93,7 @@ export function EditModeProvider({ children }) {
   const [openingProject, setOpeningProject] = useState(false);
   const [lastAutoSaveAt, setLastAutoSaveAt] = useState(null);
   const [autoSaveEnabled, setAutoSaveEnabled] = useState(true);
-  // `autoSaveInFlight` is exposed as state so consumers (e.g. AutoSaveIndicator
+  // `autoSaveInFlight` is exposed as state so consumers (e.g. ProjectMenu
   // in the Header) can render a spinner while a snapshot is being captured.
   // The ref below is kept in parallel for the synchronous reentrancy guard
   // inside the auto-save effect (state updates are async — the ref provides
