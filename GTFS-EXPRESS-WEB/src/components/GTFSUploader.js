@@ -255,6 +255,28 @@ function GTFSUploader({
   ];
 
   const [uploading, setUploading] = useState(false);
+  // Elapsed seconds since the upload started — drives the phase message
+  // ("sending" → "validating" → "building") so the user knows the long
+  // silent step is normal and bounded, instead of an endless bar.
+  const [uploadElapsed, setUploadElapsed] = useState(0);
+  useEffect(() => {
+    if (!uploading) {
+      setUploadElapsed(0);
+      return undefined;
+    }
+    const startedAt = Date.now();
+    const id = setInterval(
+      () => setUploadElapsed(Math.round((Date.now() - startedAt) / 1000)),
+      1000,
+    );
+    return () => clearInterval(id);
+  }, [uploading]);
+  const uploadPhaseKey =
+    uploadElapsed < 3
+      ? "uploader.phase.sending"
+      : uploadElapsed < 45
+        ? "uploader.phase.validating"
+        : "uploader.phase.building";
   const [loadingSample, setLoadingSample] = useState(false);
   const [errors, setErrors] = useState(null);
   const [isDragActive, setIsDragActive] = useState(false);
@@ -511,6 +533,40 @@ function GTFSUploader({
       }
 
       if (!response.ok) {
+        // Hard rejection: rows without GTFS-required fields (the engine can
+        // not even load them). Show WHICH file / line / field, grouped per
+        // file, instead of one generic sentence — this branch used to be
+        // shadowed by the generic `result.error` handling below.
+        if (result.type === "REQUIRED_FIELDS_MISSING" && Array.isArray(result.errors)) {
+          const perFile = new Map();
+          for (const e of result.errors.slice(0, 500)) {
+            const file = `${e.table || "unknown"}.txt`;
+            if (!perFile.has(file)) perFile.set(file, []);
+            perFile.get(file).push({
+              line: e.lineNumber ?? "N/A",
+              field: e.field || "N/A",
+              message: t("upload.requiredFieldMissing", {
+                field: e.field || "?",
+                value: e.value == null || e.value === "" ? "∅" : String(e.value),
+              }),
+            });
+          }
+          const total = result.summary?.totalErrors ?? result.errors.length;
+          setErrors([
+            {
+              fileName: t("upload.rejectedTitle", { count: total }),
+              errors: [
+                {
+                  line: "N/A",
+                  field: "N/A",
+                  message: t("upload.rejectedBody"),
+                },
+              ],
+            },
+            ...[...perFile.entries()].map(([fileName, errors]) => ({ fileName, errors })),
+          ]);
+          return;
+        }
         // Autres erreurs
         if (result.error) {
           setErrors([
@@ -520,7 +576,9 @@ function GTFSUploader({
                 {
                   line: "N/A",
                   field: "N/A",
-                  message: result.error,
+                  // Middleware answers carry a human explanation in `message`
+                  // ("invalid magic bytes", "server at capacity"…).
+                  message: result.message ? `${result.error} — ${result.message}` : result.error,
                 },
               ],
             },
@@ -1013,6 +1071,12 @@ function GTFSUploader({
                     >
                       {t("uploader.poweredBy")}
                     </Typography>
+                    <Typography
+                      variant="caption"
+                      sx={{ color: textSecondary, display: "block", mt: 0.5 }}
+                    >
+                      {t("uploader.rescueHint")}
+                    </Typography>
                   </Box>
                 </Box>
 
@@ -1093,8 +1157,16 @@ function GTFSUploader({
                     },
                   }}
                 />
+                <Typography
+                  variant="body2"
+                  sx={{ color: textPrimary, fontWeight: 500 }}
+                  data-testid="uploader-phase"
+                >
+                  {t(uploadPhaseKey)}
+                </Typography>
                 <Typography variant="caption" sx={{ color: textSecondary }}>
-                  {t("uploader.processingDesc")}
+                  {t("uploader.processingDesc")} ·{" "}
+                  {t("uploader.phase.elapsed", { seconds: uploadElapsed })}
                 </Typography>
               </Box>
             </Paper>

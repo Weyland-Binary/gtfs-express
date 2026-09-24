@@ -344,12 +344,10 @@ const uploadGTFSFile = async (req, res) => {
         .trim()
         .slice(0, 120);
       if (safeName) {
+        // Remembered here, written AFTER the validator has run on the
+        // folder: a non-GTFS sidecar next to the .txt files made the engine
+        // emit an unknown_file notice about our own bookkeeping file.
         sourceName = safeName;
-        fs.writeFileSync(
-          path.join(uploadPath, "_source_name.txt"),
-          safeName,
-          "utf8",
-        );
       }
     } catch (srcErr) {
       console.warn("Could not persist source name:", srcErr.message);
@@ -397,6 +395,13 @@ const uploadGTFSFile = async (req, res) => {
         preloadedData,
         strictMdCanonical: true,
       });
+      if (sourceName) {
+        try {
+          fs.writeFileSync(path.join(uploadPath, "_source_name.txt"), sourceName, "utf8");
+        } catch (srcErr) {
+          console.warn("Could not persist source name:", srcErr.message);
+        }
+      }
     } catch (validatorErr) {
       console.error(
         `Upload validation engine error for ${sessionId}:`,

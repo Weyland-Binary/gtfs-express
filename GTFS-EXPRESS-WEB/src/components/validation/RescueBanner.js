@@ -274,7 +274,7 @@ function RescueBanner({
           {t("validation.rescue.lockedTitle", { count: errorCount })}
         </Typography>
         <Typography variant="caption" color="text.secondary">
-          {t("validation.rescue.lockedBody")}
+          {t("validation.rescue.lockedBody2")}
         </Typography>
       </Box>
       <Button

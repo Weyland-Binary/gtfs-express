@@ -37,17 +37,33 @@ function FixQueueBar({ findings, onClose }) {
   const { openFix, loadingId, dialogs, dialogOpen } = useFixDialog();
   const [index, setIndex] = useState(0);
   const total = findings.length;
+  const keyOf = (f) => (f ? `${f.ruleCode}|${f.entityType}|${f.entityId}` : null);
+  // The cursor is anchored to the finding's identity, not its position: when
+  // the background re-validation removes fixed findings the list shifts, and
+  // the user must stay on the finding they were looking at (or the next one
+  // if theirs is gone) instead of jumping to whatever now sits at that index.
+  const currentKeyRef = useRef(null);
+  useEffect(() => {
+    if (!currentKeyRef.current) return;
+    const at = findings.findIndex((f) => keyOf(f) === currentKeyRef.current);
+    if (at >= 0 && at !== index) setIndex(at);
+    if (at < 0) setIndex((i) => Math.min(i, Math.max(0, total - 1)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [findings]);
   const current = findings[Math.min(index, Math.max(0, total - 1))] || null;
   const openedForRef = useRef(null);
 
-  // Open the editor whenever the cursor lands on a new finding.
+  // Open the editor whenever the cursor lands on a new finding — never while
+  // the user is already typing in one (a list refresh must not replace it).
   useEffect(() => {
     if (!current) return;
-    const key = `${current.entityType}:${current.entityId}:${index}`;
+    const key = keyOf(current);
+    currentKeyRef.current = key;
     if (openedForRef.current === key) return;
+    if (dialogOpen) return;
     openedForRef.current = key;
     openFix(current);
-  }, [current, index, openFix]);
+  }, [current, openFix, dialogOpen]);
 
   const goto = useCallback(
     (next) => {

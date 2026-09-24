@@ -136,8 +136,8 @@ function FixInSqlConsoleButton({ ruleCode, occurrences }) {
             label: t("validation.fixInSql.enterEditMode"),
             onClick: async () => {
               setSnackbar(null);
-              const ok = await enterEditMode();
-              if (ok) {
+              const result = await enterEditMode();
+              if (result?.ok) {
                 // Re-run the same flow now that editing=true (next render).
                 // We synthesize a no-op event so handleClick can early-return
                 // its stopPropagation safely.

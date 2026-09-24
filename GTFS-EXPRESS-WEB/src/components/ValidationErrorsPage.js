@@ -13,9 +13,11 @@ import {
   Snackbar,
   Alert,
   Button,
+  CircularProgress,
 } from "@mui/material";
 import CheckCircleOutlineIcon from "@mui/icons-material/CheckCircleOutline";
 import AutoFixHighIcon from "@mui/icons-material/AutoFixHigh";
+import TaskAltIcon from "@mui/icons-material/TaskAlt";
 import { keyframes } from "@mui/system";
 import { useLanguage } from "../contexts/LanguageContext";
 import { fetchWithSession } from "../utils/sessionManager";
@@ -76,6 +78,13 @@ function ValidationErrorsPage({
   onBack,
   onReportRefreshed,
   baselineCounts,
+  // True when entities were edited since this report; the app re-runs the
+  // validator in the background (backgroundValidating while it does).
+  stale = false,
+  backgroundValidating = false,
+  // { table: droppedCount } from the tolerant import — lets the "fixed at
+  // import" note survive re-validation (fresh reports carry no such rows).
+  importAdjustments = null,
 }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
@@ -123,10 +132,13 @@ function ValidationErrorsPage({
     return counts;
   }, [activeFindings]);
 
+  const weightOf = (f) =>
+    f.aggregate ? Math.max(0, Number(f.aggregateCount) || 0) : 1;
+
   const fileCounts = useMemo(() => {
     const counts = {};
     activeFindings.forEach((f) => {
-      if (f.fileName) counts[f.fileName] = (counts[f.fileName] || 0) + 1;
+      if (f.fileName) counts[f.fileName] = (counts[f.fileName] || 0) + weightOf(f);
     });
     return counts;
   }, [activeFindings]);
@@ -167,7 +179,8 @@ function ValidationErrorsPage({
           2,
         );
         if (aWorst !== bWorst) return aWorst - bWorst;
-        return b.occurrences.length - a.occurrences.length;
+        const weight = (g) => g.occurrences.reduce((acc, o) => acc + weightOf(o), 0);
+        return weight(b) - weight(a);
       });
   }, [filteredFindings]);
 
@@ -182,6 +195,15 @@ function ValidationErrorsPage({
     [sortedRuleGroups],
   );
 
+  const importAdjustmentsTotal = useMemo(
+    () =>
+      Object.values(importAdjustments || {}).reduce(
+        (acc, n) => acc + (Number(n) || 0),
+        0,
+      ),
+    [importAdjustments],
+  );
+
   // ── Derived UI values ──
   const statusColor =
     severityCounts.error > 0
@@ -190,8 +212,9 @@ function ValidationErrorsPage({
         ? getSeverityColor(theme, "warning")
         : theme.palette.success.main;
 
-  const totalFindings = activeFindings.length;
-  const filteredTotal = filteredFindings.length;
+  // Weighted like every other screen (badge, dashboard, export dialog).
+  const totalFindings = activeFindings.reduce((acc, f) => acc + weightOf(f), 0);
+  const filteredTotal = filteredFindings.reduce((acc, f) => acc + weightOf(f), 0);
   const ruleCount = sortedRuleGroups.length;
 
   // ── Handlers ──
@@ -247,6 +270,7 @@ function ValidationErrorsPage({
   const handleRevalidate = useCallback(async () => {
     if (revalidating) return;
     setRevalidating(true);
+    const startedAt = Date.now();
     try {
       const res = await fetchWithSession(`${API_BASE_URL}/edit/validate`, {
         method: "POST",
@@ -257,7 +281,7 @@ function ValidationErrorsPage({
         throw err;
       }
       const fresh = await res.json();
-      if (onReportRefreshed) onReportRefreshed(fresh);
+      if (onReportRefreshed) onReportRefreshed(fresh, startedAt);
       setRevalidateToast({
         severity: "success",
         message: t("validation.revalidate.toastDone"),
@@ -341,6 +365,33 @@ function ValidationErrorsPage({
         onRevalidate={handleRevalidate}
       />
 
+      {/* Out-of-date report: edits happened since it was produced. */}
+      {stale && (
+        <Alert
+          severity="info"
+          icon={backgroundValidating ? <CircularProgress size={18} /> : undefined}
+          data-testid="validation-stale-banner"
+          action={
+            !backgroundValidating && (
+              <Button
+                size="small"
+                color="inherit"
+                onClick={handleRevalidate}
+                disabled={revalidating}
+                sx={{ textTransform: "none", fontWeight: 700 }}
+              >
+                {t("validation.revalidate.button")}
+              </Button>
+            )
+          }
+          sx={{ borderRadius: 0, flexShrink: 0 }}
+        >
+          {backgroundValidating || revalidating
+            ? t("validation.stale.checking")
+            : t("validation.stale.banner")}
+        </Alert>
+      )}
+
       {/* Scrollable content, centered column for readability */}
       <Box
         sx={{
@@ -366,8 +417,14 @@ function ValidationErrorsPage({
           }}
         >
           {/* Findings the import already fixed — announce, don't alarm. */}
-          {autoFixedFindings.length > 0 && (
+          {autoFixedFindings.length > 0 ? (
             <AutoFixedBanner findings={autoFixedFindings} />
+          ) : (
+            importAdjustmentsTotal > 0 && (
+              <Alert severity="success" icon={<TaskAltIcon />} sx={{ borderRadius: 3 }}>
+                {t("validation.autoFixed.persist", { count: importAdjustmentsTotal })}
+              </Alert>
+            )
           )}
 
           {allClear ? (

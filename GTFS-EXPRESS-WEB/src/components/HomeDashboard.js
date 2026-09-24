@@ -34,6 +34,8 @@ import API_BASE_URL from "../config";
 import { getRuleTitle } from "./validation/ruleCatalog";
 import { summarizeReport, topRules } from "../utils/validationSummary";
 import HelpOutlineIcon from "@mui/icons-material/HelpOutline";
+import TaskAltIcon from "@mui/icons-material/TaskAlt";
+import Alert from "@mui/material/Alert";
 
 /* ────────── animations ────────── */
 const fadeUp = keyframes`
@@ -470,6 +472,7 @@ const NotValidatedCard = ({
   const validateNow = async () => {
     setRunning(true);
     try {
+      const startedAt = Date.now();
       const res = await fetchWithSession(`${API_BASE_URL}/edit/validate`, {
         method: "POST",
       });
@@ -480,7 +483,7 @@ const NotValidatedCard = ({
       }
       window.dispatchEvent(
         new CustomEvent("gtfs:validation-refreshed", {
-          detail: { report: body },
+          detail: { report: body, startedAt },
         }),
       );
     } catch (err) {
@@ -579,6 +582,10 @@ const NotValidatedCard = ({
 
 function HomeDashboard({
   validationReport,
+  // { table: droppedCount } from the tolerant import: duplicate rows removed
+  // automatically. Announced here so a clean-after-import feed is not a
+  // dead end ("see the duplicate_key findings" pointed to a hidden badge).
+  importAdjustments = null,
   onNavigateToValidation,
   onNavigateToSchedule,
 }) {
@@ -674,6 +681,15 @@ function HomeDashboard({
     if (!stats?.agencyNames?.length) return null;
     return stats.agencyNames[0];
   }, [stats]);
+
+  const importAdjustmentsTotal = useMemo(
+    () =>
+      Object.values(importAdjustments || {}).reduce(
+        (acc, n) => acc + (Number(n) || 0),
+        0,
+      ),
+    [importAdjustments],
+  );
 
   // "Conformant" is only claimed on the strength of an actual report. After a
   // project open / snapshot restore / reload the report is null: say so
@@ -876,6 +892,27 @@ function HomeDashboard({
               </>
             )}
           </Box>
+
+          {importAdjustmentsTotal > 0 && (
+            <Alert
+              severity="success"
+              icon={<TaskAltIcon />}
+              data-testid="dashboard-import-adjustments"
+              action={
+                <Button
+                  color="inherit"
+                  size="small"
+                  onClick={() => onNavigateToValidation && onNavigateToValidation()}
+                  sx={{ textTransform: "none", fontWeight: 700 }}
+                >
+                  {t("home.viewReport")}
+                </Button>
+              }
+              sx={{ mb: 2, borderRadius: "12px" }}
+            >
+              {t("validation.autoFixed.persist", { count: importAdjustmentsTotal })}
+            </Alert>
+          )}
 
           {/* ─── INVENTORY STRIP — single full-width row ─── */}
           <Box>

@@ -135,6 +135,10 @@ test("the fix queue opens the editor with the offending field flagged, and re-va
   await expect(page.locator(".MuiDialog-root")).toHaveCount(0, { timeout: 30_000 });
   await page.getByTestId("fix-queue-bar").getByLabel("Close").click();
 
+  // The report is now out of date: the page says so and the fixed row is
+  // dimmed until the next validation run confirms.
+  await expect(page.getByTestId("validation-stale-banner")).toBeVisible();
+
   await page.getByTestId("rescue-revalidate").click();
   await expect(page.getByText("invalid_color")).toHaveCount(0, { timeout: 120_000 });
 });

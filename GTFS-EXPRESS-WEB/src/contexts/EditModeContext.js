@@ -80,7 +80,17 @@ export function EditModeProvider({ children }) {
     const key = `${entity || "unknown"}:${entityId ?? "*"}`;
     setTouchedEntities((prev) => (prev[key] ? prev : { ...prev, [key]: Date.now() }));
   }, []);
-  const clearTouchedEntities = useCallback(() => setTouchedEntities({}), []);
+  // `beforeTs` (optional): only forget entities touched at or before that
+  // instant — a validation run only vouches for edits made before it
+  // started; anything edited while it ran stays flagged for the next run.
+  const clearTouchedEntities = useCallback((beforeTs = null) => {
+    setTouchedEntities((prev) => {
+      if (beforeTs == null) return {};
+      const next = {};
+      for (const [k, ts] of Object.entries(prev)) if (ts > beforeTs) next[k] = ts;
+      return next;
+    });
+  }, []);
   const [dataVersion, setDataVersion] = useState(0);
   const [stopOverrides, setStopOverrides] = useState({});
   const [error, setError] = useState(null);
@@ -225,7 +235,6 @@ export function EditModeProvider({ children }) {
     setPendingEdits(0);
     setUndoneEdits(0);
     setUnsavedChanges(0);
-    setTouchedEntities({});
     setStopOverrides({});
     setProjectMeta(null);
     setLastAutoSaveAt(null);
@@ -692,7 +701,12 @@ export function EditModeProvider({ children }) {
         setProjectMeta(result.meta || null);
         setBetaTester(result.betaTester || null);
         setDataVersion((v) => v + 1);
+        setTouchedEntities({});
         editsSinceSnapshotRef.current = 0;
+        // The session now holds a different feed: every consumer of the
+        // previous validation report (badge, dashboard, page, AI context)
+        // must drop it — see GTFSApp's "gtfs:feed-replaced" handler.
+        window.dispatchEvent(new CustomEvent("gtfs:feed-replaced", { detail: { source: "project" } }));
         showToast(t("project.openedToast"), "success");
         return { ok: true, betaTester: result.betaTester || null };
       } catch (err) {

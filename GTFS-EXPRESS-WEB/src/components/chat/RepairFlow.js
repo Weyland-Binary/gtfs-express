@@ -183,6 +183,7 @@ function RepairFlow({
     async (affectedCount) => {
       setPhase("revalidating");
       try {
+        const startedAt = Date.now();
         const res = await fetchWithSession(`${API_BASE_URL}/edit/validate`, {
           method: "POST",
         });
@@ -198,7 +199,7 @@ function RepairFlow({
         setPhase("done");
         // Sync the whole app (header badge, validation page, chat context).
         window.dispatchEvent(
-          new CustomEvent("gtfs:validation-refreshed", { detail: { report } }),
+          new CustomEvent("gtfs:validation-refreshed", { detail: { report, startedAt } }),
         );
         if (onOutcome) {
           const delta =

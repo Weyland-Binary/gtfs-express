@@ -47,6 +47,11 @@ const formatCell = (v) => {
  *   2. "applying" — POST /edit/quickfix/apply with the selected ids
  *   3. "result"   — success screen with applied count + close
  */
+// Selection key: a stop and a route may share the same id in multi-entity
+// fixes (invalid_url, whitespace, timezone…) — keying by id alone toggled
+// and applied both rows together.
+const proposalKey = (p) => `${p.entity || ""}:${String(p.id)}`;
+
 function QuickFixDialog({ open, onClose, ruleCode }) {
   const { t } = useLanguage();
   const { recordEdit } = useEditMode();
@@ -85,7 +90,7 @@ function QuickFixDialog({ open, onClose, ruleCode }) {
       .then((data) => {
         const list = Array.isArray(data.proposals) ? data.proposals : [];
         setProposals(list);
-        setSelected(new Set(list.map((p) => String(p.id))));
+        setSelected(new Set(list.map((p) => proposalKey(p))));
         setMeta({
           titleKey: data.titleKey,
           descKey: data.descKey,
@@ -109,10 +114,9 @@ function QuickFixDialog({ open, onClose, ruleCode }) {
   const someSelected =
     selected.size > 0 && selected.size < proposals.length;
 
-  const toggleRow = useCallback((id) => {
+  const toggleRow = useCallback((key) => {
     setSelected((prev) => {
       const next = new Set(prev);
-      const key = String(id);
       if (next.has(key)) next.delete(key);
       else next.add(key);
       return next;
@@ -122,7 +126,7 @@ function QuickFixDialog({ open, onClose, ruleCode }) {
   const toggleAll = useCallback(() => {
     setSelected((prev) => {
       if (prev.size === proposals.length) return new Set();
-      return new Set(proposals.map((p) => String(p.id)));
+      return new Set(proposals.map((p) => proposalKey(p)));
     });
   }, [proposals]);
 
@@ -302,7 +306,7 @@ function QuickFixDialog({ open, onClose, ruleCode }) {
                   </TableHead>
                   <TableBody>
                     {proposals.map((p) => {
-                      const idKey = String(p.id);
+                      const idKey = proposalKey(p);
                       const isChecked = selected.has(idKey);
                       return (
                         <TableRow

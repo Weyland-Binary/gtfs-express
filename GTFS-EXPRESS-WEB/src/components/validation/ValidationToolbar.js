@@ -45,7 +45,7 @@ function ValidationToolbar({
 
   const titleText =
     severityCounts.error > 0
-      ? t("validation.status.failed")
+      ? t("validation.status.blocking", { count: severityCounts.error })
       : severityCounts.warning > 0
         ? t("validation.status.warnings")
         : t("validation.status.ok");

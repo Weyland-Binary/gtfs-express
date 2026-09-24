@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Snackbar, Alert, Button } from "@mui/material";
 import API_BASE_URL from "../../config";
 import { fetchWithSession } from "../../utils/sessionManager";
@@ -11,6 +11,7 @@ import EditRouteDialog from "../edit/EditRouteDialog";
 import EditTripDialog from "../edit/EditTripDialog";
 import EditStopTimeDialog from "../edit/EditStopTimeDialog";
 import EditAgencyDialog from "../edit/EditAgencyDialog";
+import BetaGateDialog from "../edit/BetaGateDialog";
 
 /**
  * useFixDialog — one place that turns a validation finding into the right
@@ -50,6 +51,12 @@ const DETAIL_ENDPOINT = {
 };
 
 const PANEL_TYPES = new Set(["calendar", "shape", "feed_info"]);
+const BETA_ERRORS = new Set([
+  "BETA_CODE_REQUIRED",
+  "INVALID_BETA_CODE",
+  "BETA_REVOKED",
+  "BETA_CONFIG_ERROR",
+]);
 
 /** Resolve { entityType, fields } for a finding, or null when not fixable. */
 export const resolveFixMeta = (finding) => {
@@ -77,6 +84,14 @@ export default function useFixDialog() {
   const [dialog, setDialog] = useState(null); // { entityType, entity, highlightFields }
   const [loadingId, setLoadingId] = useState(null);
   const [snackbar, setSnackbar] = useState(null); // { message, severity, action? }
+  const [betaGate, setBetaGate] = useState(null); // { finding, error }
+  // Live edit-mode flag for the "enter edit mode, then retry" path: the
+  // closure captured when the snackbar was created would still see the old
+  // value and loop back to the same message.
+  const editingRef = useRef(editing);
+  useEffect(() => {
+    editingRef.current = editing;
+  }, [editing]);
 
   const closeSnackbar = useCallback(() => setSnackbar(null), []);
   const closeDialog = useCallback(() => setDialog(null), []);
@@ -93,7 +108,7 @@ export default function useFixDialog() {
         return true;
       }
 
-      if (!editing) {
+      if (!editingRef.current) {
         setSnackbar({
           message: t("validation.fix.needsEditMode"),
           severity: "warning",
@@ -102,7 +117,12 @@ export default function useFixDialog() {
             onClick: async () => {
               closeSnackbar();
               const result = await enterEditMode();
-              if (result?.ok) openFix(finding);
+              if (result?.ok) {
+                editingRef.current = true;
+                openFix(finding);
+              } else if (result && BETA_ERRORS.has(result.errorCode)) {
+                setBetaGate({ finding, error: { code: result.errorCode, message: result.message } });
+              }
             },
           },
         });
@@ -182,7 +202,7 @@ export default function useFixDialog() {
         setLoadingId(null);
       }
     },
-    [editing, enterEditMode, openPanel, t, closeSnackbar],
+    [enterEditMode, openPanel, t, closeSnackbar],
   );
 
   const dialogs = (
@@ -220,6 +240,26 @@ export default function useFixDialog() {
       {dialog?.entityType === "agency" && (
         <EditAgencyDialog open agency={dialog.entity} onClose={closeDialog} />
       )}
+      <BetaGateDialog
+        open={Boolean(betaGate)}
+        onClose={() => setBetaGate(null)}
+        initialError={betaGate?.error || null}
+        onSubmit={async (code) => {
+          const result = await enterEditMode(code);
+          if (result?.ok) {
+            editingRef.current = true;
+            const pending = betaGate?.finding;
+            setBetaGate(null);
+            if (pending) openFix(pending);
+            return { ok: true };
+          }
+          return {
+            ok: false,
+            errorCode: result?.errorCode || "INVALID_BETA_CODE",
+            message: result?.message,
+          };
+        }}
+      />
       <Snackbar
         open={Boolean(snackbar)}
         autoHideDuration={snackbar?.action ? null : 5000}

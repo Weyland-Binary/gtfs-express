@@ -58,6 +58,7 @@ import { summarizeReport } from "../utils/validationSummary";
 import { useLanguage } from "../contexts/LanguageContext";
 import { useEditMode } from "../contexts/EditModeContext";
 import { useDetailPanel } from "../contexts/DetailPanelContext";
+import { useDestructiveGuard } from "../contexts/DestructiveGuardContext";
 
 function GTFSApp() {
   const baseUrl = API_BASE_URL;
@@ -74,6 +75,7 @@ function GTFSApp() {
     clearTouchedEntities,
   } = useEditMode();
   const { openPanel, entity, sqlConsoleVisible } = useDetailPanel();
+  const { guard } = useDestructiveGuard();
   const LOADING_MESSAGES = [
     t("app.loadingStep1"),
     t("app.loadingStep2"),
@@ -116,12 +118,16 @@ function GTFSApp() {
   // 0: Home dashboard (with ShapesMap + stats inline), 1: Schedules & Map,
   // 3: Shape Studio (edit mode only). Deep-linked via ?tab= so views are
   // shareable and survive a reload (session lifetime permitting).
+  const [showValidationReport, setShowValidationReport] = useState(false);
   const [selectedMainTab, setSelectedMainTabState] = useState(() => {
     const tab = new URLSearchParams(window.location.search).get("tab");
     return { home: 0, schedules: 1, studio: 3, compare: 4 }[tab] ?? 0;
   });
   const setSelectedMainTab = useCallback((value) => {
     setSelectedMainTabState(value);
+    // The validation page has render priority over the tabs: a header tab
+    // click must leave it, otherwise the indicator moves and nothing else.
+    setShowValidationReport(false);
     const slug = { 0: "home", 1: "schedules", 3: "studio", 4: "compare" }[
       value
     ];
@@ -152,10 +158,18 @@ function GTFSApp() {
   // Every fresh report goes through here so the "modified since report"
   // markers are cleared in the same breath (the report now reflects those
   // edits).
+  //
+  // `startedAt` is when the validation request was issued: only edits made
+  // BEFORE it are vouched for by the report, later ones stay flagged. A
+  // report older than the one already adopted (two runs overlapping) is
+  // ignored so a slow, outdated result can never overwrite a fresh one.
+  const lastReportStartedAtRef = useRef(0);
   const adoptReport = useCallback(
-    (report) => {
+    (report, startedAt = Date.now()) => {
+      if (startedAt < lastReportStartedAtRef.current) return;
+      lastReportStartedAtRef.current = startedAt;
       setValidationReport(report);
-      clearTouchedEntities();
+      clearTouchedEntities(startedAt);
     },
     [clearTouchedEntities],
   );
@@ -174,7 +188,6 @@ function GTFSApp() {
   const [showCGU, setShowCGU] = useState(false);
   const [dataLoading, setDataLoading] = useState(false);
   const [loadingStep, setLoadingStep] = useState(0);
-  const [showValidationReport, setShowValidationReport] = useState(false);
   const [showSelectorGuide, setShowSelectorGuide] = useState(false);
 
   // Listen for the custom event dispatched by ExportPreflightDialog → "Review errors"
@@ -196,12 +209,18 @@ function GTFSApp() {
   useEffect(() => {
     const handler = (e) => {
       const report = e?.detail?.report;
-      if (report && typeof report === "object") adoptReport(report);
+      if (report && typeof report === "object") {
+        adoptReport(report, e.detail.startedAt || Date.now());
+      }
     };
     window.addEventListener("gtfs:validation-refreshed", handler);
     return () =>
       window.removeEventListener("gtfs:validation-refreshed", handler);
   }, [adoptReport]);
+
+  useEffect(() => {
+    if (sqlConsoleVisible) setShowValidationReport(false);
+  }, [sqlConsoleVisible]);
 
   // Close the validation report when a fix navigates the user elsewhere
   // (e.g. FixInSqlConsoleButton → SQL Console). The validation page is
@@ -378,14 +397,24 @@ function GTFSApp() {
   // thinking, on the phone — used to come back to a wiped session. Ping the
   // server every 10 minutes while a feed is loaded, and whenever the tab
   // becomes visible again after being hidden.
+  const sessionExpiredRef = useRef(false);
   useEffect(() => {
     if (!agencies.length) return undefined;
+    sessionExpiredRef.current = false;
     let cancelled = false;
     const ping = () => {
       if (cancelled || document.hidden) return;
-      fetchWithSession(`${baseUrl}/session/heartbeat`, { method: "POST" }).catch(
-        () => {},
-      );
+      fetchWithSession(`${baseUrl}/session/heartbeat`, { method: "POST" })
+        .then((res) => {
+          if (res.status === 404 && !sessionExpiredRef.current) {
+            // The server swept the session (tab hidden past the idle
+            // timeout): say it once instead of letting every later call
+            // fail with a generic error.
+            sessionExpiredRef.current = true;
+            showToast(t("app.sessionExpired"), "error");
+          }
+        })
+        .catch(() => {});
     };
     const interval = setInterval(ping, 10 * 60 * 1000);
     const onVisible = () => {
@@ -397,38 +426,67 @@ function GTFSApp() {
       clearInterval(interval);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [agencies.length, baseUrl]);
+  }, [agencies.length, baseUrl, showToast, t]);
 
   // ── Background re-validation ───────────────────────────────────────────
-  // In edit mode, once a report exists and something was edited, re-run the
-  // canonical validator ~25 s after the last change (debounced, one run at a
-  // time, silent on rate limit). The user sees findings disappear on the
+  // Once a report exists and something was edited, re-run the canonical
+  // validator ~25 s after the last change: findings disappear from the
   // validation page / header badge without pressing "Re-validate", and the
-  // export preflight starts from a fresh report. Nothing runs while the
-  // feed has never been validated (project open) or outside edit mode.
+  // export preflight starts from a fresh report. Runs in read mode too
+  // (leaving edit mode right after an edit must not freeze an old report).
+  // One run at a time; a 429 / 5xx keeps the report flagged stale and
+  // retries a minute later.
+  const [backgroundValidating, setBackgroundValidating] = useState(false);
+  const [revalidateRetryTick, setRevalidateRetryTick] = useState(0);
   const autoRevalidateInFlightRef = useRef(false);
-  useEffect(() => {
-    if (!editing || !validationStale) return undefined;
-    const timer = setTimeout(async () => {
-      if (autoRevalidateInFlightRef.current) return;
-      autoRevalidateInFlightRef.current = true;
-      try {
-        const res = await fetchWithSession(`${baseUrl}/edit/validate`, {
-          method: "POST",
-        });
-        if (!res.ok) return; // 429 / 5xx: stay stale, the user can re-run by hand
+  const runBackgroundValidation = useCallback(async () => {
+    if (autoRevalidateInFlightRef.current) return;
+    autoRevalidateInFlightRef.current = true;
+    setBackgroundValidating(true);
+    const startedAt = Date.now();
+    let ok = false;
+    try {
+      const res = await fetchWithSession(`${baseUrl}/edit/validate`, {
+        method: "POST",
+      });
+      if (res.ok) {
         const fresh = await res.json();
-        if (fresh && typeof fresh === "object") adoptReport(fresh);
-      } catch (err) {
-        console.warn("Background re-validation failed:", err);
-      } finally {
-        autoRevalidateInFlightRef.current = false;
+        if (fresh && typeof fresh === "object") {
+          adoptReport(fresh, startedAt);
+          ok = true;
+        }
       }
-    }, 25_000);
+    } catch (err) {
+      console.warn("Background re-validation failed:", err);
+    } finally {
+      autoRevalidateInFlightRef.current = false;
+      setBackgroundValidating(false);
+      if (!ok) setTimeout(() => setRevalidateRetryTick((n) => n + 1), 60_000);
+    }
+  }, [baseUrl, adoptReport]);
+  useEffect(() => {
+    if (!validationStale) return undefined;
+    const timer = setTimeout(runBackgroundValidation, 25_000);
     return () => clearTimeout(timer);
-    // dataVersion in deps: every further edit restarts the debounce window.
+    // dataVersion in deps: every further edit restarts the debounce window;
+    // revalidateRetryTick re-arms after a failed run.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editing, validationStale, dataVersion, baseUrl]);
+  }, [validationStale, dataVersion, revalidateRetryTick]);
+
+  // The session now holds a different feed (project opened / snapshot
+  // restored from the header menu): drop everything that described the
+  // previous one. The uploader's own paths reset the same state directly.
+  useEffect(() => {
+    const handler = () => {
+      lastReportStartedAtRef.current = 0;
+      setValidationReport(null);
+      setValidationBaseline(null);
+      setImportAdjustments(null);
+      setShowValidationReport(false);
+    };
+    window.addEventListener("gtfs:feed-replaced", handler);
+    return () => window.removeEventListener("gtfs:feed-replaced", handler);
+  }, []);
 
   const handleUploadSuccess = async (data, validationReport, meta = {}) => {
     // The backend already cleaned up the edit session atomically
@@ -448,7 +506,7 @@ function GTFSApp() {
       // fail until edit mode re-runs the migration. Say it loudly instead of
       // leaving the user on a silently broken landing page.
       console.error("Upload migration failed:", meta.migrationError);
-      showToast(t("upload.migrationFailed"), "error");
+      showToast(t("upload.migrationFailed2"), "error");
     }
     // Rescue tolerance: exact-key duplicate rows were skipped at import
     // (first occurrence kept) so the broken feed could load at all.
@@ -483,14 +541,13 @@ function GTFSApp() {
         setDataLoading(false);
         setShowSelectorGuide(false);
         setSelectedMainTab(0);
+        // Rescue landing: open the repair station on top of the loaded app.
+        // Set AFTER the tab reset — selecting a tab closes the report page.
+        if (validationReport?.valid === false) setShowValidationReport(true);
       });
       // SQL-first: backend builds gtfs.db at upload. Pull the row counts so
       // the SQL Console "Browse files" chips light up immediately in read mode.
       refreshStatus();
-      if (validationReport?.valid === false) {
-        // Rescue landing: open the repair station on top of the loaded app.
-        setShowValidationReport(true);
-      }
     }
   };
 
@@ -562,13 +619,28 @@ function GTFSApp() {
     }
   };
 
-  const handleReupload = async () => {
-    if (editing) {
-      await exitEditMode();
-    }
-    setValidationReport(null);
-    setValidationBaseline(null);
-    setShowValidationReport(false);
+  // "Re-upload" from the repair station: through the unsaved-changes guard,
+  // then back to the upload screen (agencies cleared). The previous report
+  // is dropped only once the user confirmed — it used to vanish while the
+  // dashboard stayed on screen, which looked like a lost feed.
+  const handleReupload = () => {
+    guard(
+      async () => {
+        if (editing) await exitEditMode();
+        lastReportStartedAtRef.current = 0;
+        setValidationReport(null);
+        setValidationBaseline(null);
+        setImportAdjustments(null);
+        setShowValidationReport(false);
+        setAgencies([]);
+        setRoutes([]);
+        setSelectedAgency("");
+        setSelectedRoute(null);
+        setSelectedRouteDetails(null);
+        setSelectedMainTab(0);
+      },
+      { reason: "upload" },
+    );
   };
 
   const fetchAgencies = async () => {
@@ -1312,6 +1384,9 @@ function GTFSApp() {
               onBack={() => setShowValidationReport(false)}
               onReportRefreshed={adoptReport}
               baselineCounts={validationBaseline}
+              stale={validationStale}
+              backgroundValidating={backgroundValidating}
+              importAdjustments={importAdjustments}
             />
           ) : !agencies.length ? (
             <Box
@@ -1361,7 +1436,8 @@ function GTFSApp() {
                   // Tab 0 — Home dashboard (post-upload at-a-glance)
                   <HomeDashboard
                     validationReport={validationReport}
-                    onNavigateToValidation={(ruleCode) => {
+                    importAdjustments={importAdjustments}
+                    onNavigateToValidation={() => {
                       setShowValidationReport(true);
                     }}
                     onNavigateToSchedule={() => setSelectedMainTab(1)}

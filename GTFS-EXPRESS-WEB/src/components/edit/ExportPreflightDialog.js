@@ -76,15 +76,20 @@ function parseReport(report, topN) {
   const warningsMap = new Map();
   const infosMap = new Map();
 
+  // Same weighting as utils/validationSummary.js: an aggregate tail marker
+  // counts for the occurrences it stands for; import-resolved findings are
+  // not outstanding work.
+  const weightOf = (f) =>
+    f.aggregate ? Math.max(0, Number(f.aggregateCount) || 0) : 1;
   const addTo = (map, f, file) => {
     const rc = f.ruleCode || "unspecified";
     const existing = map.get(rc);
     if (existing) {
-      existing.count++;
+      existing.count += weightOf(f);
     } else {
       map.set(rc, {
         ruleCode: rc,
-        count: 1,
+        count: weightOf(f),
         file,
         sampleMessage: f.message || "",
         sampleEntityId: f.entityId || null,
@@ -99,15 +104,16 @@ function parseReport(report, topN) {
       // Normalise severity: default "error" only if absent; explicit "info"
       // and "warning" routes cleanly. This mirrors the backend validator
       // convention (SEVERITY.INFO / WARNING / ERROR).
+      if (!f || f.resolvedByImport) return;
       const sev = (f.severity || "error").toLowerCase();
       if (sev === "info") {
-        iCount++;
+        iCount += weightOf(f);
         addTo(infosMap, f, fileName);
       } else if (sev === "warning") {
-        wCount++;
+        wCount += weightOf(f);
         addTo(warningsMap, f, fileName);
       } else {
-        eCount++;
+        eCount += weightOf(f);
         addTo(errorsMap, f, fileName);
       }
     });
@@ -185,6 +191,7 @@ function ExportPreflightDialog({ open, onClose, onConfirmExport, onReviewErrors 
     setShowRiskConfirm(false);
 
     try {
+      const startedAt = Date.now();
       const res = await fetchWithSession(`${API_BASE_URL}/edit/validate`, {
         method: "POST",
       });
@@ -210,7 +217,7 @@ function ExportPreflightDialog({ open, onClose, onConfirmExport, onReviewErrors 
       // uses — instead of keeping it private to this dialog while the other
       // screens keep showing the upload-time counts.
       window.dispatchEvent(
-        new CustomEvent("gtfs:validation-refreshed", { detail: { report: body } }),
+        new CustomEvent("gtfs:validation-refreshed", { detail: { report: body, startedAt } }),
       );
     } catch (err) {
       console.error("ExportPreflightDialog: validation fetch failed", err);
@@ -808,52 +815,29 @@ function ExportPreflightDialog({ open, onClose, onConfirmExport, onReviewErrors 
           </>
         )}
 
-        {/* ── CASE 3: Errors ── */}
+        {/* ── CASE 3: Errors — export is gated server-side (422) until the
+            blocking findings are fixed; a "force" export needs an admin
+            token, so it is not offered here. Say so plainly and lead to
+            the repair station. ── */}
         {hasErrors && !validating && (
           <>
-            <Box sx={{ flex: 1 }} />
-            {!showRiskConfirm ? (
-              <>
-                <Button
-                  variant="text"
-                  color="error"
-                  onClick={handleExportAnywayClick}
-                  data-testid="export-anyway"
-                  sx={{ opacity: 0.7, fontSize: "0.8rem" }}
-                >
-                  {t("export.preflight.exportAnyway")}
-                </Button>
-                <Button
-                  variant="contained"
-                  color="primary"
-                  autoFocus
-                  onClick={handleReviewClick}
-                >
-                  {t("export.preflight.reviewErrors")}
-                </Button>
-              </>
-            ) : (
-              <>
-                <Button
-                  variant="outlined"
-                  onClick={() => {
-                    setShowRiskConfirm(false);
-                    setRiskAccepted(false);
-                  }}
-                >
-                  {t("app.cancel")}
-                </Button>
-                <Button
-                  variant="contained"
-                  color="error"
-                  onClick={handleConfirmRiskyExport}
-                  disabled={!riskAccepted}
-                  data-testid="export-risky-confirm"
-                >
-                  {t("export.preflight.confirmExport")}
-                </Button>
-              </>
-            )}
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{ flex: 1, minWidth: 0 }}
+              data-testid="export-locked-hint"
+            >
+              {t("export.preflight.lockedHint", { count: errorCount })}
+            </Typography>
+            <Button
+              variant="contained"
+              color="primary"
+              autoFocus
+              onClick={handleReviewClick}
+              data-testid="export-review-errors"
+            >
+              {t("export.preflight.reviewErrors")}
+            </Button>
           </>
         )}
       </DialogActions>

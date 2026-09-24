@@ -204,7 +204,11 @@ function RuleGroupCard({
           {/* Count */}
           <Chip
             size="small"
-            label={occurrences.length}
+            label={occurrences.reduce(
+              (acc, o) =>
+                acc + (o.aggregate ? Math.max(0, Number(o.aggregateCount) || 0) : 1),
+              0,
+            )}
             sx={{
               minWidth: 36,
               height: 22,

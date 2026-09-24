@@ -611,8 +611,12 @@ const quickFixApply = async (req, res) => {
 
     let proposals = fix.scan(db) || [];
     if (Array.isArray(ids) && ids.length > 0) {
+      // Accept "entity:id" keys (the dialog sends these so a stop and a
+      // route sharing an id are told apart) as well as bare ids.
       const idSet = new Set(ids.map(String));
-      proposals = proposals.filter((p) => idSet.has(String(p.id)));
+      proposals = proposals.filter(
+        (p) => idSet.has(`${p.entity || ""}:${String(p.id)}`) || idSet.has(String(p.id)),
+      );
     }
 
     if (proposals.length === 0) {
