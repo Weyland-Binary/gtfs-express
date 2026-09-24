@@ -32,6 +32,9 @@ import RescueBanner from "./validation/RescueBanner";
 import FixQueueBar from "./validation/FixQueueBar";
 import { isFixableFinding } from "./validation/useFixDialog";
 import AutoFixedBanner from "./validation/AutoFixedBanner";
+import QualityAuditPanel from "./validation/QualityAuditPanel";
+import { useFeatures } from "../utils/featuresApi";
+import { CHAT_OPEN_EVENT } from "./chat/ChatAssistantFAB";
 
 const getSeverityColor = (theme, sev) =>
   (theme.palette.severities[sev] || theme.palette.severities.error).main;
@@ -89,6 +92,8 @@ function ValidationErrorsPage({
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const { t } = useLanguage();
+  const { features } = useFeatures();
+  const chatEnabled = Boolean(features?.chat?.enabled);
 
   // ── State ──
   const [revalidating, setRevalidating] = useState(false);
@@ -455,8 +460,32 @@ function ValidationErrorsPage({
                 onToggleSeverity={toggleSeverity}
               />
 
-              {fixableFindings.length > 0 && !fixQueueOpen && (
-                <Box sx={{ display: "flex", justifyContent: "flex-end" }}>
+              {(fixableFindings.length > 0 || chatEnabled) && !fixQueueOpen && (
+                <Box sx={{ display: "flex", justifyContent: "flex-end", gap: 1, flexWrap: "wrap" }}>
+                  {chatEnabled && (
+                    <Button
+                      size="small"
+                      variant="contained"
+                      disableElevation
+                      onClick={() =>
+                        window.dispatchEvent(
+                          new CustomEvent(CHAT_OPEN_EVENT, {
+                            detail: { message: t("validation.aiRepairAll.prompt") },
+                          }),
+                        )
+                      }
+                      data-testid="ai-repair-all"
+                      startIcon={<AutoFixHighIcon sx={{ fontSize: 16 }} />}
+                      sx={{
+                        textTransform: "none",
+                        fontWeight: 700,
+                        background: `linear-gradient(135deg, ${theme.palette.ai.gradientStart}, ${theme.palette.ai.gradientEnd})`,
+                      }}
+                    >
+                      {t("validation.aiRepairAll.button")}
+                    </Button>
+                  )}
+                  {fixableFindings.length > 0 && (
                   <Button
                     size="small"
                     variant="contained"
@@ -471,6 +500,7 @@ function ValidationErrorsPage({
                       count: fixableFindings.length,
                     })}
                   </Button>
+                  )}
                 </Box>
               )}
 
@@ -493,6 +523,9 @@ function ValidationErrorsPage({
               />
             </>
           )}
+
+          {/* Beyond the validator: the semantic Diagnostic */}
+          <QualityAuditPanel />
         </Box>
       </Box>
 

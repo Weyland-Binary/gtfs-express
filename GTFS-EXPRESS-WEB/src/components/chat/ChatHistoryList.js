@@ -183,6 +183,7 @@ export default function ChatHistoryList({
   onRegenerateTurn,
   currentErrorCount = null,
   onProposalOutcome = null,
+  onBatchApplied = null,
   onPickFollowup = null,
   onReplayAction = null,
   suggestions = [],
@@ -277,6 +278,7 @@ export default function ChatHistoryList({
             turn={turn}
             currentErrorCount={currentErrorCount}
             onProposalOutcome={onProposalOutcome}
+            onBatchApplied={onBatchApplied}
             onPickFollowup={onPickFollowup}
             onReplayAction={onReplayAction}
             showFollowups={idx === lastAssistantIdx}

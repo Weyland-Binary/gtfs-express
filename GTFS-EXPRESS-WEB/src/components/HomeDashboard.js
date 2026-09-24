@@ -33,6 +33,7 @@ import { useLanguage } from "../contexts/LanguageContext";
 import API_BASE_URL from "../config";
 import { getRuleTitle } from "./validation/ruleCatalog";
 import { summarizeReport, topRules } from "../utils/validationSummary";
+import QualityAuditPanel from "./validation/QualityAuditPanel";
 import HelpOutlineIcon from "@mui/icons-material/HelpOutline";
 import TaskAltIcon from "@mui/icons-material/TaskAlt";
 import Alert from "@mui/material/Alert";
@@ -891,6 +892,15 @@ function HomeDashboard({
                 />
               </>
             )}
+          </Box>
+
+          {/* ─── DIAGNOSTIC: what the validator cannot see ─── */}
+          <Box sx={{ mb: 2 }} data-testid="dashboard-audit">
+            <QualityAuditPanel
+              compact
+              maxItems={3}
+              onSeeAll={() => onNavigateToValidation && onNavigateToValidation()}
+            />
           </Box>
 
           {importAdjustmentsTotal > 0 && (

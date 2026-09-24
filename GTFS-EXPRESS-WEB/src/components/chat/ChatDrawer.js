@@ -307,9 +307,12 @@ export default function ChatDrawer({
                     ...(prev.proposals || []),
                     {
                       proposalId: data.proposalId,
+                      kind: data.kind === "operation" ? "operation" : "sql",
+                      operation: data.operation || null,
+                      params: data.params || null,
                       title: data.title,
                       rationale: data.rationale || "",
-                      sql: data.sql,
+                      sql: data.sql || "",
                       preview: data.preview || null,
                     },
                   ],
@@ -562,6 +565,32 @@ export default function ChatDrawer({
     [updateTurn],
   );
 
+  // The repair plan applied several proposals at once: store each result
+  // on the turn and tell the model what happened.
+  const handleBatchApplied = useCallback(
+    (turnId, results, summary) => {
+      updateTurn(turnId, (prev) => ({
+        batchResults: { ...(prev.batchResults || {}), ...results },
+        proposals: (prev.proposals || []).map((p) =>
+          results[p.proposalId]
+            ? {
+                ...p,
+                outcome: results[p.proposalId].ok
+                  ? `applied in bulk (${results[p.proposalId].affected} row(s))`
+                  : `failed: ${results[p.proposalId].error}`,
+              }
+            : p,
+        ),
+      }));
+      if (summary && summary.after != null) {
+        setNavToast(
+          t("chat.plan.done", { applied: summary.applied, rows: summary.rows }),
+        );
+      }
+    },
+    [updateTurn, t],
+  );
+
   const handleResetConfirmed = useCallback(() => {
     if (abortRef.current) abortRef.current.abort();
     if (attachment) {
@@ -769,6 +798,7 @@ export default function ChatDrawer({
           onRegenerateTurn={handleRegenerate}
           currentErrorCount={sessionContext?.validation?.errors ?? null}
           onProposalOutcome={handleProposalOutcome}
+          onBatchApplied={handleBatchApplied}
           onPickFollowup={handlePickSuggestion}
           onReplayAction={performUiAction}
           suggestions={suggestions}

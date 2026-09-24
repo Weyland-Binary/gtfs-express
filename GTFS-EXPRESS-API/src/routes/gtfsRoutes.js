@@ -28,6 +28,7 @@ const {
   getAllShapes,
   getShapesForRoute,
   getRoutePatterns,
+  getQualityAudit,
   getShapeCoverage,
   getUnusedShapes,
   getUploadStats,
@@ -54,6 +55,7 @@ const {
   createTrip,
   deleteTrip,
   shiftTripTimes,
+  createTripsFromTemplate,
   createCalendar,
   deleteCalendar,
   getStopTime,
@@ -228,6 +230,7 @@ router.get(
 );
 router.get("/average_trip_times", readCache, getAverageTripTimes);
 router.get("/statistics", readCache, getStatistics);
+router.get("/quality_audit", readCache, getQualityAudit);
 router.get("/all_shapes", readCache, getAllShapes);
 router.get("/shapes_for_route/:route_id", readCache, getShapesForRoute);
 router.get("/route_patterns/:route_id", readCache, getRoutePatterns);
@@ -390,6 +393,7 @@ router.delete("/edit/routes/:route_id", deleteRoute);
 // Batch time shift — declared BEFORE the :trip_id routes so the literal
 // `shift` segment can never be captured as a trip id.
 router.post("/edit/trips/shift", shiftTripTimes);
+router.post("/edit/trips/create_from_template", createTripsFromTemplate);
 router.patch("/edit/trips/:trip_id", updateTrip);
 router.post("/edit/trips", createTrip);
 router.delete("/edit/trips/:trip_id", deleteTrip);

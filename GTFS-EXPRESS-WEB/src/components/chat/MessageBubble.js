@@ -44,6 +44,8 @@ import { openInSqlConsole } from "./openInSqlConsole";
 import MarkdownText from "./MarkdownText";
 import ActivityTimeline from "./ActivityTimeline";
 import ProposalCard from "./ProposalCard";
+import OperationProposalCard from "./OperationProposalCard";
+import RepairPlanBar from "./RepairPlanBar";
 import MiniChart from "./MiniChart";
 
 const StreamingCursor = () => {
@@ -289,6 +291,7 @@ const AssistantBubble = ({
   onRegenerate,
   currentErrorCount = null,
   onProposalOutcome = null,
+  onBatchApplied = null,
   onPickFollowup = null,
   onReplayAction = null,
   showFollowups = false,
@@ -399,15 +402,33 @@ const AssistantBubble = ({
           </Box>
         )}
 
-        {proposals.map((p, i) => (
-          <ProposalCard
-            key={p.proposalId}
-            proposal={p}
-            index={proposals.length > 1 ? i : null}
+        {isComplete && (
+          <RepairPlanBar
+            proposals={proposals.filter((p) => p.kind !== "operation")}
+            batchState={turn.batchResults || null}
             currentErrorCount={currentErrorCount}
-            onOutcome={onProposalOutcome ? (summary) => onProposalOutcome(turn.id, p.proposalId, summary) : null}
+            onBatchApplied={onBatchApplied ? (results, summary) => onBatchApplied(turn.id, results, summary) : null}
           />
-        ))}
+        )}
+        {proposals.map((p, i) =>
+          p.kind === "operation" ? (
+            <OperationProposalCard
+              key={p.proposalId}
+              proposal={p}
+              index={proposals.length > 1 ? i : null}
+              onOutcome={onProposalOutcome ? (summary) => onProposalOutcome(turn.id, p.proposalId, summary) : null}
+            />
+          ) : (
+            <ProposalCard
+              key={p.proposalId}
+              proposal={p}
+              index={proposals.length > 1 ? i : null}
+              currentErrorCount={currentErrorCount}
+              batchResult={turn.batchResults ? turn.batchResults[p.proposalId] || null : null}
+              onOutcome={onProposalOutcome ? (summary) => onProposalOutcome(turn.id, p.proposalId, summary) : null}
+            />
+          ),
+        )}
 
         {isError && turn.error && <ErrorBlock message={turn.error.message} onRetry={onRegenerate || null} />}
         {turn.status === "aborted" && (
@@ -481,6 +502,7 @@ export default function MessageBubble({
   onRegenerate,
   currentErrorCount = null,
   onProposalOutcome = null,
+  onBatchApplied = null,
   onPickFollowup = null,
   onReplayAction = null,
   showFollowups = false,
@@ -494,6 +516,7 @@ export default function MessageBubble({
       onRegenerate={onRegenerate}
       currentErrorCount={currentErrorCount}
       onProposalOutcome={onProposalOutcome}
+      onBatchApplied={onBatchApplied}
       onPickFollowup={onPickFollowup}
       onReplayAction={onReplayAction}
       showFollowups={showFollowups}

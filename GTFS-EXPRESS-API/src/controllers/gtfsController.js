@@ -41,6 +41,7 @@ const {
 } = require("../services/calendarService");
 
 const { getStatistics } = require("../services/statisticsService");
+const { getQualityAudit } = require("../services/qualityAuditService");
 
 const {
   getStopDetail,
@@ -77,6 +78,7 @@ const {
   createTrip,
   deleteTrip,
   shiftTripTimes,
+  createTripsFromTemplate,
   createCalendar,
   deleteCalendar,
   getStopTime,
@@ -255,6 +257,7 @@ module.exports = {
   uploadGTFSFile,
   getAverageTripTimes,
   getStatistics,
+  getQualityAudit,
   getAllShapes,
   getShapesForRoute,
   getRoutePatterns,
@@ -286,6 +289,7 @@ module.exports = {
   createTrip,
   deleteTrip,
   shiftTripTimes,
+  createTripsFromTemplate,
   createCalendar,
   deleteCalendar,
   getStopTime,

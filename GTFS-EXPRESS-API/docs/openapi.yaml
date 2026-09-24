@@ -392,6 +392,20 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+  /gtfs/quality_audit:
+    get:
+      tags:
+        - Search & Stats
+      summary: Semantic quality audit of the feed (speeds, duplicate stops, naming, shape fit, calendars, unused objects, colours).
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /gtfs/all_shapes:
     get:
       tags:
@@ -1282,6 +1296,28 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/trips/create_from_template:
+    post:
+      tags:
+        - Edit
+      summary: Create trips from a template trip at given departure times (dry_run supported); one undo entry.
+      security:
+        - SessionId: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "201":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /gtfs/edit/calendar:
     post:
       tags:

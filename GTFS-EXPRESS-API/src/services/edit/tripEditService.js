@@ -656,10 +656,200 @@ const shiftTripTimes = async (req, res) => {
   }
 };
 
+// ── Trips from a template ─────────────────────────────────────────────────────
+//
+// "Add a trip at 07:15", "one every 20 minutes from 6:00 to 9:00": the new
+// trips copy a template trip (route, direction, shape, accessibility, stop
+// sequence and relative travel times), each shifted so that its first
+// departure is the requested time. Frequencies are not copied: the created
+// trips are explicit departures.
+const MAX_TEMPLATE_DEPARTURES = 200;
+
+const planTripsFromTemplate = (db, body) => {
+  const templateId = typeof body.template_trip_id === "string" ? body.template_trip_id.trim() : "";
+  if (!templateId) return { ok: false, status: 400, error: "template_trip_id is required." };
+  const template = db.prepare("SELECT * FROM trips WHERE trip_id = ?").get(templateId);
+  if (!template) return { ok: false, status: 404, error: `Trip not found: ${templateId}` };
+  const departures = Array.isArray(body.departures) ? body.departures : [];
+  if (departures.length === 0) return { ok: false, status: 400, error: "departures must be a non-empty array of GTFS times." };
+  if (departures.length > MAX_TEMPLATE_DEPARTURES)
+    return { ok: false, status: 400, error: `Too many departures (max ${MAX_TEMPLATE_DEPARTURES}).` };
+  // Accept HH:MM as well as HH:MM:SS.
+  const normalized = departures.map((d) => (typeof d === "string" && /^\d{1,2}:\d{2}$/.test(d.trim()) ? `${d.trim().padStart(5, "0")}:00` : d));
+  const bad = normalized.filter((d) => typeof d !== "string" || !isValidGtfsTime(d));
+  if (bad.length) return { ok: false, status: 400, error: `Invalid departure time(s): ${bad.slice(0, 5).join(", ")}` };
+  const stopTimes = db
+    .prepare("SELECT * FROM stop_times WHERE trip_id = ? ORDER BY CAST(stop_sequence AS INTEGER)")
+    .all(templateId);
+  if (stopTimes.length < 2) return { ok: false, status: 400, error: "The template trip needs at least two stop_times." };
+  const base = gtfsTimeToSeconds(stopTimes[0].departure_time) ?? gtfsTimeToSeconds(stopTimes[0].arrival_time);
+  if (base == null) return { ok: false, status: 400, error: "The template trip's first stop has no time." };
+
+  const serviceId = typeof body.service_id === "string" && body.service_id.trim() ? body.service_id.trim() : template.service_id;
+  const svcOk =
+    db.prepare("SELECT 1 FROM calendar WHERE service_id = ?").get(serviceId) ||
+    db.prepare("SELECT 1 FROM calendar_dates WHERE service_id = ? LIMIT 1").get(serviceId);
+  if (!svcOk) return { ok: false, status: 404, error: `service_id not found in calendar or calendar_dates: ${serviceId}` };
+  const headsign =
+    typeof body.trip_headsign === "string" && body.trip_headsign.trim() ? body.trip_headsign.trim() : template.trip_headsign;
+  const directionId =
+    body.direction_id === undefined || body.direction_id === null || body.direction_id === ""
+      ? template.direction_id
+      : String(body.direction_id);
+
+  // Ids: <route>_<direction>_<n>, continuing after the existing ones.
+  const existing = db.prepare("SELECT 1 FROM trips WHERE trip_id = ?");
+  const prefix = `${template.route_id}_${directionId == null || directionId === "" ? "0" : directionId}_`;
+  let n =
+    db
+      .prepare("SELECT COUNT(*) AS c FROM trips WHERE trip_id LIKE ? ESCAPE '\\'")
+      .get(`${prefix.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`).c + 1;
+  const used = new Set();
+  const nextId = () => {
+    let candidate = `${prefix}${String(n).padStart(3, "0")}`;
+    while (existing.get(candidate) || used.has(candidate)) {
+      n += 1;
+      candidate = `${prefix}${String(n).padStart(3, "0")}`;
+    }
+    used.add(candidate);
+    n += 1;
+    return candidate;
+  };
+
+  const sorted = [...new Set(normalized)].sort((a, b) => gtfsTimeToSeconds(a) - gtfsTimeToSeconds(b));
+  const trips = sorted.map((dep) => {
+    const offset = gtfsTimeToSeconds(dep) - base;
+    const tripId = nextId();
+    const rows = stopTimes.map((st) => ({
+      ...st,
+      trip_id: tripId,
+      arrival_time: offsetTime(st.arrival_time, offset),
+      departure_time: offsetTime(st.departure_time, offset),
+    }));
+    return {
+      trip_id: tripId,
+      first_departure: rows[0].departure_time || rows[0].arrival_time,
+      last_arrival: rows[rows.length - 1].arrival_time || rows[rows.length - 1].departure_time,
+      offset_secs: offset,
+      stop_times: rows,
+    };
+  });
+  return {
+    ok: true,
+    template,
+    serviceId,
+    headsign,
+    directionId,
+    trips,
+    stopTimesPerTrip: stopTimes.length,
+  };
+};
+
+/**
+ * POST /edit/trips/create_from_template
+ * Body: { template_trip_id, departures: ["07:15:00", …] (1..200), service_id?,
+ *         trip_headsign?, direction_id?, dry_run? }
+ * dry_run → the plan (ids, first/last times) without writing. Otherwise one
+ * transaction and ONE `_edit_log` entry for every created trip and stop_time.
+ */
+const createTripsFromTemplate = async (req, res) => {
+  try {
+    const ctx = requireEditMode(req, res);
+    if (!ctx) return;
+    const { sessionId, db } = ctx;
+    const body = req.body || {};
+    const plan = planTripsFromTemplate(db, body);
+    if (!plan.ok) return res.status(plan.status).json({ error: plan.error });
+
+    const summary = {
+      template_trip_id: plan.template.trip_id,
+      route_id: plan.template.route_id,
+      service_id: plan.serviceId,
+      direction_id: plan.directionId,
+      trip_headsign: plan.headsign,
+      stop_times_per_trip: plan.stopTimesPerTrip,
+      trips: plan.trips.map((t) => ({
+        trip_id: t.trip_id,
+        first_departure: t.first_departure,
+        last_arrival: t.last_arrival,
+      })),
+    };
+    if (body.dry_run) return res.json({ dry_run: true, ...summary });
+
+    const tripFields = ["trip_id", ...EDITABLE_FIELDS.trip];
+    const stFields = [
+      "trip_id", "arrival_time", "departure_time", "stop_id", "stop_sequence", "stop_headsign",
+      "pickup_type", "drop_off_type", "shape_dist_traveled", "timepoint",
+      "start_pickup_drop_off_window", "end_pickup_drop_off_window",
+    ];
+    const tripSql = `INSERT INTO trips (${tripFields.join(", ")}) VALUES (${tripFields.map(() => "?").join(", ")})`;
+    const stSql = `INSERT INTO stop_times (${stFields.join(", ")}) VALUES (${stFields.map(() => "?").join(", ")})`;
+    const undoOps = [];
+    const redoOps = [];
+    for (const t of plan.trips) {
+      const tripRow = {
+        ...plan.template,
+        trip_id: t.trip_id,
+        service_id: plan.serviceId,
+        trip_headsign: plan.headsign,
+        direction_id: plan.directionId,
+        block_id: null,
+      };
+      const tripValues = tripFields.map((c) => (tripRow[c] === undefined || tripRow[c] === "" ? null : tripRow[c]));
+      redoOps.push({ sql: tripSql, params: tripValues });
+      for (const st of t.stop_times) {
+        redoOps.push({ sql: stSql, params: stFields.map((c) => (st[c] === undefined ? null : st[c])) });
+      }
+      undoOps.push({ sql: "DELETE FROM stop_times WHERE trip_id = ?", params: [t.trip_id] });
+      undoOps.push({ sql: "DELETE FROM trips WHERE trip_id = ?", params: [t.trip_id] });
+    }
+
+    let undoEntryId = null;
+    const tx = db.transaction(() => {
+      undoEntryId = logEdit(db, {
+        entity: "trip",
+        entityId: plan.trips.map((t) => t.trip_id).join(","),
+        action: "create",
+        description: `Created ${plan.trips.length} trip(s) on route ${plan.template.route_id} from template ${plan.template.trip_id} (${plan.trips.map((t) => t.first_departure).join(", ")})`,
+        undoOps,
+        redoOps,
+      });
+      for (const op of redoOps) db.prepare(op.sql).run(op.params);
+    });
+    tx.immediate();
+
+    for (const t of plan.trips) {
+      syncCacheEntry(sessionId, db, "trip", t.trip_id);
+      syncCacheStopTimes(sessionId, db, t.trip_id);
+    }
+
+    await respondWithValidation(
+      res,
+      sessionId,
+      "trip",
+      plan.trips[0].trip_id,
+      {
+        ...summary,
+        created_trips: plan.trips.length,
+        created_stop_times: plan.trips.length * plan.stopTimesPerTrip,
+        undoEntryId,
+      },
+      { status: 201 },
+    );
+  } catch (err) {
+    console.error("createTripsFromTemplate error:", err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
 module.exports = {
   updateTrip: makeUpdateHandler("trip", validateTripPatch),
   createTrip,
   deleteTrip,
   previewDeleteTrip,
   shiftTripTimes,
+  createTripsFromTemplate,
+  planTripsFromTemplate,
+  gtfsTimeToSeconds,
+  secondsToGtfsTime,
 };

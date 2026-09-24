@@ -8,13 +8,19 @@ import React, { useState } from "react";
 import { Box, Chip, alpha, useTheme } from "@mui/material";
 import AutoFixHighIcon from "@mui/icons-material/AutoFixHigh";
 import { useLanguage } from "../../contexts/LanguageContext";
+import CheckCircleOutlineIcon from "@mui/icons-material/CheckCircleOutline";
+import ErrorOutlineIcon from "@mui/icons-material/ErrorOutline";
 import SqlAccordion from "./SqlAccordion";
 import RepairFlow from "./RepairFlow";
 
-export default function ProposalCard({ proposal, index, currentErrorCount, onOutcome }) {
+// `batchResult`: outcome when the repair plan applied this proposal in bulk
+// ({ok, affected} | {ok:false, error}) — the guided flow is then replaced by
+// a compact status line.
+export default function ProposalCard({ proposal, index, currentErrorCount, onOutcome, batchResult = null }) {
   const { t } = useLanguage();
   const theme = useTheme();
-  const [applied, setApplied] = useState(false);
+  const [appliedLocal, setApplied] = useState(false);
+  const applied = appliedLocal || Boolean(batchResult && batchResult.ok);
   const affected = proposal.preview?.totalAffected;
 
   return (
@@ -55,13 +61,22 @@ export default function ProposalCard({ proposal, index, currentErrorCount, onOut
       </Box>
       <Box sx={{ px: 1.25, pb: 1, display: "flex", flexDirection: "column", gap: 0.75 }}>
         <SqlAccordion sql={proposal.sql} defaultExpanded={false} dense />
-        <RepairFlow
-          draftSql={proposal.sql}
-          currentErrorCount={currentErrorCount}
-          initialPreview={proposal.preview || null}
-          onApplied={setApplied}
-          onOutcome={onOutcome}
-        />
+        {batchResult ? (
+          <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, fontSize: "0.74rem", fontWeight: 600, color: batchResult.ok ? "success.main" : "error.main" }} data-testid="chat-proposal-batch">
+            {batchResult.ok ? <CheckCircleOutlineIcon sx={{ fontSize: 15 }} /> : <ErrorOutlineIcon sx={{ fontSize: 15 }} />}
+            {batchResult.ok
+              ? t("chat.repair.appliedSummary", { count: batchResult.affected ?? 0 })
+              : batchResult.error}
+          </Box>
+        ) : (
+          <RepairFlow
+            draftSql={proposal.sql}
+            currentErrorCount={currentErrorCount}
+            initialPreview={proposal.preview || null}
+            onApplied={setApplied}
+            onOutcome={onOutcome}
+          />
+        )}
       </Box>
     </Box>
   );

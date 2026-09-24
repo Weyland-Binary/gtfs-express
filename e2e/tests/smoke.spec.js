@@ -43,6 +43,14 @@ test("loading the sample feed reaches the dashboard", async () => {
   await expect(page.getByTestId("dashboard-validation-health")).toBeVisible({
     timeout: 30_000,
   });
+  // The Diagnostic (semantic audit) runs on the dashboard: the demo feed
+  // has two bus/ferry stops sharing a name and a place.
+  await expect(page.getByTestId("dashboard-audit")).toBeVisible();
+  await expect(page.getByTestId("audit-finding-duplicate_stops")).toBeVisible({
+    timeout: 30_000,
+  });
+  await page.getByTestId("audit-finding-duplicate_stops").click();
+  await expect(page.getByText("Domino Park").first()).toBeVisible();
 });
 
 test("schedule grid renders stops for the auto-picked route", async () => {

@@ -250,6 +250,36 @@ describe("chat agent loop", () => {
     validationReportStore.clearReport(sessionId);
   });
 
+  test("audit, create_trips and shift_trips tools emit operation proposals without writing", async () => {
+    const tripsBefore = db.prepare("SELECT COUNT(*) AS n FROM trips").get().n;
+    __script.push(
+      {
+        toolUses: [
+          { id: "tu1", name: "run_quality_audit", input: {} },
+          { id: "tu2", name: "create_trips", input: { template_trip_id: "S1_WKD_0_001", from: "07:00", to: "07:40", every_minutes: 20, title: "Trois courses" } },
+          { id: "tu3", name: "shift_trips", input: { route_id: "S1", direction_id: "0", offset_minutes: 5 } },
+          { id: "tu4", name: "shift_trips", input: { trip_ids: ["ghost"], offset_minutes: 5 } },
+        ],
+      },
+      { text: "ok" },
+    );
+    const events = await runTurn(dbCtx, "ajoute des courses");
+    const audit = byName(events, "audit");
+    expect(audit).toHaveLength(1);
+    const proposals = byName(events, "proposal");
+    expect(proposals).toHaveLength(2);
+    expect(proposals[0]).toMatchObject({ kind: "operation", operation: "create_trips", title: "Trois courses" });
+    expect(proposals[0].params.departures).toEqual(["07:00:00", "07:20:00", "07:40:00"]);
+    expect(proposals[0].preview.trips).toHaveLength(3);
+    expect(proposals[1]).toMatchObject({ kind: "operation", operation: "shift_trips" });
+    expect(proposals[1].params.offset_secs).toBe(300);
+    expect(proposals[1].preview.trips).toBeGreaterThan(0);
+    const results = __captured[1].messages[__captured[1].messages.length - 1].content;
+    expect(JSON.parse(results[0].content).counts).toBeDefined();
+    expect(results[3].is_error).toBe(true);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM trips").get().n).toBe(tripsBefore);
+  });
+
   test("history is flattened with the tool trace and roles alternate", () => {
     const { buildAnthropicMessages, flattenAssistantTurn } = nl2sqlChatService._internals;
     const flat = flattenAssistantTurn({

@@ -16,6 +16,8 @@
 
 const sqlConsoleService = require("./edit/sqlConsoleService");
 const validationReportStore = require("./validationReportStore");
+const qualityAuditService = require("./qualityAuditService");
+const tripEditService = require("./edit/tripEditService");
 const { getRule } = require("../utils/rulesCatalog");
 
 // ── Caps ──────────────────────────────────────────────────────────────────
@@ -565,7 +567,189 @@ const showChart = {
   },
 };
 
-const TOOLS = [runSql, proposeFix, getValidationFindings, getRuleInfo, getFeedOverview, navigate, showChart];
+// ── run_quality_audit ─────────────────────────────────────────────────────
+const runQualityAudit = {
+  definition: {
+    name: "run_quality_audit",
+    description:
+      "Semantic quality audit of the feed, beyond the validator: unrealistic speeds between stops, zero travel times, long dwells, trips with one stop, duplicate stops a few metres apart, inconsistent or ALL-CAPS stop names, shapes far from their stops, services that never run or expired feeds, routes without trips, unused stops, trips without shape, unreadable route colours. Returns findings with counts and sample entities. Use it for 'what is wrong', 'audit', 'quality' questions and before a bulk repair.",
+    input_schema: { type: "object", properties: {} },
+  },
+  run(_input, ctx) {
+    const audit = qualityAuditService.auditForSession(ctx.dbCtx.db, ctx.dbCtx.sessionId);
+    const findings = audit.findings.map((f) => ({
+      code: f.code,
+      severity: f.severity,
+      count: f.count,
+      unit: f.unit,
+      fix: f.fix,
+      samples: f.samples.slice(0, 5).map((s) => ({ id: s.id, label: s.label, detail: s.detail, routeId: s.routeId || undefined })),
+      meta: f.meta,
+    }));
+    ctx.emit("audit", { counts: audit.counts, codes: findings.map((f) => f.code) });
+    return {
+      content: JSON.stringify({
+        generated_at: audit.generatedAt,
+        partial: audit.partial,
+        counts: audit.counts,
+        findings,
+        note:
+          findings.length === 0
+            ? "No semantic issue found."
+            : "fix=sql: draft with propose_fix after inspecting; fix=studio: point the user to the Shape Studio (navigate shape_studio); fix=review: explain and let the user decide (show rows with run_sql).",
+      }),
+    };
+  },
+};
+
+// ── create_trips ──────────────────────────────────────────────────────────
+const TIME_RE = /^\d{1,2}:\d{2}(:\d{2})?$/;
+const normTime = (t) => {
+  const m = TIME_RE.exec(String(t || "").trim());
+  if (!m) return null;
+  const [h, mi, se = "00"] = String(t).trim().split(":");
+  return `${String(parseInt(h, 10)).padStart(2, "0")}:${mi}:${se}`;
+};
+
+const createTrips = {
+  definition: {
+    name: "create_trips",
+    description:
+      "Propose new trips copied from a template trip (same route, direction, stops and travel times), each starting at a given departure time — 'add a trip at 07:15', 'one every 20 min from 06:00 to 09:00'. Pick the template with run_sql first (a trip of the right route/direction/service). Nothing is written: the user applies the proposal (one undo step). Give either departures or an interval (from/to/every_minutes).",
+    input_schema: {
+      type: "object",
+      properties: {
+        template_trip_id: { type: "string" },
+        departures: { type: "array", items: { type: "string" }, description: "Departure times HH:MM or HH:MM:SS (may exceed 24:00)." },
+        from: { type: "string", description: "First departure of an interval, HH:MM." },
+        to: { type: "string", description: "Last departure (inclusive) of an interval, HH:MM." },
+        every_minutes: { type: "integer", description: "Headway of the interval in minutes." },
+        service_id: { type: "string", description: "Service of the new trips (default: the template's)." },
+        trip_headsign: { type: "string" },
+        direction_id: { type: "string" },
+        title: { type: "string", description: "Short title for the proposal card, in the user's language." },
+      },
+      required: ["template_trip_id"],
+    },
+  },
+  run(input, ctx) {
+    let departures = Array.isArray(input?.departures) ? input.departures.map(normTime) : [];
+    if (departures.length === 0 && input?.from && input?.to && input?.every_minutes) {
+      const from = tripEditService.gtfsTimeToSeconds(normTime(input.from));
+      const to = tripEditService.gtfsTimeToSeconds(normTime(input.to));
+      const step = parseInt(input.every_minutes, 10) * 60;
+      if (from == null || to == null || !(step > 0)) return { content: "Error: invalid interval (from/to/every_minutes).", isError: true };
+      if (to < from) return { content: "Error: 'to' is before 'from'.", isError: true };
+      for (let t = from; t <= to && departures.length <= 200; t += step) departures.push(tripEditService.secondsToGtfsTime(t));
+    }
+    if (departures.some((d) => !d)) return { content: "Error: departures must be HH:MM or HH:MM:SS times.", isError: true };
+    if (departures.length === 0) return { content: "Error: give departures or from/to/every_minutes.", isError: true };
+    const params = {
+      template_trip_id: input.template_trip_id,
+      departures,
+      ...(input.service_id ? { service_id: String(input.service_id) } : {}),
+      ...(input.trip_headsign ? { trip_headsign: String(input.trip_headsign) } : {}),
+      ...(input.direction_id != null && input.direction_id !== "" ? { direction_id: String(input.direction_id) } : {}),
+    };
+    const plan = tripEditService.planTripsFromTemplate(ctx.dbCtx.db, params);
+    if (!plan.ok) return { content: `Cannot plan the trips: ${plan.error}`, isError: true };
+    const preview = {
+      template_trip_id: plan.template.trip_id,
+      route_id: plan.template.route_id,
+      service_id: plan.serviceId,
+      direction_id: plan.directionId,
+      trip_headsign: plan.headsign,
+      stop_times_per_trip: plan.stopTimesPerTrip,
+      trips: plan.trips.map((t) => ({ trip_id: t.trip_id, first_departure: t.first_departure, last_arrival: t.last_arrival })),
+    };
+    const proposalId = ctx.nextProposalId();
+    const title = clip(typeof input?.title === "string" ? input.title.trim() : "", 80) || `Create ${plan.trips.length} trip(s) on route ${plan.template.route_id}`;
+    ctx.emit("proposal", {
+      proposalId,
+      kind: "operation",
+      operation: "create_trips",
+      title,
+      rationale: "",
+      params,
+      preview,
+    });
+    return {
+      content: [
+        `proposal_id: ${proposalId}`,
+        `${plan.trips.length} trip(s) planned on route ${plan.template.route_id} (service ${plan.serviceId}, direction ${plan.directionId ?? "—"}), ${plan.stopTimesPerTrip} stops each:`,
+        ...plan.trips.slice(0, 12).map((t) => `- ${t.trip_id}: ${t.first_departure} → ${t.last_arrival}`),
+        plan.trips.length > 12 ? `… and ${plan.trips.length - 12} more` : "",
+        "The user can apply this from the chat. Do not claim the trips exist yet.",
+      ].filter(Boolean).join("\n"),
+    };
+  },
+};
+
+// ── shift_trips ───────────────────────────────────────────────────────────
+const MAX_SHIFT = 500;
+const shiftTrips = {
+  definition: {
+    name: "shift_trips",
+    description:
+      "Propose shifting the times of trips by an offset ('delay the 07:15 by 5 minutes', 'move all Saturday trips of route 12 one hour later'). Select trips by ids or by route (+ optional direction / service). Optional from_stop_sequence shifts only the stops from that sequence on. Nothing is written: the user applies the proposal (one undo step).",
+    input_schema: {
+      type: "object",
+      properties: {
+        trip_ids: { type: "array", items: { type: "string" } },
+        route_id: { type: "string" },
+        direction_id: { type: "string" },
+        service_id: { type: "string" },
+        offset_minutes: { type: "number", description: "Positive = later, negative = earlier." },
+        from_stop_sequence: { type: "integer" },
+        title: { type: "string" },
+      },
+      required: ["offset_minutes"],
+    },
+  },
+  run(input, ctx) {
+    const db = ctx.dbCtx.db;
+    const offset = Math.round(Number(input?.offset_minutes) * 60);
+    if (!Number.isFinite(offset) || offset === 0) return { content: "Error: offset_minutes must be a non-zero number.", isError: true };
+    let tripIds = Array.isArray(input?.trip_ids) ? input.trip_ids.filter((t) => typeof t === "string" && t.trim()) : [];
+    if (tripIds.length === 0 && input?.route_id) {
+      const where = ["route_id = ?"];
+      const args = [String(input.route_id)];
+      if (input.direction_id != null && input.direction_id !== "") {
+        where.push("direction_id = ?");
+        args.push(String(input.direction_id));
+      }
+      if (input.service_id) {
+        where.push("service_id = ?");
+        args.push(String(input.service_id));
+      }
+      tripIds = db.prepare(`SELECT trip_id FROM trips WHERE ${where.join(" AND ")} ORDER BY trip_id LIMIT ${MAX_SHIFT + 1}`).all(...args).map((r) => r.trip_id);
+    }
+    if (tripIds.length === 0) return { content: "No trip matches the selection.", isError: true };
+    if (tripIds.length > MAX_SHIFT) return { content: `Too many trips (${tripIds.length}); the limit is ${MAX_SHIFT} per operation — narrow the selection.`, isError: true };
+    const exists = db.prepare("SELECT 1 FROM trips WHERE trip_id = ?");
+    const missing = tripIds.filter((t) => !exists.get(t));
+    if (missing.length) return { content: `Unknown trip id(s): ${missing.slice(0, 5).join(", ")}`, isError: true };
+    const fromSeq = Number.isInteger(input?.from_stop_sequence) ? input.from_stop_sequence : null;
+    const ph = tripIds.map(() => "?").join(",");
+    const stCount = db
+      .prepare(`SELECT COUNT(*) AS n FROM stop_times WHERE trip_id IN (${ph})${fromSeq != null ? " AND CAST(stop_sequence AS INTEGER) >= ?" : ""}`)
+      .get(...tripIds, ...(fromSeq != null ? [fromSeq] : [])).n;
+    const span = db
+      .prepare(`SELECT MIN(departure_time) AS first, MAX(arrival_time) AS last FROM stop_times WHERE trip_id IN (${ph})`)
+      .get(...tripIds);
+    const params = { trip_ids: tripIds, offset_secs: offset, ...(fromSeq != null ? { from_stop_sequence: fromSeq } : {}) };
+    const preview = { trips: tripIds.length, stop_times: stCount, first_departure: span.first, last_arrival: span.last, offset_secs: offset };
+    const proposalId = ctx.nextProposalId();
+    const minutes = offset / 60;
+    const title = clip(typeof input?.title === "string" ? input.title.trim() : "", 80) || `Shift ${tripIds.length} trip(s) by ${minutes > 0 ? "+" : ""}${minutes} min`;
+    ctx.emit("proposal", { proposalId, kind: "operation", operation: "shift_trips", title, rationale: "", params, preview });
+    return {
+      content: `proposal_id: ${proposalId}\n${tripIds.length} trip(s), ${stCount} stop_times would move by ${minutes > 0 ? "+" : ""}${minutes} min (current span ${span.first} → ${span.last}). The user can apply this from the chat.`,
+    };
+  },
+};
+
+const TOOLS = [runSql, proposeFix, getValidationFindings, getRuleInfo, getFeedOverview, navigate, showChart, runQualityAudit, createTrips, shiftTrips];
 const TOOL_DEFINITIONS = TOOLS.map((t) => t.definition);
 const TOOLS_BY_NAME = Object.fromEntries(TOOLS.map((t) => [t.definition.name, t]));
 
