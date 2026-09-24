@@ -42,6 +42,7 @@ import ChatAssistantFAB from "./chat/ChatAssistantFAB";
 import SqlConsole from "./SqlConsole/SqlConsole";
 import ShapeStudio from "./shapeStudio/ShapeStudio";
 import FeedDiffPage from "./diff/FeedDiffPage";
+import NetworkStudio from "./network/NetworkStudio";
 // Import of the advanced analysis component
 
 import ValidationErrorsPage from "./ValidationErrorsPage";
@@ -186,6 +187,14 @@ function GTFSApp() {
   const [stopFilter, setStopFilter] = useState("");
   const [focusedStopId, setFocusedStopId] = useState(null);
   const [showCGU, setShowCGU] = useState(false);
+  // Network Studio (create a network from scratch): opened from the landing
+  // tile, the command palette, or the "gtfs:open-network-studio" event.
+  const [studioOpen, setStudioOpen] = useState(false);
+  useEffect(() => {
+    const handler = () => setStudioOpen(true);
+    window.addEventListener("gtfs:open-network-studio", handler);
+    return () => window.removeEventListener("gtfs:open-network-studio", handler);
+  }, []);
   const [dataLoading, setDataLoading] = useState(false);
   const [loadingStep, setLoadingStep] = useState(0);
   const [showSelectorGuide, setShowSelectorGuide] = useState(false);
@@ -634,6 +643,37 @@ function GTFSApp() {
       setError(
         err.isRateLimit ? t("app.rateLimitSample") : t("app.errorAgencies"),
       );
+    } finally {
+      setDataLoading(false);
+    }
+  };
+
+  // A network built by the Network Studio: the server created a brand-new
+  // session (validated, migrated), adopt it like the sample.
+  const handleNetworkCreated = async (result) => {
+    setStudioOpen(false);
+    if (!result?.sessionId) return;
+    try {
+      setDataLoading(true);
+      setError("");
+      if (editing) await exitEditMode();
+      setSessionId(result.sessionId);
+      setFeedEpoch((e) => e + 1);
+      if (result.validationReport) {
+        setValidationReport(result.validationReport);
+        setValidationBaseline(summarizeReport(result.validationReport));
+      } else {
+        setValidationReport(null);
+        setValidationBaseline(null);
+      }
+      setShowValidationReport(false);
+      await fetchAgencies();
+      await refreshStatus();
+      setSelectedMainTab(0);
+      showToast(t("network.toast.opened", { routes: result.counts?.routes ?? 0, trips: result.counts?.trips ?? 0 }), "success");
+    } catch (err) {
+      console.error("Failed to open the built network:", err);
+      setError(t("app.errorAgencies"));
     } finally {
       setDataLoading(false);
     }
@@ -1501,6 +1541,7 @@ function GTFSApp() {
                 onUploadSuccess={handleUploadSuccess}
                 onLoadSample={handleLoadSample}
                 onProjectOpened={handleProjectOpened}
+                onCreateNetwork={() => setStudioOpen(true)}
                 sampleError={error}
               />
             </Box>
@@ -2026,6 +2067,7 @@ function GTFSApp() {
       <DetailPanel />
       <CommandPalette />
       <ShortcutsHelpDialog />
+      <NetworkStudio open={studioOpen} onClose={() => setStudioOpen(false)} onCreated={handleNetworkCreated} />
       <ChatAssistantFAB
         feedLoaded={agencies.length > 0}
         feedEpoch={feedEpoch}

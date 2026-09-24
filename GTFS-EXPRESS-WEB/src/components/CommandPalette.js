@@ -314,6 +314,13 @@ function CommandPalette() {
     // when the chat is disabled the FAB is unmounted and the event is a
     // harmless no-op.
     cmds.push({
+      id: "createNetwork",
+      label: t("palette.action.createNetwork"),
+      hint: t("palette.action.createNetworkHint"),
+      category: "advanced",
+      run: () => window.dispatchEvent(new CustomEvent("gtfs:open-network-studio")),
+    });
+    cmds.push({
       id: "askAi",
       label: t("palette.action.askAi"),
       hint: t("palette.action.askAiHint"),

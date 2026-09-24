@@ -25,6 +25,7 @@ import DirectionsBus from "@mui/icons-material/DirectionsBus";
 import FileUploadOutlinedIcon from "@mui/icons-material/FileUploadOutlined";
 import PlayArrowRoundedIcon from "@mui/icons-material/PlayArrowRounded";
 import FolderOpenOutlinedIcon from "@mui/icons-material/FolderOpenOutlined";
+import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
 import RestoreIcon from "@mui/icons-material/Restore";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
@@ -125,6 +126,7 @@ function GTFSUploader({
   onUploadSuccess,
   onLoadSample,
   onProjectOpened,
+  onCreateNetwork = null,
   sampleError,
 }) {
   const baseUrl = API_BASE_URL;
@@ -1397,6 +1399,81 @@ function GTFSUploader({
                   </Typography>
                 </Box>
               </Paper>
+
+              {/* Tile: Create a network from scratch (Network Studio) */}
+              {onCreateNetwork && (
+                <Paper
+                  component="button"
+                  elevation={0}
+                  data-testid="uploader-create-network"
+                  onClick={onCreateNetwork}
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 2,
+                    width: "100%",
+                    px: 2.5,
+                    py: 2,
+                    border: `1px solid ${alpha(theme.palette.ai.main, 0.35)}`,
+                    borderRadius: "14px",
+                    background: isDark
+                      ? `linear-gradient(135deg, ${alpha(theme.palette.ai.main, 0.16)}, ${surface})`
+                      : `linear-gradient(135deg, ${alpha(theme.palette.ai.main, 0.08)}, ${surface})`,
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                    textAlign: "left",
+                    transition: "all 0.25s cubic-bezier(0.4,0,0.2,1)",
+                    boxShadow: isDark
+                      ? "0 4px 16px rgba(0,0,0,0.3)"
+                      : "0 4px 16px rgba(0,0,0,0.05)",
+                    "&:hover": {
+                      transform: "translateY(-2px)",
+                      borderColor: alpha(theme.palette.ai.main, 0.7),
+                      boxShadow: `0 8px 28px ${alpha(theme.palette.ai.main, 0.25)}`,
+                    },
+                  }}
+                >
+                  <Box
+                    sx={{
+                      flexShrink: 0,
+                      width: 44,
+                      height: 44,
+                      borderRadius: "12px",
+                      background: `linear-gradient(135deg, ${theme.palette.ai.gradientStart}, ${theme.palette.ai.gradientEnd})`,
+                      color: theme.palette.ai.contrastText,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <AutoAwesomeIcon sx={{ fontSize: 22 }} />
+                  </Box>
+                  <Box sx={{ flex: 1, minWidth: 0 }}>
+                    <Typography
+                      variant="body2"
+                      sx={{
+                        fontWeight: 700,
+                        color: textPrimary,
+                        fontSize: "0.88rem",
+                        lineHeight: 1.3,
+                      }}
+                    >
+                      {t("uploader.createNetwork.title")}
+                    </Typography>
+                    <Typography
+                      variant="caption"
+                      sx={{
+                        color: textSecondary,
+                        fontSize: "0.74rem",
+                        lineHeight: 1.4,
+                        display: "block",
+                      }}
+                    >
+                      {t("uploader.createNetwork.desc")}
+                    </Typography>
+                  </Box>
+                </Paper>
+              )}
 
               {/* Tile: Try the sample */}
               <Paper

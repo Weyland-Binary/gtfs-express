@@ -70,6 +70,9 @@ module.exports = defineConfig({
         RATE_LIMIT_MAX_SAMPLES: "100",
         ALLOWED_ORIGINS: `${WEB_URL},http://localhost:${WEB_PORT}`,
         GTFS_UPLOAD_DIR: path.resolve(__dirname, ".tmp", "uploads"),
+        // The harness is offline: the Network Studio joins stops with
+        // straight lines instead of waiting on the road router.
+        NETWORK_ROUTING_ENABLED: "false",
       },
     },
     {
