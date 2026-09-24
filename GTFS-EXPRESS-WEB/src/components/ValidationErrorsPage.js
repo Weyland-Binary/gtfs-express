@@ -12,8 +12,10 @@ import {
   alpha,
   Snackbar,
   Alert,
+  Button,
 } from "@mui/material";
 import CheckCircleOutlineIcon from "@mui/icons-material/CheckCircleOutline";
+import AutoFixHighIcon from "@mui/icons-material/AutoFixHigh";
 import { keyframes } from "@mui/system";
 import { useLanguage } from "../contexts/LanguageContext";
 import { fetchWithSession } from "../utils/sessionManager";
@@ -25,6 +27,8 @@ import ValidationMetricsBar from "./validation/ValidationMetricsBar";
 import ValidationFilterBar from "./validation/ValidationFilterBar";
 import RuleGroupList from "./validation/RuleGroupList";
 import RescueBanner from "./validation/RescueBanner";
+import FixQueueBar from "./validation/FixQueueBar";
+import { isFixableFinding } from "./validation/useFixDialog";
 import AutoFixedBanner from "./validation/AutoFixedBanner";
 
 const getSeverityColor = (theme, sev) =>
@@ -86,6 +90,8 @@ function ValidationErrorsPage({
   const [fileFilter, setFileFilter] = useState(new Set()); // empty = all files
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedGroups, setExpandedGroups] = useState(new Set());
+  // Fix queue: walk the fixable findings one by one (bottom bar).
+  const [fixQueueOpen, setFixQueueOpen] = useState(false);
 
   const searchInputRef = useRef(null);
 
@@ -164,6 +170,17 @@ function ValidationErrorsPage({
         return b.occurrences.length - a.occurrences.length;
       });
   }, [filteredFindings]);
+
+  // Fixable findings in display order (rule groups, then occurrences):
+  // those the fix flow can open an editor for (entity identified by the
+  // server, supported entity type). Feeds the "Fix one by one" queue.
+  const fixableFindings = useMemo(
+    () =>
+      sortedRuleGroups.flatMap((g) =>
+        g.occurrences.filter((o) => isFixableFinding(o)),
+      ),
+    [sortedRuleGroups],
+  );
 
   // ── Derived UI values ──
   const statusColor =
@@ -381,6 +398,25 @@ function ValidationErrorsPage({
                 onToggleSeverity={toggleSeverity}
               />
 
+              {fixableFindings.length > 0 && !fixQueueOpen && (
+                <Box sx={{ display: "flex", justifyContent: "flex-end" }}>
+                  <Button
+                    size="small"
+                    variant="contained"
+                    color="warning"
+                    disableElevation
+                    onClick={() => setFixQueueOpen(true)}
+                    data-testid="fix-queue-start"
+                    startIcon={<AutoFixHighIcon sx={{ fontSize: 16 }} />}
+                    sx={{ textTransform: "none", fontWeight: 700 }}
+                  >
+                    {t("validation.fixQueue.start", {
+                      count: fixableFindings.length,
+                    })}
+                  </Button>
+                </Box>
+              )}
+
               <ValidationFilterBar
                 fileCounts={fileCounts}
                 fileFilter={fileFilter}
@@ -402,6 +438,13 @@ function ValidationErrorsPage({
           )}
         </Box>
       </Box>
+
+      {fixQueueOpen && (
+        <FixQueueBar
+          findings={fixableFindings}
+          onClose={() => setFixQueueOpen(false)}
+        />
+      )}
 
       {/* Revalidation feedback */}
       <Snackbar

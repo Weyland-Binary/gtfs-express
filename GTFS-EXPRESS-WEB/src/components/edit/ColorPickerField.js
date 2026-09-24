@@ -142,6 +142,9 @@ function ColorPickerField({
   size = "small",
   autoFocus,
   sx,
+  // Forwarded to the wrapper so validation "Fix" flows can flag the field
+  // (class "gtfs-field-flagged") like any other TextField.
+  className,
 }) {
   const { t } = useLanguage();
   const theme = useTheme();
@@ -171,7 +174,7 @@ function ColorPickerField({
     suggestedAuto != null && suggestedAuto !== clean;
 
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", ...sx }}>
+    <Box className={className} sx={{ display: "flex", flexDirection: "column", ...sx }}>
       <TextField
         label={label}
         value={clean}

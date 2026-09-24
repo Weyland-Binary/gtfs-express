@@ -97,6 +97,9 @@ function Header({
   selectedMainTab,
   setSelectedMainTab,
   validationReport,
+  // True when entities were edited since the report was produced: the
+  // counts may be out of date until the background re-validation lands.
+  validationStale = false,
   onShowValidationReport,
 }) {
   const { mode, toggleMode, isDark } = useThemeMode();
@@ -298,6 +301,7 @@ function Header({
                       warnings: reportBadge.warnings,
                       infos: reportBadge.infos,
                     }),
+                  validationStale ? ` — ${t("validation.staleHint")}` : "",
                 ]
                   .filter(Boolean)
                   .join("") ||
@@ -344,8 +348,8 @@ function Header({
                 }}
               >
                 <Badge
-                  badgeContent={reportBadge.total}
-                  color={reportBadge.color}
+                  badgeContent={validationStale ? "…" : reportBadge.total}
+                  color={validationStale ? "default" : reportBadge.color}
                   max={99}
                   sx={{
                     "& .MuiBadge-badge": {

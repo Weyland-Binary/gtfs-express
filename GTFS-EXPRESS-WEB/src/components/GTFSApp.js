@@ -70,6 +70,8 @@ function GTFSApp() {
     resetEditStateLocal,
     refreshStatus,
     showToast,
+    touchedEntities,
+    clearTouchedEntities,
   } = useEditMode();
   const { openPanel, entity, sqlConsoleVisible } = useDetailPanel();
   const LOADING_MESSAGES = [
@@ -147,6 +149,18 @@ function GTFSApp() {
   const [calendar, setCalendar] = useState([]);
   const [calendarDates, setCalendarDates] = useState([]);
   const [validationReport, setValidationReport] = useState(null);
+  // Every fresh report goes through here so the "modified since report"
+  // markers are cleared in the same breath (the report now reflects those
+  // edits).
+  const adoptReport = useCallback(
+    (report) => {
+      setValidationReport(report);
+      clearTouchedEntities();
+    },
+    [clearTouchedEntities],
+  );
+  const validationStale =
+    Boolean(validationReport?.errors) && Object.keys(touchedEntities || {}).length > 0;
   // Counts captured when the feed was loaded — the repair-station banner
   // measures fixing progress against this baseline (never updated by
   // re-validation, only by a new feed load).
@@ -182,12 +196,12 @@ function GTFSApp() {
   useEffect(() => {
     const handler = (e) => {
       const report = e?.detail?.report;
-      if (report && typeof report === "object") setValidationReport(report);
+      if (report && typeof report === "object") adoptReport(report);
     };
     window.addEventListener("gtfs:validation-refreshed", handler);
     return () =>
       window.removeEventListener("gtfs:validation-refreshed", handler);
-  }, []);
+  }, [adoptReport]);
 
   // Close the validation report when a fix navigates the user elsewhere
   // (e.g. FixInSqlConsoleButton → SQL Console). The validation page is
@@ -357,6 +371,37 @@ function GTFSApp() {
     agencies,
     importAdjustments,
   ]);
+
+  // ── Background re-validation ───────────────────────────────────────────
+  // In edit mode, once a report exists and something was edited, re-run the
+  // canonical validator ~25 s after the last change (debounced, one run at a
+  // time, silent on rate limit). The user sees findings disappear on the
+  // validation page / header badge without pressing "Re-validate", and the
+  // export preflight starts from a fresh report. Nothing runs while the
+  // feed has never been validated (project open) or outside edit mode.
+  const autoRevalidateInFlightRef = useRef(false);
+  useEffect(() => {
+    if (!editing || !validationStale) return undefined;
+    const timer = setTimeout(async () => {
+      if (autoRevalidateInFlightRef.current) return;
+      autoRevalidateInFlightRef.current = true;
+      try {
+        const res = await fetchWithSession(`${baseUrl}/edit/validate`, {
+          method: "POST",
+        });
+        if (!res.ok) return; // 429 / 5xx: stay stale, the user can re-run by hand
+        const fresh = await res.json();
+        if (fresh && typeof fresh === "object") adoptReport(fresh);
+      } catch (err) {
+        console.warn("Background re-validation failed:", err);
+      } finally {
+        autoRevalidateInFlightRef.current = false;
+      }
+    }, 25_000);
+    return () => clearTimeout(timer);
+    // dataVersion in deps: every further edit restarts the debounce window.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing, validationStale, dataVersion, baseUrl]);
 
   const handleUploadSuccess = async (data, validationReport, meta = {}) => {
     // The backend already cleaned up the edit session atomically
@@ -1158,6 +1203,7 @@ function GTFSApp() {
             selectedMainTab={selectedMainTab}
             setSelectedMainTab={setSelectedMainTab}
             validationReport={validationReport}
+            validationStale={validationStale}
             onShowValidationReport={() => setShowValidationReport(true)}
           />
           {dataLoading ? (
@@ -1237,7 +1283,7 @@ function GTFSApp() {
               report={validationReport}
               onReupload={handleReupload}
               onBack={() => setShowValidationReport(false)}
-              onReportRefreshed={setValidationReport}
+              onReportRefreshed={adoptReport}
               baselineCounts={validationBaseline}
             />
           ) : !agencies.length ? (

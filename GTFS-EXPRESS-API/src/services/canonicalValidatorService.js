@@ -533,7 +533,140 @@ const validateWithCanonical = async (inputPath, options = {}) => {
   const reportJson = JSON.parse(await fsp.readFile(reportPath, "utf8"));
   // Best-effort cleanup; not awaited to keep latency low on success.
   fsp.rm(outDir, { recursive: true, force: true }).catch(() => {});
-  return parseReport(reportJson);
+  const report = parseReport(reportJson);
+  // Field-level notices (invalid_color, invalid_url, missing_required_field…)
+  // only carry filename + csvRowNumber: resolve the row's primary key from
+  // the validated CSV so the UI can open the record. Directory inputs only
+  // (the dump directories every call site uses); a zip is left as is.
+  await enrichWithRowIds(report, inputPath);
+  return report;
+};
+
+// ── csvRowNumber → primary key resolution ────────────────────────────────
+// MobilityData numbers rows with the header as row 1, so data row N is
+// physical line N of the file (embedded newlines inside quoted fields are
+// rare in GTFS and simply make that one lookup miss). Files are streamed
+// line by line and only the requested rows are parsed.
+const PK_COLUMNS = {
+  "agency.txt": ["agency_id"],
+  "stops.txt": ["stop_id"],
+  "routes.txt": ["route_id"],
+  "trips.txt": ["trip_id"],
+  "stop_times.txt": ["trip_id", "stop_sequence"],
+  "calendar.txt": ["service_id"],
+  "calendar_dates.txt": ["service_id", "date"],
+  "shapes.txt": ["shape_id"],
+  "frequencies.txt": ["trip_id", "start_time"],
+  "pathways.txt": ["pathway_id"],
+  "levels.txt": ["level_id"],
+  "fare_attributes.txt": ["fare_id"],
+  "attributions.txt": ["attribution_id"],
+  "areas.txt": ["area_id"],
+  "networks.txt": ["network_id"],
+  "fare_media.txt": ["fare_media_id"],
+  "rider_categories.txt": ["rider_category_id"],
+  "booking_rules.txt": ["booking_rule_id"],
+  "location_groups.txt": ["location_group_id"],
+};
+
+// Minimal RFC 4180 line parser (quotes, doubled quotes, commas in quotes).
+const parseCsvLine = (line) => {
+  const out = [];
+  let cur = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (line[i + 1] === '"') {
+          cur += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        cur += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ",") {
+      out.push(cur);
+      cur = "";
+    } else {
+      cur += ch;
+    }
+  }
+  out.push(cur);
+  return out.map((v) => v.replace(/\r$/, "").trim());
+};
+
+// Resolve { rowNumber → id } for the requested rows of one CSV file.
+const lookupRowIds = (filePath, pkCols, wanted) =>
+  new Promise((resolve) => {
+    const found = new Map();
+    let remaining = wanted.size;
+    let lineNo = 0;
+    let header = null;
+    let pkIdx = null;
+    const rl = require("readline").createInterface({
+      input: fs.createReadStream(filePath),
+      crlfDelay: Infinity,
+    });
+    rl.on("line", (line) => {
+      lineNo++;
+      if (lineNo === 1) {
+        header = parseCsvLine(line.replace(/^﻿/, ""));
+        pkIdx = pkCols.map((c) => header.indexOf(c));
+        if (pkIdx.some((i) => i < 0)) {
+          rl.close();
+        }
+        return;
+      }
+      if (!wanted.has(lineNo)) return;
+      const cells = parseCsvLine(line);
+      const parts = pkIdx.map((i) => cells[i] ?? "");
+      if (parts.every((p) => p !== "")) found.set(lineNo, parts.join(":"));
+      remaining--;
+      if (remaining <= 0) rl.close();
+    });
+    rl.on("close", () => resolve(found));
+    rl.on("error", () => resolve(found));
+  });
+
+const enrichWithRowIds = async (report, inputPath) => {
+  try {
+    if (!inputPath || !fs.existsSync(inputPath)) return report;
+    if (!fs.statSync(inputPath).isDirectory()) return report;
+    for (const [file, findings] of Object.entries(report.errors || {})) {
+      const pkCols = PK_COLUMNS[file];
+      if (!pkCols || !Array.isArray(findings)) continue;
+      const fileType = FILE_ENTITY_TYPES[file];
+      // Rows to resolve: no id yet, or a less specific id than the file's own
+      // key (e.g. a stop_times.txt notice that only named the trip).
+      const wanted = new Set();
+      for (const f of findings) {
+        if (f.aggregate || !Number.isInteger(f.lineNumber) || f.lineNumber < 2) continue;
+        if (f.entityId && f.entityType === fileType) continue;
+        wanted.add(f.lineNumber);
+      }
+      if (wanted.size === 0) continue;
+      const filePath = path.join(inputPath, file);
+      if (!fs.existsSync(filePath)) continue;
+      const ids = await lookupRowIds(filePath, pkCols, wanted);
+      if (ids.size === 0) continue;
+      for (const f of findings) {
+        const id = ids.get(f.lineNumber);
+        if (!id) continue;
+        if (f.entityId && f.entityType === fileType) continue;
+        f.entityType = fileType;
+        f.entityId = id;
+        f.context = { entityId: id, ...(f.context || {}) };
+      }
+    }
+  } catch (err) {
+    console.warn("[canonicalValidator] row-id enrichment skipped:", err.message);
+  }
+  return report;
 };
 
 module.exports = {
@@ -541,6 +674,7 @@ module.exports = {
   validateWithCanonical,
   parseReport,
   deriveEntity,
+  enrichWithRowIds,
   applyImportAdjustments,
   assertReadyForProduction,
 };

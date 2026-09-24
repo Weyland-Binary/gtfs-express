@@ -69,6 +69,18 @@ export function EditModeProvider({ children }) {
   // changes?" dialog and the browser leave-page prompt fire forever after
   // a successful save.
   const [unsavedChanges, setUnsavedChanges] = useState(0);
+  // Entities modified since the last validation report, keyed
+  // "type:id" (e.g. "stop:S12", "stop_time:T1:4"). The validation page dims
+  // their findings ("probably fixed") and GTFSApp schedules a background
+  // re-validation. Cleared by clearTouchedEntities() when a fresh report
+  // arrives. Undo / redo / jump touch "history:*" (we don't know what they
+  // reverted) which still marks the report as stale.
+  const [touchedEntities, setTouchedEntities] = useState({});
+  const markTouched = useCallback((entity, entityId) => {
+    const key = `${entity || "unknown"}:${entityId ?? "*"}`;
+    setTouchedEntities((prev) => (prev[key] ? prev : { ...prev, [key]: Date.now() }));
+  }, []);
+  const clearTouchedEntities = useCallback(() => setTouchedEntities({}), []);
   const [dataVersion, setDataVersion] = useState(0);
   const [stopOverrides, setStopOverrides] = useState({});
   const [error, setError] = useState(null);
@@ -213,6 +225,7 @@ export function EditModeProvider({ children }) {
     setPendingEdits(0);
     setUndoneEdits(0);
     setUnsavedChanges(0);
+    setTouchedEntities({});
     setStopOverrides({});
     setProjectMeta(null);
     setLastAutoSaveAt(null);
@@ -332,6 +345,7 @@ export function EditModeProvider({ children }) {
       setPendingEdits((n) => Math.max(0, n - 1));
       setUndoneEdits((n) => n + 1);
       setUnsavedChanges((n) => n + 1);
+      markTouched("history", "*");
       setDataVersion((v) => v + 1);
       // Sprint 9 — undo invalidates the prior incremental-validation result
       // (it pertained to a now-reverted state). Wipe it so badges/sidebars
@@ -374,7 +388,7 @@ export function EditModeProvider({ children }) {
     } finally {
       setUndoing(false);
     }
-  }, [showToast, undoing, scheduleCountsRefresh, t]);
+  }, [showToast, undoing, scheduleCountsRefresh, t, markTouched]);
 
   const redoLast = useCallback(async () => {
     if (redoing) return false;
@@ -393,6 +407,7 @@ export function EditModeProvider({ children }) {
       setPendingEdits((n) => n + 1);
       setUndoneEdits((n) => Math.max(0, n - 1));
       setUnsavedChanges((n) => n + 1);
+      markTouched("history", "*");
       setDataVersion((v) => v + 1);
       // Mirror the undo path: drop stale per-edit validation badge.
       setLastValidationResult(null);
@@ -410,7 +425,7 @@ export function EditModeProvider({ children }) {
     } finally {
       setRedoing(false);
     }
-  }, [showToast, redoing, scheduleCountsRefresh, t]);
+  }, [showToast, redoing, scheduleCountsRefresh, t, markTouched]);
 
   const jumpToHistory = useCallback(
     async (targetId) => {
@@ -430,6 +445,7 @@ export function EditModeProvider({ children }) {
         setPendingEdits(body.pending_edits ?? 0);
         setUndoneEdits(body.undone_edits ?? 0);
         setUnsavedChanges((n) => n + 1);
+        markTouched("history", "*");
         setDataVersion((v) => v + 1);
         setStopOverrides({});
         // History jump invalidates any per-edit validation badge.
@@ -444,7 +460,7 @@ export function EditModeProvider({ children }) {
         return false;
       }
     },
-    [showToast, scheduleCountsRefresh, t],
+    [showToast, scheduleCountsRefresh, t, markTouched],
   );
 
   // NeTEx France export — same download dance as exportGTFS against the
@@ -523,6 +539,7 @@ export function EditModeProvider({ children }) {
       setDataVersion((v) => v + 1);
       // Bump auto-save counter (useAutoSaveProject effect polls this ref).
       editsSinceSnapshotRef.current += 1;
+      if (opts.entity) markTouched(opts.entity, opts.entityId);
 
       // Sprint 9 — surface the per-edit `validation` block returned by every
       // mutation endpoint. Three outcomes:
@@ -570,7 +587,7 @@ export function EditModeProvider({ children }) {
       // just recorded (debounced — see scheduleCountsRefresh).
       scheduleCountsRefresh();
     },
-    [showToast, t, scheduleCountsRefresh, undoLast],
+    [showToast, t, scheduleCountsRefresh, undoLast, markTouched],
   );
 
   // Public clearer (used by undo/redo/jump and dialog-close handlers that
@@ -812,6 +829,8 @@ export function EditModeProvider({ children }) {
         pendingEdits,
         undoneEdits,
         unsavedChanges,
+        touchedEntities,
+        clearTouchedEntities,
         dataVersion,
         stopOverrides,
         undoing,

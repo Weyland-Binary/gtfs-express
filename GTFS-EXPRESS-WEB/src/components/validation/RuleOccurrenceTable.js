@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useCallback } from "react";
+import React, { useMemo, useCallback } from "react";
 import { DataTable } from "primereact/datatable";
 import { Column } from "primereact/column";
 import {
@@ -9,9 +9,6 @@ import {
   IconButton,
   useTheme,
   alpha,
-  Snackbar,
-  Alert,
-  Button,
   CircularProgress,
 } from "@mui/material";
 import ErrorOutlineIcon from "@mui/icons-material/ErrorOutline";
@@ -21,12 +18,7 @@ import AutoFixHighIcon from "@mui/icons-material/AutoFixHigh";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { useDetailPanel } from "../../contexts/DetailPanelContext";
 import { useEditMode } from "../../contexts/EditModeContext";
-import { fetchWithSession } from "../../utils/sessionManager";
-import { getFixMetaForRule } from "../../utils/ruleFieldMapping";
-import API_BASE_URL from "../../config";
-import EditStopDialog from "../edit/EditStopDialog";
-import EditRouteDialog from "../edit/EditRouteDialog";
-import EditTripDialog from "../edit/EditTripDialog";
+import useFixDialog, { resolveFixMeta as resolveFixMetaFor } from "./useFixDialog";
 
 const SEVERITY_ICONS = {
   error: ErrorOutlineIcon,
@@ -35,13 +27,6 @@ const SEVERITY_ICONS = {
 };
 
 const MONOSPACE = '"JetBrains Mono", "Fira Code", monospace';
-
-// Map entity type to the GET detail endpoint segment
-const DETAIL_ENDPOINT = {
-  stop: "stop_detail",
-  route: "route_detail",
-  trip: "trip_detail",
-};
 
 /**
  * Dense PrimeReact DataTable for the occurrences of one canonical rule.
@@ -61,15 +46,10 @@ function RuleOccurrenceTable({ occurrences, ruleCode }) {
   const isDark = theme.palette.mode === "dark";
   const { t } = useLanguage();
   const { openPanel } = useDetailPanel();
-  const { editing, enterEditMode } = useEditMode();
-
-  // Fix dialog state
-  const [fixDialog, setFixDialog] = useState(null); // { entityType, entity, highlightFields }
-  const [fixLoading, setFixLoading] = useState(null); // entityId being fetched
-  const [snackbar, setSnackbar] = useState(null); // { message, severity, action? }
-
-  const closeSnackbar = useCallback(() => setSnackbar(null), []);
-  const closeFixDialog = useCallback(() => setFixDialog(null), []);
+  const { editing, touchedEntities } = useEditMode();
+  // Shared fix flow (fetch the entity, open the right dialog with the
+  // offending fields highlighted; offers to enter edit mode first).
+  const { openFix, loadingId, dialogs } = useFixDialog();
 
   // Aggregate tail markers ("N additional occurrences not sampled…") are
   // not real rows — surface them as a footer note instead of table rows.
@@ -99,25 +79,8 @@ function RuleOccurrenceTable({ occurrences, ruleCode }) {
     return keys;
   }, [rows]);
 
-  // Resolve effective fix metadata for a row: rule-level mapping may have
-  // entityType=null (generic rule); fall back to the row's own entityType.
   const resolveFixMeta = useCallback(
-    (row) => {
-      const mapping = getFixMetaForRule(row.ruleCode || ruleCode, row);
-      if (!mapping) return null;
-      if (!row.entityId) return null;
-      const effectiveEntityType = mapping.entityType || row.entityType || null;
-      if (!effectiveEntityType || !DETAIL_ENDPOINT[effectiveEntityType]) {
-        return null;
-      }
-      const effectiveFields =
-        mapping.fields.length > 0
-          ? mapping.fields
-          : row.field
-            ? [row.field]
-            : [];
-      return { entityType: effectiveEntityType, fields: effectiveFields };
-    },
+    (row) => resolveFixMetaFor({ ...row, ruleCode: row.ruleCode || ruleCode }),
     [ruleCode],
   );
 
@@ -127,71 +90,22 @@ function RuleOccurrenceTable({ occurrences, ruleCode }) {
   );
 
   const handleFixClick = useCallback(
-    async (row) => {
-      const meta = resolveFixMeta(row);
-      if (!meta) return;
+    (row) => openFix({ ...row, ruleCode: row.ruleCode || ruleCode }),
+    [openFix, ruleCode],
+  );
 
-      if (!editing) {
-        setSnackbar({
-          message: t("validation.fix.needsEditMode"),
-          severity: "warning",
-          action: {
-            label: t("validation.fix.enterEditMode"),
-            onClick: async () => {
-              closeSnackbar();
-              const ok = await enterEditMode();
-              if (ok) handleFixClick(row);
-            },
-          },
-        });
-        return;
-      }
-
-      const endpoint = DETAIL_ENDPOINT[meta.entityType];
-      setFixLoading(row.entityId);
-      try {
-        const res = await fetchWithSession(
-          `${API_BASE_URL}/${endpoint}/${encodeURIComponent(row.entityId)}`,
-        );
-        if (res.status === 404) {
-          setSnackbar({
-            message: t("validation.fix.entityNotFound", { id: row.entityId }),
-            severity: "error",
-          });
-          return;
-        }
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          setSnackbar({
-            message: t("validation.fix.fetchError", {
-              type: meta.entityType,
-              error: body.error || res.statusText,
-            }),
-            severity: "error",
-          });
-          return;
-        }
-        const data = await res.json();
-        const entity =
-          data[meta.entityType] || data.stop || data.route || data.trip || data;
-        setFixDialog({
-          entityType: meta.entityType,
-          entity,
-          highlightFields: meta.fields,
-        });
-      } catch (err) {
-        setSnackbar({
-          message: t("validation.fix.fetchError", {
-            type: meta.entityType,
-            error: err.message,
-          }),
-          severity: "error",
-        });
-      } finally {
-        setFixLoading(null);
-      }
-    },
-    [editing, enterEditMode, resolveFixMeta, t, closeSnackbar],
+  // Rows whose entity was edited since this report was produced: the
+  // finding may already be fixed — shown dimmed with a "modified" hint
+  // until the next validation run confirms.
+  const isTouched = useCallback(
+    (row) =>
+      Boolean(
+        row.entityType &&
+          row.entityId &&
+          touchedEntities &&
+          touchedEntities[`${row.entityType}:${row.entityId}`],
+      ),
+    [touchedEntities],
   );
 
   // ── Cell renderers ─────────────────────────────────────────────────────────
@@ -274,7 +188,7 @@ function RuleOccurrenceTable({ occurrences, ruleCode }) {
   const fixBody = (row) => {
     const meta = resolveFixMeta(row);
     if (!meta) return null;
-    const isLoading = fixLoading === row.entityId;
+    const isLoading = loadingId === String(row.entityId);
     return (
       <Tooltip title={t("validation.fix.tooltip")} arrow>
         <span>
@@ -338,6 +252,11 @@ function RuleOccurrenceTable({ occurrences, ruleCode }) {
             bgcolor: "transparent",
             transition: "background 0.1s",
           },
+          "& .p-datatable .p-datatable-tbody > tr.finding-touched > td": {
+            opacity: 0.55,
+            textDecoration: "line-through",
+            textDecorationColor: alpha(theme.palette.text.secondary, 0.5),
+          },
           "& .p-datatable .p-datatable-tbody > tr:hover": {
             bgcolor: isDark ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.015)",
           },
@@ -353,6 +272,7 @@ function RuleOccurrenceTable({ occurrences, ruleCode }) {
           value={rows}
           style={tableStyle}
           size="small"
+          rowClassName={(row) => (isTouched(row) ? "finding-touched" : "")}
           emptyMessage={
             <Box sx={{ px: 2, py: 1, color: "text.secondary", fontSize: "0.8rem" }}>
               {t("validation.occurrence.empty")}
@@ -411,61 +331,7 @@ function RuleOccurrenceTable({ occurrences, ruleCode }) {
         ))}
       </Box>
 
-      {/* Edit dialogs — only one opens at a time */}
-      {fixDialog?.entityType === "stop" && (
-        <EditStopDialog
-          open
-          stop={fixDialog.entity}
-          onClose={closeFixDialog}
-          mode="edit"
-          highlightFields={fixDialog.highlightFields}
-        />
-      )}
-      {fixDialog?.entityType === "route" && (
-        <EditRouteDialog
-          open
-          route={fixDialog.entity}
-          onClose={closeFixDialog}
-          mode="edit"
-          highlightFields={fixDialog.highlightFields}
-        />
-      )}
-      {fixDialog?.entityType === "trip" && (
-        <EditTripDialog
-          open
-          trip={fixDialog.entity}
-          onClose={closeFixDialog}
-          mode="edit"
-          highlightFields={fixDialog.highlightFields}
-        />
-      )}
-
-      {/* Feedback snackbar */}
-      <Snackbar
-        open={Boolean(snackbar)}
-        autoHideDuration={snackbar?.action ? null : 5000}
-        onClose={closeSnackbar}
-        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
-      >
-        {snackbar ? (
-          <Alert
-            severity={snackbar.severity || "info"}
-            onClose={closeSnackbar}
-            action={
-              snackbar.action ? (
-                <Button color="inherit" size="small" onClick={snackbar.action.onClick}>
-                  {snackbar.action.label}
-                </Button>
-              ) : undefined
-            }
-            sx={{ alignItems: "center" }}
-          >
-            {snackbar.message}
-          </Alert>
-        ) : (
-          <span />
-        )}
-      </Snackbar>
+      {dialogs}
     </>
   );
 }
