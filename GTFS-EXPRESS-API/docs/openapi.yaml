@@ -91,6 +91,8 @@ tags:
     description: "SQL console: read-only public surface plus the edit-mode mutation surface."
   - name: AI
     description: NL2SQL one-shot generation and multi-turn chat (Anthropic Claude, beta-gated, read-only).
+  - name: Network Studio
+    description: Build a GTFS from a Network Spec (stops, lines, services) — validation, geocoding, road routing, compilation.
   - name: Project
     description: ".gtfsproj disk persistence: save, open, metadata."
   - name: Export
@@ -802,6 +804,130 @@ paths:
       tags:
         - NL2SQL
       summary: Update the assistant's memory (addNotes, removeNoteIds, ignore, unignore, clear).
+      security:
+        - SessionId: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/network/validate:
+    post:
+      tags:
+        - Network Studio
+      summary: "Normalise and validate a Network Spec; returns issues, blockers and an estimate of the compiled feed."
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /gtfs/network/geocode:
+    post:
+      tags:
+        - Network Studio
+      summary: "Coordinate candidates for stop names or addresses (Photon-compatible geocoder)."
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /gtfs/network/estimate:
+    post:
+      tags:
+        - Network Studio
+      summary: "Route the lines of a spec along roads: geometry, distances and running times per direction."
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /gtfs/network/compile:
+    post:
+      tags:
+        - Network Studio
+      summary: "Compile a Network Spec into a new validated session (GTFS built server-side)."
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "201":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "402":
+          $ref: "#/components/responses/BadRequest"
+        "503":
+          $ref: "#/components/responses/BadRequest"
+  /gtfs/network/plan:
+    post:
+      tags:
+        - Network Studio
+      summary: "The planner (SSE): a brief → a Network Spec through tools (geocoding, validation, routing, questions). Gated like the chat."
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: text/event-stream
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/BadRequest"
+        "503":
+          $ref: "#/components/responses/BadRequest"
+  /gtfs/network/spec:
+    get:
+      tags:
+        - Network Studio
+      summary: The Network Spec a session was built from.
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags:
+        - Network Studio
+      summary: Store a Network Spec with the session.
       security:
         - SessionId: []
       requestBody:

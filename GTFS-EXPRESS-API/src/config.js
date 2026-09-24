@@ -129,6 +129,20 @@ module.exports = {
   // GTFS tables (stop_times ↔ trips ↔ calendar) and drafts fix SQL, so it
   // defaults to Sonnet (reliability at the conversion moment) while the
   // one-shot autocomplete endpoint stays on the cheaper NL2SQL_MODEL.
+  // 🗺️ Network Studio (create a network from scratch). Server-side road
+  // routing for shapes and running times (OSRM `route` API) and geocoding
+  // of stop names (Photon-compatible). Both are optional: without routing
+  // the compiler joins stops with straight lines; without a geocoder every
+  // stop needs coordinates in the spec.
+  NETWORK_ROUTING_ENABLED: process.env.NETWORK_ROUTING_ENABLED !== "false",
+  OSRM_URL: process.env.OSRM_URL || "https://router.project-osrm.org/route/v1/driving",
+  GEOCODER_URL: process.env.GEOCODER_URL || "https://photon.komoot.io/api/",
+  // Planner model: designing a network from a brief is the reasoning-heavy
+  // step, so it defaults to the strongest tier; falls back to the chat model.
+  NETWORK_PLANNER_MODEL: process.env.NETWORK_PLANNER_MODEL || "claude-opus-5-5",
+  // Free plan limits for network creation (paid plans lift them).
+  NETWORK_FREE_MAX_LINES: parseInt(process.env.NETWORK_FREE_MAX_LINES, 10) || 3,
+
   NL2SQL_CHAT_ENABLED: process.env.NL2SQL_CHAT_ENABLED === "true",
   NL2SQL_CHAT_MODEL: process.env.NL2SQL_CHAT_MODEL || "claude-sonnet-4-6",
   // 🆓 Anonymous free trial — the purchase gateway. Every session may send

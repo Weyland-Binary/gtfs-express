@@ -1548,4 +1548,101 @@ const loadSample = async (req, res) => {
   }
 };
 
-module.exports = { uploadGTFSFile, getUploadStats, loadSample };
+// ── Ingest a directory prepared by the server (Network Studio) ───────────────
+//
+// Same pipeline as loadSample, for CSV files the server wrote itself: parse
+// once, validate, migrate to SQLite, persist the session meta and the
+// validation report, log the upload. The caller created `uploadPath` and
+// owns its cleanup when this throws.
+const ingestPreparedDir = async ({ sessionId, uploadPath, source = "generated", sourceName = null, req = null }) => {
+  markUploadStarted(sessionId);
+  let committed = false;
+  try {
+    const preloaded = await loadData(uploadPath);
+    let validationReport = null;
+    try {
+      validationReport = await runValidation(uploadPath, { preloadedData: preloaded, strictMdCanonical: true });
+    } catch (vErr) {
+      console.warn(`ingestPreparedDir validation error for ${sessionId} (non-fatal):`, vErr.message);
+    }
+    let migrationMs = 0;
+    const migrate = getMigrateUploadToDb();
+    const result = await migrate(sessionId);
+    migrationMs = result.ms;
+    if (validationReport && result.importAdjustments) {
+      const { applyImportAdjustments } = require("./canonicalValidatorService");
+      applyImportAdjustments(validationReport, result.importAdjustments);
+    }
+    const agencies = preloaded.agencies || [];
+    const routes = preloaded.routes || [];
+    const stops = preloaded.stops || [];
+    const trips = preloaded.trips || [];
+    const agencyNames = agencies.map((a) => a.agency_name || a.agency_id || "unknown").filter(Boolean).join(", ");
+    const agencyIds = agencies.map((a) => a.agency_id || "").filter(Boolean).join(", ");
+    let sizeBytes = 0;
+    try {
+      for (const f of await fsp.readdir(uploadPath)) {
+        if (f.startsWith("_")) continue;
+        sizeBytes += (await fsp.stat(path.join(uploadPath, f))).size;
+      }
+    } catch {
+      /* best effort */
+    }
+    const sizeKb = parseFloat((sizeBytes / 1024).toFixed(1));
+    const hasShapes = fs.existsSync(path.join(uploadPath, "shapes.txt"));
+    await persistSessionMeta(uploadPath, {
+      session_id: sessionId,
+      created_at: new Date().toISOString(),
+      source,
+      source_name: sourceName,
+      size_kb: sizeKb,
+      agency: { names: agencyNames, ids: agencyIds, urls: null, count: agencies.length },
+      counts: { routes: routes.length, stops: stops.length, trips: trips.length, has_shapes: hasShapes },
+      validation: summarizeValidation(validationReport || { valid: true, errors: {}, counts: { errors: 0, warnings: 0, infos: 0 } }),
+      compliance: validationReport && validationReport.valid === false ? "non_compliant" : "compliant",
+    });
+    if (validationReport) saveValidationReport(sessionId, validationReport);
+    committed = true;
+    try {
+      await appendUploadStat({
+        date: new Date().toISOString(),
+        session: sessionId,
+        agency_names: agencyNames,
+        agency_ids: agencyIds,
+        agency_count: agencies.length,
+        routes_count: routes.length,
+        stops_count: stops.length,
+        trips_count: trips.length,
+        has_shapes: hasShapes,
+        size_kb: sizeKb,
+        is_sample: false,
+        source,
+      });
+      recordEvent("upload", {
+        ...(req ? extractReqMeta(req) : {}),
+        is_sample: false,
+        source,
+        size_kb: sizeKb,
+        agency_ids: agencyIds,
+        agency_names: agencyNames,
+        agency_count: agencies.length,
+        routes_count: routes.length,
+        stops_count: stops.length,
+        trips_count: trips.length,
+        has_shapes: hasShapes,
+      });
+    } catch (logErr) {
+      console.warn("Could not log generated-session stat:", logErr.message);
+    }
+    return {
+      validationReport: validationReport || { valid: true, errors: {} },
+      migration_ms: migrationMs,
+      counts: { agencies: agencies.length, routes: routes.length, stops: stops.length, trips: trips.length, stop_times: (preloaded.stopTimes || []).length },
+    };
+  } finally {
+    if (!committed) clearSessionCache(sessionId);
+    markUploadFinished(sessionId);
+  }
+};
+
+module.exports = { uploadGTFSFile, getUploadStats, loadSample, ingestPreparedDir };

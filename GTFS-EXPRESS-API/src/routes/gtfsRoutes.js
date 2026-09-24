@@ -331,6 +331,19 @@ router.post("/diff", diffFeeds);
 const { journey } = require("../services/journeyService");
 router.post("/journey", journey);
 
+// Network Studio: build a GTFS from a Network Spec (no session needed for
+// validate/geocode/estimate/compile; the spec endpoints act on a session).
+const networkController = require("../services/network/networkController");
+router.post("/network/validate", networkController.validateNetworkSpec);
+router.post("/network/geocode", networkController.geocodeStops);
+router.post("/network/estimate", networkController.estimateNetwork);
+router.post("/network/compile", networkController.compileNetwork);
+router.get("/network/spec", networkController.getNetworkSpec);
+router.put("/network/spec", networkController.putNetworkSpec);
+// The planner: brief → Network Spec, grounded by tools (SSE, gated like the chat).
+const { planNetworkTurn } = require("../services/network/networkPlanController");
+router.post("/network/plan", chatAccessGate, planNetworkTurn);
+
 // One-shot AI summaries (release notes from the edit log, diff explanation):
 // gated like the chat (beta code or free trial).
 const { summarize } = require("../services/aiSummaryService");
