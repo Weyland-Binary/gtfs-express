@@ -420,10 +420,99 @@ const buildUpdateUndo = (table, pk, pkValue, oldRow, changedCols) => {
   ];
 };
 
+// ── FK cascade capture for dialog deletes ────────────────────────────────────
+//
+// SQLite `ON DELETE CASCADE` / `SET NULL` silently touches child rows
+// (transfers, pathways, stop_areas, attributions, fare_rules, …) when a
+// stop / trip / route / agency is deleted. The dedicated delete handlers
+// only re-insert the parent row on undo, so those children were lost. This
+// helper reuses the SQL console's FK-graph walker to capture every cascaded
+// row BEFORE the DELETE runs and to build the exact restore ops:
+//   - CASCADE children      → INSERT (parents before children)
+//   - SET NULL / SET DEFAULT → UPDATE … SET <fk> = <old value> WHERE rowid = ?
+//
+// Returns `{ undoOps, tables, rowCount, byTable }`. The parent INSERT itself is
+// the caller's responsibility (it goes first in the undo list).
+
+const _tableColumnsCache = new WeakMap();
+const tableColumns = (db, table) => {
+  let perDb = _tableColumnsCache.get(db);
+  if (!perDb) {
+    perDb = new Map();
+    _tableColumnsCache.set(db, perDb);
+  }
+  if (!perDb.has(table)) {
+    perDb.set(
+      table,
+      db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name),
+    );
+  }
+  return perDb.get(table);
+};
+
+const buildCascadeUndoOps = (db, table, pk, pkValues) => {
+  const ids = (Array.isArray(pkValues) ? pkValues : [pkValues]).filter(
+    (v) => v !== null && v !== undefined,
+  );
+  const empty = { undoOps: [], tables: [], rowCount: 0, byTable: {} };
+  if (ids.length === 0) return empty;
+
+  // Lazy require: sqlConsoleService requires _editCore at module level.
+  const { collectCascadeDescendants } = require("./sqlConsoleService");
+
+  const ph = ids.map(() => "?").join(",");
+  const parentRows = db
+    .prepare(`SELECT rowid, * FROM ${table} WHERE ${pk} IN (${ph})`)
+    .all(ids);
+  if (parentRows.length === 0) return empty;
+
+  const captures = collectCascadeDescendants(db, table, parentRows);
+  if (captures.length === 0) return empty;
+
+  // CASCADE rows: the walker returns post-order (deepest first); reverse so
+  // parents are re-inserted before their children. Only declared columns
+  // are written back (the synthetic `rowid` is dropped unless the table
+  // declares a real `rowid` column, e.g. attributions / fare_rules).
+  const insertOps = captures
+    .filter((c) => c.mode === "CASCADE")
+    .reverse()
+    .flatMap((c) => {
+      const cols = tableColumns(db, c.table);
+      const colPh = cols.map(() => "?").join(", ");
+      return c.rows.map((r) => ({
+        sql: `INSERT INTO ${c.table} (${cols.join(", ")}) VALUES (${colPh})`,
+        params: cols.map((col) => (r[col] === undefined ? null : r[col])),
+      }));
+    });
+  const setNullOps = captures
+    .filter((c) => c.mode !== "CASCADE")
+    .flatMap((c) =>
+      c.rows.map((r) => ({
+        sql: `UPDATE ${c.table} SET ${c.fkCol} = ? WHERE rowid = ?`,
+        params: [r[c.fkCol], r.rowid],
+      })),
+    );
+
+  const byTable = {};
+  for (const c of captures) {
+    byTable[c.table] = (byTable[c.table] || 0) + c.rows.length;
+  }
+  return {
+    undoOps: [...insertOps, ...setNullOps],
+    tables: Object.keys(byTable),
+    rowCount: Object.values(byTable).reduce((a, b) => a + b, 0),
+    byTable,
+  };
+};
+
 // ── Cache synchronization ─────────────────────────────────────────────────────
 
 const syncCacheEntry = (sessionId, db, entity, pkValue) => {
-  const { table, pk, cacheKey } = ENTITY_CONFIG[entity];
+  const config = ENTITY_CONFIG[entity];
+  // Unknown entity (e.g. "mixed" quick-fix batches): nothing to sync here —
+  // callers that carry `type:id` lists dispatch per pair instead.
+  if (!config) return;
+  const { table, pk, cacheKey } = config;
   const directory = path.join(GTFS_UPLOAD_DIR, sessionId);
   const data = cache.get(directory);
   if (!data) return;
@@ -1050,8 +1139,57 @@ const makeUpdateHandler = (entity, validator) => async (req, res) => {
 
 // ── Re-sync helper (used by undo/redo/jump) ───────────────────────────────────
 
+// Parse an `_edit_log.entity_id` made of `type:id` pairs ("agency:A1,stop:S2")
+// as written by quick-fix batches. Ids never contain the entity type prefix,
+// so we split on the FIRST colon only; a bare id falls back to `defaultType`.
+const parseTypedIdList = (entityId, defaultType) =>
+  String(entityId || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((token) => {
+      const sep = token.indexOf(":");
+      if (sep > 0 && ENTITY_CONFIG[token.slice(0, sep)]) {
+        return { type: token.slice(0, sep), id: token.slice(sep + 1) };
+      }
+      return { type: defaultType, id: token };
+    });
+
+// Tables touched by the stored ops of a log entry (INSERT INTO x / UPDATE x /
+// DELETE FROM x). Used to refresh the cache slices of FK-cascaded child
+// tables (transfers, pathways, attributions, …) after undo/redo of a delete.
+const tablesTouchedByOps = (opsJson) => {
+  let ops;
+  try {
+    ops = JSON.parse(opsJson);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(ops)) return [];
+  const tables = new Set();
+  for (const op of ops) {
+    if (!op || typeof op.sql !== "string") continue;
+    const m = /^\s*(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|DELETE\s+FROM)\s+([A-Za-z_][\w]*)/i.exec(op.sql);
+    if (m) tables.add(m[1]);
+  }
+  return [...tables];
+};
+
 const resyncCacheForLogEntry = (sessionId, db, entry) => {
   if (!entry || !entry.entity || !entry.entity_id) return;
+
+  if (
+    entry.entity === "mixed" ||
+    entry.entity === "quickfix" ||
+    entry.action === "quick_fix"
+  ) {
+    // Quick-fix batches: entity_id is a `type:id` list, possibly spanning
+    // several entity types ("mixed"). Sync each pair individually.
+    for (const { type, id } of parseTypedIdList(entry.entity_id, entry.entity)) {
+      syncCacheEntry(sessionId, db, type, id);
+    }
+    return;
+  }
 
   if (entry.entity === "route" && entry.action === "bulk_delete") {
     for (const routeId of entry.entity_id.split(",")) {
@@ -1064,7 +1202,10 @@ const resyncCacheForLogEntry = (sessionId, db, entry) => {
       data.calendar = db.prepare("SELECT * FROM calendar").all().map(sqliteRowToCSVRow);
       data.calendarDates = db.prepare("SELECT * FROM calendar_dates").all().map(sqliteRowToCSVRow);
     }
-  } else if (entry.entity === "trip" && entry.action === "bulk_delete") {
+  } else if (
+    entry.entity === "trip" &&
+    (entry.action === "bulk_delete" || entry.action === "shift_times")
+  ) {
     const tripIds = entry.entity_id.split(",").map((t) => t.trim());
     for (const tid of tripIds) {
       syncCacheEntry(sessionId, db, "trip", tid);
@@ -1140,12 +1281,16 @@ const resyncCacheForLogEntry = (sessionId, db, entry) => {
         .map(sqliteRowToCSVRow);
       d.shapes.push(...dbRows);
     }
-    if (d && Array.isArray(d.trips) && entry.redo_ops) {
+    if (d && entry.redo_ops) {
       let ops;
       try { ops = JSON.parse(entry.redo_ops); } catch { ops = []; }
       if (Array.isArray(ops)) {
+        // stop_times.shape_dist_traveled rewritten alongside the shape edit:
+        // refresh the stop_times cache of every trip touched (once per trip).
+        const stopTimeTrips = new Set();
         for (const op of ops) {
-          if (typeof op.sql === "string" && op.sql.includes("UPDATE trips SET shape_id")) {
+          if (typeof op.sql !== "string") continue;
+          if (Array.isArray(d.trips) && op.sql.includes("UPDATE trips SET shape_id")) {
             const tid = op.params?.[1];
             if (tid) {
               const cached = d.trips.find((t) => t.trip_id === tid);
@@ -1154,8 +1299,12 @@ const resyncCacheForLogEntry = (sessionId, db, entry) => {
                 cached.shape_id = dbRow.shape_id == null ? "" : String(dbRow.shape_id);
               }
             }
+          } else if (op.sql.startsWith("UPDATE stop_times SET shape_dist_traveled")) {
+            const tid = op.params?.[1];
+            if (tid) stopTimeTrips.add(tid);
           }
         }
+        for (const tid of stopTimeTrips) syncCacheStopTimes(sessionId, db, tid);
       }
     }
   } else if (entry.entity === "transfer") {
@@ -1185,6 +1334,20 @@ const resyncCacheForLogEntry = (sessionId, db, entry) => {
     resyncCacheForTables(sessionId, db, tables);
   } else {
     syncCacheEntry(sessionId, db, entry.entity, entry.entity_id);
+  }
+
+  // Dialog deletes capture FK-cascaded child rows (transfers, pathways,
+  // attributions, stop_areas, …) in their undo ops. After an undo/redo the
+  // cache slices of those child tables must follow the DB as well.
+  if (entry.action === "delete" && ENTITY_CONFIG[entry.entity] && entry.undo_ops) {
+    const mainTable = ENTITY_CONFIG[entry.entity].table;
+    const childTables = tablesTouchedByOps(entry.undo_ops).filter(
+      (t) => t !== mainTable,
+    );
+    if (childTables.length > 0) {
+      const { resyncCacheForTables } = require("./sqlConsoleService");
+      resyncCacheForTables(sessionId, db, childTables);
+    }
   }
 };
 
@@ -1216,6 +1379,7 @@ module.exports = {
   // Edit log
   logEdit,
   buildUpdateUndo,
+  buildCascadeUndoOps,
   // Cache sync
   syncCacheEntry,
   syncCacheAfterRouteCascade,

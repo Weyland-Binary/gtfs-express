@@ -6,6 +6,7 @@
  * with the same atomicity, undo/redo and cache-sync guarantees.
  */
 
+const crypto = require("crypto");
 const {
   requireEditMode,
   logEdit,
@@ -15,10 +16,47 @@ const {
   validateStopPatch,
   makeUpdateHandler,
   respondWithValidation,
+  buildCascadeUndoOps,
   EDITABLE_FIELDS,
   STOP_NAME_REQUIRED_TYPES,
   resolveLocationType,
 } = require("./_editCore");
+
+// ── Id generation ─────────────────────────────────────────────────────────────
+//
+// POST /edit/stops without a stop_id: when the feed already uses numeric ids
+// the new id is `S` + (max numeric id + 1) zero-padded to the same width
+// (e.g. 0042 → S0043); otherwise a short random suffix (`stop_1a2b3c`).
+// Always checked against existing ids so the INSERT cannot collide.
+const generateStopId = (db) => {
+  const ids = db
+    .prepare("SELECT stop_id FROM stops")
+    .all()
+    .map((r) => String(r.stop_id));
+  const existing = new Set(ids);
+  const numeric = ids.filter((id) => /^\d{1,15}$/.test(id));
+  if (numeric.length > 0) {
+    let max = 0;
+    let width = 1;
+    for (const id of numeric) {
+      const n = Number(id);
+      if (n > max) max = n;
+      if (id.length > width) width = id.length;
+    }
+    let next = max + 1;
+    let candidate = `S${String(next).padStart(width, "0")}`;
+    while (existing.has(candidate)) {
+      next += 1;
+      candidate = `S${String(next).padStart(width, "0")}`;
+    }
+    return candidate;
+  }
+  let candidate;
+  do {
+    candidate = `stop_${crypto.randomBytes(3).toString("hex")}`;
+  } while (existing.has(candidate));
+  return candidate;
+};
 
 // ── Handler : CREATE stop ─────────────────────────────────────────────────────
 
@@ -29,6 +67,11 @@ const createStop = async (req, res) => {
     const { sessionId, db } = ctx;
     const body = req.body || {};
 
+    let idGenerated = false;
+    if (body.stop_id === undefined || body.stop_id === null || body.stop_id === "") {
+      body.stop_id = generateStopId(db);
+      idGenerated = true;
+    }
     if (!body.stop_id || typeof body.stop_id !== "string")
       return res.status(400).json({ error: "stop_id is required." });
 
@@ -120,7 +163,14 @@ const createStop = async (req, res) => {
     const created = db
       .prepare("SELECT * FROM stops WHERE stop_id = ?")
       .get(body.stop_id);
-    await respondWithValidation(res, sessionId, "stop", body.stop_id, { stop: created }, { status: 201 });
+    await respondWithValidation(
+      res,
+      sessionId,
+      "stop",
+      body.stop_id,
+      { stop: created, id_generated: idGenerated },
+      { status: 201 },
+    );
   } catch (err) {
     console.error("createStop error:", err);
     res.status(500).json({ error: err.message });
@@ -164,6 +214,10 @@ const deleteStop = async (req, res) => {
       });
     }
 
+    // FK cascade capture: transfers, pathways, stop_areas, location_group_stops,
+    // fare_leg_join_rules (SET NULL), … must be restorable on undo.
+    const cascade = buildCascadeUndoOps(db, "stops", "stop_id", stop_id);
+
     const cols = Object.keys(stop);
     const placeholders = cols.map(() => "?").join(", ");
     const undoOps = [
@@ -171,18 +225,25 @@ const deleteStop = async (req, res) => {
         sql: `INSERT INTO stops (${cols.join(", ")}) VALUES (${placeholders})`,
         params: cols.map((c) => stop[c]),
       },
+      ...cascade.undoOps,
     ];
 
     const redoOps = [
       { sql: "DELETE FROM stops WHERE stop_id = ?", params: [stop_id] },
     ];
 
+    const cascadeSummary = Object.entries(cascade.byTable)
+      .map(([t, n]) => `${n} ${t}`)
+      .join(", ");
+
     const tx = db.transaction(() => {
       logEdit(db, {
         entity: "stop",
         entityId: stop_id,
         action: "delete",
-        description: `Deleted stop ${stop_id}`,
+        description:
+          `Deleted stop ${stop_id}` +
+          (cascadeSummary ? `. Cascade: ${cascadeSummary}` : ""),
         undoOps,
         redoOps,
       });
@@ -191,7 +252,14 @@ const deleteStop = async (req, res) => {
     tx.immediate();
 
     syncCacheEntry(sessionId, db, "stop", stop_id);
-    await respondWithValidation(res, sessionId, "stop", stop_id, { deleted: stop_id });
+    if (cascade.tables.length > 0) {
+      const { resyncCacheForTables } = require("./sqlConsoleService");
+      resyncCacheForTables(sessionId, db, cascade.tables);
+    }
+    await respondWithValidation(res, sessionId, "stop", stop_id, {
+      deleted: stop_id,
+      cascade: cascade.byTable,
+    });
   } catch (err) {
     console.error("deleteStop error:", err);
     res.status(500).json({ error: err.message });

@@ -112,6 +112,21 @@ const undoLastEdit = async (req, res) => {
     if (!ctx) return;
     const { sessionId, db } = ctx;
 
+    // Optional optimistic guard: the client says WHICH entry it expects to
+    // undo. If another edit landed in between (other tab, AI repair flow…)
+    // the newest active entry differs and we refuse with 409 instead of
+    // silently undoing someone else's change.
+    const rawExpected = (req.body || {}).expectedEntryId;
+    let expectedEntryId = null;
+    if (rawExpected !== undefined && rawExpected !== null && rawExpected !== "") {
+      expectedEntryId = Number(rawExpected);
+      if (!Number.isInteger(expectedEntryId) || expectedEntryId < 1) {
+        return res
+          .status(400)
+          .json({ error: "expectedEntryId must be a positive integer." });
+      }
+    }
+
     // Defer FK checks BEFORE the transaction so cascade-restore INSERTs
     // can happen in any order (e.g. route → trips → stop_times).
     // This pragma is per-transaction and resets after COMMIT/ROLLBACK.
@@ -126,6 +141,10 @@ const undoLastEdit = async (req, res) => {
         )
         .get();
       if (!last) return null; // nothing to undo
+
+      if (expectedEntryId !== null && last.id !== expectedEntryId) {
+        return { notLatest: true, latestId: last.id };
+      }
 
       let ops;
       try {
@@ -177,6 +196,14 @@ const undoLastEdit = async (req, res) => {
 
     if (!last) {
       return res.status(404).json({ error: "Nothing to undo." });
+    }
+    if (last.notLatest) {
+      return res.status(409).json({
+        error: "UNDO_TARGET_NOT_LATEST",
+        code: "UNDO_TARGET_NOT_LATEST",
+        latestId: last.latestId,
+        expectedEntryId,
+      });
     }
     if (last.corrupt) {
       return res

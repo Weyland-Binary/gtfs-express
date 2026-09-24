@@ -89,6 +89,65 @@ const pointToSegmentDistance = (pLat, pLon, aLat, aLon, bLat, bLon) => {
 };
 
 /**
+ * Project point P onto segment AB in a local equirectangular frame.
+ * Returns `{ t, distance }` where `t` ∈ [0, 1] is the clamped position of the
+ * projection along AB (0 = A, 1 = B) and `distance` is the distance in meters
+ * from P to that projected point.
+ */
+const projectPointOntoSegment = (pLat, pLon, aLat, aLon, bLat, bLon) => {
+  const toRad = (deg) => (deg * Math.PI) / 180;
+  const midLat = toRad((aLat + bLat) / 2);
+  const cosLat = Math.cos(midLat);
+  const bx = toRad(bLon - aLon) * cosLat * EARTH_RADIUS_M;
+  const by = toRad(bLat - aLat) * EARTH_RADIUS_M;
+  const px = toRad(pLon - aLon) * cosLat * EARTH_RADIUS_M;
+  const py = toRad(pLat - aLat) * EARTH_RADIUS_M;
+  const lenSq = bx * bx + by * by;
+  if (lenSq === 0) {
+    return { t: 0, distance: haversineMeters(pLat, pLon, aLat, aLon) };
+  }
+  const t = Math.max(0, Math.min(1, (px * bx + py * by) / lenSq));
+  const dx = px - t * bx;
+  const dy = py - t * by;
+  return { t, distance: Math.sqrt(dx * dx + dy * dy) };
+};
+
+/**
+ * Project a point onto a polyline and return the cumulative distance along
+ * the polyline at the nearest point (interpolated inside the nearest segment).
+ *
+ * `distances` must be aligned with `points` (same length): the cumulative
+ * distance of each vertex, in whatever unit the caller uses (metres for the
+ * values produced by `computeShapeDistances`). The returned value is in that
+ * same unit. Returns null when the polyline has fewer than 2 points.
+ *
+ * @param {number} pLat
+ * @param {number} pLon
+ * @param {{ lat: number, lon: number }[]} points
+ * @param {number[]} distances
+ * @returns {number|null}
+ */
+const projectPointOntoPolyline = (pLat, pLon, points, distances) => {
+  if (!points || points.length < 2 || !distances || distances.length !== points.length) {
+    return null;
+  }
+  let best = null;
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i];
+    const b = points[i + 1];
+    const { t, distance } = projectPointOntoSegment(
+      pLat, pLon, a.lat, a.lon, b.lat, b.lon,
+    );
+    if (best === null || distance < best.distance) {
+      const d0 = Number(distances[i]);
+      const d1 = Number(distances[i + 1]);
+      best = { distance, cumulative: d0 + t * (d1 - d0) };
+    }
+  }
+  return best ? best.cumulative : null;
+};
+
+/**
  * Minimum distance in meters from a point to any segment of a polyline.
  * @param {number} pLat
  * @param {number} pLon
@@ -157,4 +216,5 @@ module.exports = {
   sanitizeShapeDistances,
   pointToSegmentDistance,
   pointToPolylineDistance,
+  projectPointOntoPolyline,
 };

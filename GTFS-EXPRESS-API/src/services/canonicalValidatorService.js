@@ -177,11 +177,19 @@ const sampleDetail = (sample) => {
 // Bounded: scalars only, ≤12 fields, values truncated at 200 chars.
 const CONTEXT_MAX_FIELDS = 12;
 const CONTEXT_VALUE_MAX_CHARS = 200;
-const sampleContext = (sample) => {
+// `entity` is the `{ entityType, entityId }` pair derived by `deriveEntity`.
+// When an id was derived it is emitted FIRST so the UI can render the entity
+// chip without scanning the whole context.
+const sampleContext = (sample, entity = null) => {
   const context = {};
   let kept = 0;
+  if (entity && entity.entityId) {
+    context.entityId = String(entity.entityId);
+    kept = 1;
+  }
   for (const [key, value] of Object.entries(sample)) {
     if (value === null || value === undefined) continue;
+    if (key === "entityId" && context.entityId !== undefined) continue;
     const t = typeof value;
     if (t !== "string" && t !== "number" && t !== "boolean") continue;
     if (++kept > CONTEXT_MAX_FIELDS) break;
@@ -194,18 +202,139 @@ const sampleContext = (sample) => {
   return context;
 };
 
-const buildEntry = (notice, sample) => ({
-  ruleCode: notice.code,
-  severity: normaliseSeverity(notice.severity),
-  lineNumber: sample.csvRowNumber ?? null,
-  field: sample.fieldName ?? null,
-  message:
-    sample.message ||
-    `${notice.code}: ${sampleDetail(sample) || sample.fieldName || ""}`.trim(),
-  entityType: sample.entityType || null,
-  entityId: sample.entityId || null,
-  context: sampleContext(sample),
-});
+// ── Entity derivation ──────────────────────────────────────────────────────
+// The MobilityData JAR never emits `entityType` / `entityId`; a sample notice
+// carries the ids of the records it concerns as flat camelCase fields
+// (stopId, tripId, routeId, serviceId, shapeId, …) plus `stopSequence`,
+// `date`, `startTime` for composite keys. We derive a `{ entityType,
+// entityId }` pair from those so the UI can deep-link to the record and the
+// quick-fix / repair flows can target it. Explicit `entityType` / `entityId`
+// fields (tests, other engines) win over the derivation.
+
+const _has = (sample, key) => {
+  const v = sample[key];
+  return v !== null && v !== undefined && v !== "" && typeof v !== "object";
+};
+const _str = (sample, key) => String(sample[key]);
+
+// Composite keys first (most specific), then single ids in priority order.
+const COMPOSITE_ENTITY_RULES = [
+  { keys: ["tripId", "stopSequence"], type: "stop_time" },
+  { keys: ["serviceId", "date"], type: "calendar_date" },
+  { keys: ["tripId", "startTime"], type: "frequency" },
+];
+const SINGLE_ID_ENTITY_RULES = [
+  { key: "tripId", type: "trip" },
+  { key: "stopId", type: "stop" },
+  // Stop-hierarchy rules (station_with_parent_station, …) name the offending
+  // stop `childId` and its parent `parentId` / `parentStation`.
+  { key: "childId", type: "stop" },
+  { key: "routeId", type: "route" },
+  { key: "serviceId", type: "calendar" },
+  { key: "shapeId", type: "shape" },
+  { key: "agencyId", type: "agency" },
+  { key: "pathwayId", type: "pathway" },
+  { key: "levelId", type: "level" },
+  { key: "fareId", type: "fare_attribute" },
+];
+
+// GTFS file → entity type, used by the filename fallback.
+const FILE_ENTITY_TYPES = {
+  "agency.txt": "agency",
+  "stops.txt": "stop",
+  "routes.txt": "route",
+  "trips.txt": "trip",
+  "stop_times.txt": "stop_time",
+  "calendar.txt": "calendar",
+  "calendar_dates.txt": "calendar_date",
+  "shapes.txt": "shape",
+  "frequencies.txt": "frequency",
+  "transfers.txt": "transfer",
+  "pathways.txt": "pathway",
+  "levels.txt": "level",
+  "fare_attributes.txt": "fare_attribute",
+  "fare_rules.txt": "fare_rule",
+  "feed_info.txt": "feed_info",
+  "attributions.txt": "attribution",
+  "translations.txt": "translation",
+  "areas.txt": "area",
+  "stop_areas.txt": "stop_area",
+  "networks.txt": "network",
+  "route_networks.txt": "route_network",
+  "fare_media.txt": "fare_media",
+  "rider_categories.txt": "rider_category",
+  "fare_products.txt": "fare_product",
+  "timeframes.txt": "timeframe",
+  "fare_leg_rules.txt": "fare_leg_rule",
+  "fare_leg_join_rules.txt": "fare_leg_join_rule",
+  "fare_transfer_rules.txt": "fare_transfer_rule",
+  "booking_rules.txt": "booking_rule",
+  "location_groups.txt": "location_group",
+  "location_group_stops.txt": "location_group_stop",
+};
+
+const _snakeToCamel = (s) => s.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+
+const deriveEntity = (sample) => {
+  const none = { entityType: null, entityId: null };
+  if (!sample || typeof sample !== "object") return none;
+
+  // Explicit values always win (tests and non-MD engines inject them).
+  if (_has(sample, "entityType") || _has(sample, "entityId")) {
+    return {
+      entityType: _has(sample, "entityType") ? _str(sample, "entityType") : null,
+      entityId: _has(sample, "entityId") ? _str(sample, "entityId") : null,
+    };
+  }
+
+  for (const rule of COMPOSITE_ENTITY_RULES) {
+    if (rule.keys.every((k) => _has(sample, k))) {
+      return {
+        entityType: rule.type,
+        entityId: rule.keys.map((k) => _str(sample, k)).join(":"),
+      };
+    }
+  }
+  for (const rule of SINGLE_ID_ENTITY_RULES) {
+    if (_has(sample, rule.key)) {
+      return { entityType: rule.type, entityId: _str(sample, rule.key) };
+    }
+  }
+
+  // Fallback: the file tells the table; look for a `<table>_id`-style value
+  // (snake_case or camelCase key, or fieldName/fieldValue naming that id).
+  const file = String(sample.filename || sample.fileName || "").toLowerCase();
+  const type = FILE_ENTITY_TYPES[file];
+  if (!type) return none;
+  const idSnake = `${type}_id`;
+  const idCamel = _snakeToCamel(idSnake);
+  if (_has(sample, idSnake)) return { entityType: type, entityId: _str(sample, idSnake) };
+  if (_has(sample, idCamel)) return { entityType: type, entityId: _str(sample, idCamel) };
+  if (
+    _has(sample, "fieldName") &&
+    String(sample.fieldName) === idSnake &&
+    _has(sample, "fieldValue")
+  ) {
+    return { entityType: type, entityId: _str(sample, "fieldValue") };
+  }
+  return none;
+};
+
+const buildEntry = (notice, sample) => {
+  const entity = deriveEntity(sample);
+  return {
+    ruleCode: notice.code,
+    severity: normaliseSeverity(notice.severity),
+    lineNumber: sample.csvRowNumber ?? null,
+    field: sample.fieldName ?? null,
+    message:
+      sample.message ||
+      `${notice.code}: ${sampleDetail(sample) || sample.fieldName || ""}`.trim(),
+    entityType: entity.entityType,
+    entityId: entity.entityId,
+    context: sampleContext(sample, entity),
+  };
+};
 
 // Parse MD's report.json into our { errors: { "<file>": [...] }, valid }
 // shape. Sample-level findings get one entry each; the truncated tail
@@ -411,6 +540,7 @@ module.exports = {
   isEnabled,
   validateWithCanonical,
   parseReport,
+  deriveEntity,
   applyImportAdjustments,
   assertReadyForProduction,
 };

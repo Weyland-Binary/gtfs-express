@@ -1100,8 +1100,16 @@ paths:
       tags:
         - Edit
       summary: Create a trips record.
-      description: Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
+      description: |-
+        Generic edit CRUD endpoint — request/response envelope described in the **Edit CRUD
         pattern** section of the API description.
+
+        When `trip_id` is absent or empty the server generates one
+        (`<route_id>_<direction_id or 0>_<n>`, zero-padded and de-duplicated) and echoes it in the
+        created `trip`; the response also carries `id_generated: true`. Same behaviour for
+        `stop_id` on `POST /gtfs/edit/stops` (`S<n>` zero-padded after the highest numeric id, or
+        `stop_<hex>`) and `route_id` on `POST /gtfs/edit/routes` (`R_<route_short_name slug>`,
+        de-duplicated with a numeric suffix).
       requestBody:
         $ref: "#/components/requestBodies/EntityCreate"
       security:
@@ -1111,6 +1119,81 @@ paths:
           $ref: "#/components/responses/EditCreated"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/trips/shift:
+    post:
+      tags:
+        - Edit
+      summary: Shift the times of one or more trips by a fixed offset.
+      description: |-
+        Adds `offset_secs` to `arrival_time` / `departure_time` of every stop_time of the given
+        trips whose `stop_sequence >= from_stop_sequence` (default: all stops). Times keep the GTFS
+        `HH:MM:SS` form and may exceed 24:00:00 (`23:59:00 + 360 s → 24:05:00`). When
+        `from_stop_sequence` is omitted, `frequencies.start_time` / `end_time` of those trips are
+        shifted as well. Null or empty times are left untouched.
+
+        Atomic: one transaction and ONE edit-log entry (entity `trip`, action `shift_times`,
+        `entity_id` = comma-joined trip ids) with pre-image undo ops and post-image redo ops.
+        Rejected with **400** (`SHIFT_NEGATIVE_TIME`) if any resulting time would be negative,
+        **404** if any trip id is unknown (`missing` lists them).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - trip_ids
+                - offset_secs
+              properties:
+                trip_ids:
+                  type: array
+                  minItems: 1
+                  maxItems: 500
+                  items:
+                    type: string
+                offset_secs:
+                  type: integer
+                  description: Non-zero offset in seconds, |offset_secs| <= 86400.
+                  example: 300
+                from_stop_sequence:
+                  type: integer
+                  minimum: 0
+                  description: Only stop_times with stop_sequence >= this value are shifted.
+                    Frequencies are not shifted when this field is set.
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          description: Times shifted. `shifted_trips` counts the trips that had at least one row
+            changed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  shifted_trips:
+                    type: integer
+                  shifted_stop_times:
+                    type: integer
+                  shifted_frequencies:
+                    type: integer
+                  offset_secs:
+                    type: integer
+                  undoEntryId:
+                    type: integer
+                    nullable: true
+                    description: Id of the edit-log entry, usable as `expectedEntryId` on
+                      `POST /gtfs/edit/undo`.
+                  validation:
+                    type: object
+                    additionalProperties: true
+                additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/EditModeRequired"
   /gtfs/edit/calendar:
@@ -1179,6 +1262,32 @@ paths:
         "409":
           $ref: "#/components/responses/EditModeRequired"
   /gtfs/edit/stop_times/{trip_id}/{stop_sequence}:
+    get:
+      tags:
+        - Edit
+      summary: Read one stop_times record (full row, all columns).
+      description: Used by the advanced stop_time edit dialog. Requires an uploaded feed (not edit
+        mode). Returns `{ stop_time }`.
+      parameters:
+        - name: trip_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: stop_sequence
+          in: path
+          required: true
+          schema:
+            type: integer
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
     patch:
       tags:
         - Edit
@@ -1613,6 +1722,13 @@ paths:
       tags:
         - Edit
       summary: Replace the full point list of a shape.
+      description: |-
+        Body `{ points: [{ lat, lon }, …] }`. Sequences are reassigned and `shape_dist_traveled`
+        recomputed (metres). For every trip linked to the shape whose stop_times already carry
+        `shape_dist_traveled`, the stops are re-projected onto the new polyline and the values
+        rewritten (non-decreasing along stop_sequence) in the same transaction / edit-log entry.
+        The response carries `stopTimesDistancesUpdated` (number of trips rewritten); the same
+        field is returned by `POST /gtfs/edit/shapes` when `link_trip_ids` is used.
       parameters:
         - name: shape_id
           in: path
@@ -1726,15 +1842,52 @@ paths:
       tags:
         - History
       summary: Undo the most recent edit (SAVEPOINT replay of stored undo ops).
+      description: |-
+        Optional body `{ expectedEntryId }`: when provided and the newest active (not undone)
+        edit-log entry has a different id, nothing is changed and the call answers **409**
+        `{ error: "UNDO_TARGET_NOT_LATEST", latestId, expectedEntryId }`. The success body is
+        `{ undone: <HistoryEntry incl. id>, currentState }`.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                expectedEntryId:
+                  type: integer
+                  minimum: 1
+                  description: Id of the edit-log entry the client expects to undo (e.g. the
+                    `undoEntryId` returned by the mutation).
       security:
         - SessionId: []
       responses:
         "200":
-          $ref: "#/components/responses/OkJson"
+          description: Entry undone.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  undone:
+                    $ref: "#/components/schemas/HistoryEntry"
+                  currentState:
+                    type: object
+                    nullable: true
+                    additionalProperties: true
+                additionalProperties: true
         "400":
           $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "409":
-          $ref: "#/components/responses/EditModeRequired"
+          description: Session not in edit mode (`SESSION_NOT_IN_EDIT_MODE`), or the newest active
+            entry is not the one the client expected (`UNDO_TARGET_NOT_LATEST`, with `latestId`
+            and `expectedEntryId`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /gtfs/edit/redo:
     post:
       tags:
@@ -3951,6 +4104,11 @@ components:
                 type: integer
               truncated:
                 type: boolean
+              undoEntryId:
+                type: integer
+                nullable: true
+                description: Mutations only (POST /gtfs/edit/sql) — id of the edit-log entry
+                  created for the batch, usable as `expectedEntryId` on `POST /gtfs/edit/undo`.
             additionalProperties: true
     CsvOk:
       description: CSV stream.

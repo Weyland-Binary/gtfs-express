@@ -49,6 +49,7 @@ const {
   deleteRoute,
   createTrip,
   deleteTrip,
+  shiftTripTimes,
   createCalendar,
   deleteCalendar,
   getStopTime,
@@ -377,6 +378,9 @@ router.delete("/edit/stops/:stop_id", deleteStop);
 router.post("/edit/routes", createRoute);
 router.patch("/edit/routes/:route_id", updateRoute);
 router.delete("/edit/routes/:route_id", deleteRoute);
+// Batch time shift — declared BEFORE the :trip_id routes so the literal
+// `shift` segment can never be captured as a trip id.
+router.post("/edit/trips/shift", shiftTripTimes);
 router.patch("/edit/trips/:trip_id", updateTrip);
 router.post("/edit/trips", createTrip);
 router.delete("/edit/trips/:trip_id", deleteTrip);

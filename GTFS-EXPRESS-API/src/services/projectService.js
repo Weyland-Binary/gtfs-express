@@ -50,6 +50,8 @@ const {
   PROJECT_MAGIC,
 } = require("./db/schema");
 const { dumpDbToCsvFiles } = require("./exportService");
+// Shared edit-mode guard (on-disk DB reopen + persisted edit-mode recovery).
+const { requireEditMode } = require("./edit/_editCore");
 
 // ── Constantes ──────────────────────────────────────────────────────────────
 
@@ -273,18 +275,11 @@ const validateProjectContents = (filePath) => {
 const exportProject = async (req, res) => {
   let tempPath = null;
   try {
-    const sessionId = req.headers["x-session-id"];
-    if (!sessionId || !validateSessionId(sessionId)) {
-      return res
-        .status(400)
-        .json({ error: "Session ID invalide ou manquant." });
-    }
-    if (!hasEditDb(sessionId)) {
-      return res.status(409).json({
-        error: "Not in edit mode. Enter edit mode before exporting a project.",
-      });
-    }
-    const db = getEditDb(sessionId);
+    // Shared guard: reopens `gtfs.db` from disk and restores the persisted
+    // edit-mode flag after a server restart (400 / 409 envelopes otherwise).
+    const ctx = requireEditMode(req, res);
+    if (!ctx) return;
+    const { sessionId, db } = ctx;
 
     // 1. Update project metadata (updated_at, counts for reference).
     ensureProjectMeta(db);

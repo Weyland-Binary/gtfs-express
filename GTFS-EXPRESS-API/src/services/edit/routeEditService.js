@@ -7,6 +7,7 @@
  * `DELETE /gtfs/edit/routes/:route_id` per route.
  */
 
+const crypto = require("crypto");
 const {
   requireEditMode,
   logEdit,
@@ -16,11 +17,39 @@ const {
   validateRoutePatch,
   makeUpdateHandler,
   respondWithValidation,
+  buildCascadeUndoOps,
   EDITABLE_FIELDS,
   path,
   cache,
   GTFS_UPLOAD_DIR,
 } = require("./_editCore");
+
+// ── Id generation ─────────────────────────────────────────────────────────────
+//
+// POST /edit/routes without a route_id: `R_<slug of route_short_name>` (falls
+// back to route_long_name, then a random suffix), de-duplicated with a
+// numeric suffix (`R_12`, `R_12_2`, `R_12_3`, …).
+const slugify = (value) =>
+  String(value ?? "")
+    .trim()
+    .replace(/[^A-Za-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 40);
+
+const generateRouteId = (db, body) => {
+  const base =
+    slugify(body.route_short_name) ||
+    slugify(body.route_long_name) ||
+    crypto.randomBytes(3).toString("hex");
+  const exists = db.prepare("SELECT 1 FROM routes WHERE route_id = ?");
+  let candidate = `R_${base}`;
+  let n = 2;
+  while (exists.get(candidate)) {
+    candidate = `R_${base}_${n}`;
+    n += 1;
+  }
+  return candidate;
+};
 
 // ── Handler : CREATE route ────────────────────────────────────────────────────
 
@@ -31,6 +60,11 @@ const createRoute = async (req, res) => {
     const { sessionId, db } = ctx;
     const body = req.body || {};
 
+    let idGenerated = false;
+    if (body.route_id === undefined || body.route_id === null || body.route_id === "") {
+      body.route_id = generateRouteId(db, body);
+      idGenerated = true;
+    }
     if (!body.route_id || typeof body.route_id !== "string")
       return res.status(400).json({ error: "route_id is required." });
     if (body.route_type === undefined || body.route_type === null || body.route_type === "")
@@ -106,7 +140,14 @@ const createRoute = async (req, res) => {
     const created = db
       .prepare("SELECT * FROM routes WHERE route_id = ?")
       .get(body.route_id);
-    await respondWithValidation(res, sessionId, "route", body.route_id, { route: created }, { status: 201 });
+    await respondWithValidation(
+      res,
+      sessionId,
+      "route",
+      body.route_id,
+      { route: created, id_generated: idGenerated },
+      { status: 201 },
+    );
   } catch (err) {
     console.error("createRoute error:", err);
     res.status(500).json({ error: err.message });
@@ -133,19 +174,14 @@ const deleteRoute = async (req, res) => {
     const trips = db
       .prepare("SELECT * FROM trips WHERE route_id = ?")
       .all(route_id);
-    const tripIds = trips.map((t) => t.trip_id);
 
-    let stopTimesRows = [];
-    let frequencyRows = [];
-    if (tripIds.length > 0) {
-      const ph = tripIds.map(() => "?").join(",");
-      stopTimesRows = db
-        .prepare(`SELECT * FROM stop_times WHERE trip_id IN (${ph})`)
-        .all(tripIds);
-      frequencyRows = db
-        .prepare(`SELECT * FROM frequencies WHERE trip_id IN (${ph})`)
-        .all(tripIds);
-    }
+    // FK cascade capture through the schema graph: trips → stop_times /
+    // frequencies / transfers / attributions, plus route-level children
+    // (transfers, attributions, fare_rules, route_networks). Every captured
+    // row gets a restore op so undo is exact.
+    const cascade = buildCascadeUndoOps(db, "routes", "route_id", route_id);
+    const stopTimesCount = cascade.byTable.stop_times || 0;
+    const frequenciesCount = cascade.byTable.frequencies || 0;
 
     const shapeIds = [...new Set(trips.map((t) => t.shape_id).filter(Boolean))];
     const orphanShapeIds = shapeIds.filter((sid) => {
@@ -197,29 +233,9 @@ const deleteRoute = async (req, res) => {
       params: routeCols.map((c) => route[c]),
     });
 
-    for (const trip of trips) {
-      const cols = Object.keys(trip);
-      undoOps.push({
-        sql: `INSERT INTO trips (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`,
-        params: cols.map((c) => trip[c]),
-      });
-    }
-
-    for (const st of stopTimesRows) {
-      const cols = Object.keys(st);
-      undoOps.push({
-        sql: `INSERT INTO stop_times (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`,
-        params: cols.map((c) => st[c]),
-      });
-    }
-
-    for (const freq of frequencyRows) {
-      const cols = Object.keys(freq);
-      undoOps.push({
-        sql: `INSERT INTO frequencies (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`,
-        params: cols.map((c) => freq[c]),
-      });
-    }
+    // trips, stop_times, frequencies, transfers, attributions, fare_rules,
+    // route_networks… (parents before children).
+    undoOps.push(...cascade.undoOps);
 
     for (const sh of orphanShapeRows) {
       const cols = Object.keys(sh);
@@ -264,7 +280,11 @@ const deleteRoute = async (req, res) => {
         action: "delete",
         description:
           `Deleted route ${route_id} (${route.route_short_name || ""} ${route.route_long_name || ""}).`.trim() +
-          ` Cascade: ${trips.length} trips, ${stopTimesRows.length} stop_times, ${frequencyRows.length} frequencies` +
+          ` Cascade: ${trips.length} trips, ${stopTimesCount} stop_times, ${frequenciesCount} frequencies` +
+          Object.entries(cascade.byTable)
+            .filter(([t]) => !["trips", "stop_times", "frequencies"].includes(t))
+            .map(([t, n]) => `, ${n} ${t}`)
+            .join("") +
           (orphanShapeIds.length
             ? `, ${orphanShapeIds.length} orphan shapes`
             : "") +
@@ -296,6 +316,13 @@ const deleteRoute = async (req, res) => {
     tx.immediate();
 
     syncCacheAfterRouteCascade(sessionId, db, route_id);
+    const otherCascadeTables = cascade.tables.filter(
+      (t) => !["trips", "stop_times", "frequencies"].includes(t),
+    );
+    if (otherCascadeTables.length > 0) {
+      const { resyncCacheForTables } = require("./sqlConsoleService");
+      resyncCacheForTables(sessionId, db, otherCascadeTables);
+    }
     const directory = path.join(GTFS_UPLOAD_DIR, sessionId);
     const data = cache.get(directory);
     if (data) {
@@ -318,9 +345,10 @@ const deleteRoute = async (req, res) => {
     await respondWithValidation(res, sessionId, "route", route_id, {
       deleted: route_id,
       cascade: {
+        ...cascade.byTable,
         trips: trips.length,
-        stop_times: stopTimesRows.length,
-        frequencies: frequencyRows.length,
+        stop_times: stopTimesCount,
+        frequencies: frequenciesCount,
         orphan_shapes: orphanShapeIds.length,
         orphan_calendars: orphanServiceIds.length,
       },

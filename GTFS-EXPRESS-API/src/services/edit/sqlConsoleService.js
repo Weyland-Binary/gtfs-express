@@ -582,7 +582,18 @@ const TABLE_TO_ENTITY = {
 const resyncCacheForTables = (sessionId, db, tables) => {
   for (const table of tables) {
     const entity = TABLE_TO_ENTITY[table];
-    if (!entity) continue;
+    if (!entity) {
+      // Fares v1/v2 + Flex tables: full-table reload through the shared
+      // config (cheap — low cardinality). Needed when a dialog delete
+      // cascades into stop_areas / fare_rules / route_networks / … and the
+      // undo restores them.
+      const { FARES_FLEX_CACHE_CONFIG, syncFaresFlexCache } = require("./_editCore");
+      const faresEntity = Object.keys(FARES_FLEX_CACHE_CONFIG).find(
+        (k) => FARES_FLEX_CACHE_CONFIG[k].table === table,
+      );
+      if (faresEntity) syncFaresFlexCache(sessionId, db, faresEntity);
+      continue;
+    }
     // Synthetic entry: bulk-style entity_id triggers the table-level resync
     // path inside resyncCacheForLogEntry for entities that have one.
     if (entity === "transfer" || entity === "level" || entity === "pathway" ||
@@ -1012,9 +1023,10 @@ const executeMutation = (db, classified, mutationCap = MAX_AFFECTED_ROWS_PER_STA
     // restore the parent PK but leave child FKs pointing at the new value
     // → orphan rows. Building a transitive FK-graph walker that captures
     // every cascading UPDATE is non-trivial; until that's done we refuse
-    // PK mutations through the SQL console with a clear message. The
-    // dedicated rename endpoints (PATCH /edit/{stops,routes,trips}/:id)
-    // already handle PK renames safely.
+    // PK mutations through the SQL console with a clear message. There is
+    // no rename endpoint either (PATCH handlers whitelist non-PK columns):
+    // a rename is done by creating the new row, re-pointing references and
+    // deleting the old row.
     const pkCols = pkColumnsOf(db, table);
     if (pkCols.length > 0) {
       const mutatedCols = extractUpdateSetColumns(sql);
@@ -1023,7 +1035,7 @@ const executeMutation = (db, classified, mutationCap = MAX_AFFECTED_ROWS_PER_STA
       );
       if (mutatedPks.length > 0) {
         const err = new Error(
-          `PK column mutation via SQL Console is not yet supported (${table}.${mutatedPks.join(", ")}). Use the dedicated rename endpoint to safely propagate to FK children.`,
+          `PK column mutation via SQL Console is not supported (${table}.${mutatedPks.join(", ")}): primary keys cannot be changed from the console. To rename a record, create a new row with the new id, re-point the rows that reference it, then delete the old row (a dedicated rename tool may be added later).`,
         );
         err.status = 400;
         err.code = "PK_MUTATION_FORBIDDEN";
@@ -1845,6 +1857,9 @@ module.exports = {
   // Cache resync (used by undo/redo of sql_console entries)
   resyncCacheForTables,
   TABLE_TO_ENTITY,
+  // FK-graph walker shared with the dialog delete handlers (via
+  // _editCore.buildCascadeUndoOps) so every cascaded row is restorable.
+  collectCascadeDescendants,
   // Internals exposed for tests
   _internal: {
     parseStatements,

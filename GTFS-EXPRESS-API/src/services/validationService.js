@@ -405,6 +405,21 @@ const TABLE_DUMP_MAP = [
     ],
     optional: true,
   },
+  // ── GTFS-Flex location_groups (managed since schema v13) ───────────────
+  // Mirrors exportService.EXPORT_TABLES: without these two entries the
+  // validator would read the stale uploaded files instead of the DB state.
+  {
+    table: "location_groups",
+    file: "location_groups.txt",
+    columns: ["location_group_id", "location_group_name"],
+    optional: true,
+  },
+  {
+    table: "location_group_stops",
+    file: "location_group_stops.txt",
+    columns: ["location_group_id", "stop_id"],
+    optional: true,
+  },
 ];
 
 /**

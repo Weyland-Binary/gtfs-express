@@ -17,6 +17,7 @@ const {
   makeUpdateHandler,
   respondWithValidation,
   validateAgencyPatch,
+  buildCascadeUndoOps,
   EDITABLE_FIELDS,
   DATE_YYYYMMDD,
   valuesEqual,
@@ -139,6 +140,10 @@ const deleteAgency = async (req, res) => {
       });
     }
 
+    // FK cascade capture: attributions (CASCADE), fare_attributes.agency_id
+    // (SET NULL) must be restorable on undo.
+    const cascade = buildCascadeUndoOps(db, "agency", "agency_id", agency_id);
+
     const cols = Object.keys(agency);
     const placeholders = cols.map(() => "?").join(", ");
     const undoOps = [
@@ -146,18 +151,25 @@ const deleteAgency = async (req, res) => {
         sql: `INSERT INTO agency (${cols.join(", ")}) VALUES (${placeholders})`,
         params: cols.map((c) => agency[c]),
       },
+      ...cascade.undoOps,
     ];
 
     const agencyDeleteRedoOps = [
       { sql: "DELETE FROM agency WHERE agency_id = ?", params: [agency_id] },
     ];
 
+    const cascadeSummary = Object.entries(cascade.byTable)
+      .map(([t, n]) => `${n} ${t}`)
+      .join(", ");
+
     const tx = db.transaction(() => {
       logEdit(db, {
         entity: "agency",
         entityId: agency_id,
         action: "delete",
-        description: `Deleted agency ${agency_id} (${agency.agency_name || ""})`,
+        description:
+          `Deleted agency ${agency_id} (${agency.agency_name || ""})` +
+          (cascadeSummary ? `. Cascade: ${cascadeSummary}` : ""),
         undoOps,
         redoOps: agencyDeleteRedoOps,
       });
@@ -166,7 +178,14 @@ const deleteAgency = async (req, res) => {
     tx.immediate();
 
     syncCacheEntry(sessionId, db, "agency", agency_id);
-    await respondWithValidation(res, sessionId, "agency", agency_id, { deleted: agency_id });
+    if (cascade.tables.length > 0) {
+      const { resyncCacheForTables } = require("./sqlConsoleService");
+      resyncCacheForTables(sessionId, db, cascade.tables);
+    }
+    await respondWithValidation(res, sessionId, "agency", agency_id, {
+      deleted: agency_id,
+      cascade: cascade.byTable,
+    });
   } catch (err) {
     console.error("deleteAgency error:", err);
     res.status(500).json({ error: err.message });

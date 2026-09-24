@@ -16,8 +16,12 @@ const fsp = require("fs/promises");
 const path = require("path");
 const crypto = require("crypto");
 const archiver = require("archiver");
-const { validateSessionId, GTFS_UPLOAD_DIR } = require("./sessionManager");
-const { getEditDb, hasEditDb } = require("./db/connection");
+const { GTFS_UPLOAD_DIR } = require("./sessionManager");
+const { getEditDb } = require("./db/connection");
+// Shared edit-mode guard: reopens `gtfs.db` from disk and restores the
+// persisted `_project_meta.edit_mode_active` flag after a server restart, so
+// the first export after a restart no longer 409s.
+const { requireEditMode } = require("./edit/_editCore");
 const { recordEvent, extractReqMeta } = require("./eventLogger");
 const { loadValidationDataFromSession } = require("./validationService");
 const { validateWithCanonical } = require("./canonicalValidatorService");
@@ -674,18 +678,11 @@ const runPreExportValidation = async (
 
 const exportGTFS = async (req, res) => {
   try {
-    const sessionId = req.headers["x-session-id"];
-    if (!sessionId || !validateSessionId(sessionId)) {
-      return res
-        .status(400)
-        .json({ error: "Session ID invalide ou manquant." });
-    }
-    if (!hasEditDb(sessionId)) {
-      return res.status(409).json({
-        error:
-          "Not in edit mode. Nothing to export from. Enter edit mode first.",
-      });
-    }
+    // 400 on bad session id, 409 SESSION_NOT_IN_EDIT_MODE / NO_FEED_LOADED
+    // otherwise — with the on-disk DB + persisted edit-mode recovery.
+    const ctx = requireEditMode(req, res);
+    if (!ctx) return;
+    const { sessionId } = ctx;
 
     // ── Pre-export validation gate ──────────────────────────────────────────
     // GTFS export must not silently produce an invalid feed. We run the full

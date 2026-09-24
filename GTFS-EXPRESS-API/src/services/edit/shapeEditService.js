@@ -28,12 +28,17 @@ const {
   computeShapeDistances,
   sanitizeShapeDistances,
   pointToPolylineDistance,
+  projectPointOntoPolyline,
 } = require("../../utils/geoUtils");
 // Reuse the shared guard from _editCore so shape mutations benefit from
 // the same auto-recovery path (project-import / pending-edits → flip the
 // flag transparently). Eliminates a long-standing duplication where this
 // module's local guard drifted from the canonical version.
-const { requireEditMode, respondWithValidation } = require("./_editCore");
+const {
+  requireEditMode,
+  respondWithValidation,
+  syncCacheStopTimes,
+} = require("./_editCore");
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -119,6 +124,82 @@ const syncCacheTripShapeId = (sessionId, db, tripIds) => {
       }
     }
   }
+};
+
+/**
+ * Recompute stop_times.shape_dist_traveled for the trips linked to a shape
+ * whose stop_times ALREADY carry non-null values. Each stop is projected onto
+ * the new polyline; the cumulative distance at the nearest point becomes the
+ * new value (same unit as the shape distances — metres), clamped to be
+ * non-decreasing along stop_sequence. Trips whose stop_times are all-null
+ * are left untouched.
+ *
+ * Returns `{ undoOps, redoOps, tripIds }` — pre-image UPDATEs for undo,
+ * post-image UPDATEs for redo, and the ids of the trips rewritten — so the
+ * caller can fold them into the SAME transaction / log entry as the shape
+ * edit.
+ */
+const buildStopTimesDistanceOps = (db, tripIds, points, distances) => {
+  const out = { undoOps: [], redoOps: [], tripIds: [] };
+  if (!Array.isArray(tripIds) || tripIds.length === 0) return out;
+  if (!Array.isArray(points) || points.length < 2) return out;
+
+  const stopTimesStmt = db.prepare(
+    `SELECT st.stop_sequence, st.stop_id, st.shape_dist_traveled, s.stop_lat, s.stop_lon
+     FROM stop_times st
+     LEFT JOIN stops s ON s.stop_id = st.stop_id
+     WHERE st.trip_id = ?
+     ORDER BY st.stop_sequence`,
+  );
+  const round3 = (x) => Math.round(x * 1000) / 1000;
+  // Same stop → same projection: memoise per shape edit.
+  const projected = new Map();
+  const projectStop = (row) => {
+    if (projected.has(row.stop_id)) return projected.get(row.stop_id);
+    const lat = parseFloat(row.stop_lat);
+    const lon = parseFloat(row.stop_lon);
+    const value =
+      Number.isNaN(lat) || Number.isNaN(lon)
+        ? null
+        : projectPointOntoPolyline(lat, lon, points, distances);
+    projected.set(row.stop_id, value);
+    return value;
+  };
+
+  for (const tripId of tripIds) {
+    const rows = stopTimesStmt.all(tripId);
+    const timed = rows.filter(
+      (r) => r.shape_dist_traveled !== null && r.shape_dist_traveled !== "",
+    );
+    if (timed.length === 0) continue;
+
+    let prev = 0;
+    let changed = false;
+    const ops = [];
+    for (const row of timed) {
+      const raw = projectStop(row);
+      // Unknown stop coordinates: keep the row monotonic with its neighbours.
+      let next = raw === null ? prev : round3(raw);
+      if (next < prev) next = prev; // clamp monotonic
+      prev = next;
+      if (Number(row.shape_dist_traveled) !== next) changed = true;
+      ops.push({ seq: row.stop_sequence, old: row.shape_dist_traveled, next });
+    }
+    if (!changed) continue;
+
+    for (const op of ops) {
+      out.undoOps.push({
+        sql: "UPDATE stop_times SET shape_dist_traveled = ? WHERE trip_id = ? AND stop_sequence = ?",
+        params: [op.old, tripId, op.seq],
+      });
+      out.redoOps.push({
+        sql: "UPDATE stop_times SET shape_dist_traveled = ? WHERE trip_id = ? AND stop_sequence = ?",
+        params: [op.next, tripId, op.seq],
+      });
+    }
+    out.tripIds.push(tripId);
+  }
+  return out;
 };
 
 // ── Validators ────────────────────────────────────────────────────────────────
@@ -281,12 +362,26 @@ const updateShape = async (req, res) => {
       });
     }
 
+    // stop_times.shape_dist_traveled of the linked trips follows the new
+    // geometry (same transaction, same log entry).
+    const linkedTripIds = db
+      .prepare("SELECT trip_id FROM trips WHERE shape_id = ?")
+      .all(shape_id)
+      .map((t) => t.trip_id);
+    const stDist = buildStopTimesDistanceOps(db, linkedTripIds, newPoints, distances);
+    undoOps.push(...stDist.undoOps);
+    shapeUpdateRedoOps.push(...stDist.redoOps);
+
     const tx = db.transaction(() => {
       logEdit(db, {
         entity: "shape",
         entityId: shape_id,
         action: "update",
-        description: `Updated shape ${shape_id}: replaced ${oldPoints.length} point(s) with ${newPoints.length} point(s)`,
+        description:
+          `Updated shape ${shape_id}: replaced ${oldPoints.length} point(s) with ${newPoints.length} point(s)` +
+          (stDist.tripIds.length > 0
+            ? `; recomputed stop_times.shape_dist_traveled for ${stDist.tripIds.length} trip(s)`
+            : ""),
         undoOps,
         redoOps: shapeUpdateRedoOps,
       });
@@ -297,10 +392,15 @@ const updateShape = async (req, res) => {
         const { lat, lon } = newPoints[i];
         insert.run(shape_id, lat, lon, i + 1, distances[i]);
       }
+
+      for (const op of stDist.redoOps) {
+        db.prepare(op.sql).run(op.params);
+      }
     });
     tx.immediate();
 
     syncCacheShape(sessionId, db, shape_id);
+    for (const tid of stDist.tripIds) syncCacheStopTimes(sessionId, db, tid);
 
     const total_distance_m = distances.length > 0
       ? Math.round(distances[distances.length - 1])
@@ -310,6 +410,7 @@ const updateShape = async (req, res) => {
       shape_id,
       point_count: newPoints.length,
       total_distance_m,
+      stopTimesDistancesUpdated: stDist.tripIds.length,
     });
   } catch (err) {
     console.error("updateShape error:", err);
@@ -434,6 +535,14 @@ const createShape = async (req, res) => {
       });
     }
 
+    // Linked trips that already carry stop_times.shape_dist_traveled get
+    // their values re-projected onto the new polyline (same tx / log entry).
+    const stDist = buildStopTimesDistanceOps(db, linkTripIds, newPoints, distances);
+    // Undo restores the pre-image distances FIRST (before the trips are
+    // re-pointed and the shape rows deleted).
+    undoOps.unshift(...stDist.undoOps);
+    redoOps.push(...stDist.redoOps);
+
     const description =
       linkTripIds.length > 0
         ? `Created shape ${body.shape_id} with ${newPoints.length} point(s) and linked ${linkTripIds.length} trip(s)`
@@ -462,6 +571,10 @@ const createShape = async (req, res) => {
           updateTrip.run(body.shape_id, tid);
         }
       }
+
+      for (const op of stDist.redoOps) {
+        db.prepare(op.sql).run(op.params);
+      }
     });
     tx.immediate();
 
@@ -469,6 +582,7 @@ const createShape = async (req, res) => {
     if (linkTripIds.length > 0) {
       syncCacheTripShapeId(sessionId, db, linkTripIds);
     }
+    for (const tid of stDist.tripIds) syncCacheStopTimes(sessionId, db, tid);
 
     const total_distance_m = distances.length > 0
       ? Math.round(distances[distances.length - 1])
@@ -479,6 +593,7 @@ const createShape = async (req, res) => {
       point_count: newPoints.length,
       total_distance_m,
       linked_trips: linkTripIds.length,
+      stopTimesDistancesUpdated: stDist.tripIds.length,
     }, { status: 201 });
   } catch (err) {
     console.error("createShape error:", err);

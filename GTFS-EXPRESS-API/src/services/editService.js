@@ -43,6 +43,7 @@ const {
   createTrip,
   deleteTrip,
   previewDeleteTrip,
+  shiftTripTimes,
 } = require("./edit/tripEditService");
 
 const {
@@ -204,6 +205,7 @@ module.exports = {
   // Trip CRUD
   createTrip,
   deleteTrip,
+  shiftTripTimes,
   // Calendar CRUD
   createCalendar,
   deleteCalendar,
