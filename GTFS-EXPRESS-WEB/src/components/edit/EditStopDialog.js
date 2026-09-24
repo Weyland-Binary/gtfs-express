@@ -28,6 +28,7 @@ import TranslateIcon from "@mui/icons-material/Translate";
 import API_BASE_URL from "../../config";
 import { fetchWithSession } from "../../utils/sessionManager";
 import { useEditMode } from "../../contexts/EditModeContext";
+import SuggestFieldButton from "./SuggestFieldButton";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { useDetailPanel } from "../../contexts/DetailPanelContext";
 import TranslationsRecordPanel from "./TranslationsRecordPanel";
@@ -497,6 +498,11 @@ function EditStopDialog({
             required={stopNameRequired}
             autoFocus={!isCreate}
             inputProps={{ "data-testid": "stop-name-input" }}
+            InputProps={{
+              endAdornment: (
+                <SuggestFieldButton entity="stop" field="stop_name" form={form} id={form.stop_id || null} onSuggest={(v) => setForm((f) => ({ ...f, stop_name: v }))} />
+              ),
+            }}
             error={stopNameMissing}
             helperText={
               stopNameMissing ? t("edit.error.stopNameRequired") : undefined
@@ -525,6 +531,11 @@ function EditStopDialog({
               onChange={handleChange("stop_code")}
               size="small"
               sx={{ flex: 1 }}
+              InputProps={{
+              endAdornment: (
+                <SuggestFieldButton entity="stop" field="stop_code" form={form} id={form.stop_id || null} onSuggest={(v) => setForm((f) => ({ ...f, stop_code: v }))} />
+              ),
+            }}
               {...fieldProps("stop_code")}
             />
             <TextField
@@ -565,6 +576,11 @@ function EditStopDialog({
             size="small"
             multiline
             minRows={2}
+            InputProps={{
+              endAdornment: (
+                <SuggestFieldButton entity="stop" field="stop_desc" form={form} id={form.stop_id || null} onSuggest={(v) => setForm((f) => ({ ...f, stop_desc: v }))} />
+              ),
+            }}
             {...fieldProps("stop_desc")}
           />
           <Box display="flex" gap={2}>

@@ -31,6 +31,9 @@ import RefreshIcon from "@mui/icons-material/Refresh";
 import EditLocationAltIcon from "@mui/icons-material/EditLocationAlt";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import MergeTypeIcon from "@mui/icons-material/MergeType";
+import VisibilityOffOutlinedIcon from "@mui/icons-material/VisibilityOffOutlined";
+import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
+import useAssistantMemory from "../chat/useAssistantMemory";
 import MergeStopsDialog from "./MergeStopsDialog";
 import API_BASE_URL from "../../config";
 import { fetchWithSession } from "../../utils/sessionManager";
@@ -42,7 +45,7 @@ import { CHAT_OPEN_EVENT } from "../chat/ChatAssistantFAB";
 
 const PANEL_TYPES = new Set(["stop", "route", "trip", "shape", "calendar"]);
 
-function FindingRow({ finding, onAskAi, onOpenStudio, onMerge, chatEnabled }) {
+function FindingRow({ finding, onAskAi, onOpenStudio, onMerge, onIgnore, ignored = false, chatEnabled }) {
   const { t } = useLanguage();
   const theme = useTheme();
   const { openPanel } = useDetailPanel();
@@ -182,6 +185,20 @@ function FindingRow({ finding, onAskAi, onOpenStudio, onMerge, chatEnabled }) {
                 {t("audit.action.openStudio")}
               </Button>
             )}
+            {onIgnore && (
+              <Tooltip title={ignored ? "" : t("audit.action.ignoreHint")}>
+                <Button
+                  size="small"
+                  color="inherit"
+                  startIcon={ignored ? <VisibilityOutlinedIcon sx={{ fontSize: 15 }} /> : <VisibilityOffOutlinedIcon sx={{ fontSize: 15 }} />}
+                  onClick={() => onIgnore(finding.code, !ignored)}
+                  data-testid={ignored ? "audit-unignore" : "audit-ignore"}
+                  sx={{ textTransform: "none", fontWeight: 600, color: "text.secondary" }}
+                >
+                  {ignored ? t("audit.action.unignore") : t("audit.action.ignore")}
+                </Button>
+              </Tooltip>
+            )}
           </Box>
         </Box>
       </Collapse>
@@ -199,6 +216,9 @@ export default function QualityAuditPanel({ compact = false, onSeeAll = null, ma
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [mergePair, setMergePair] = useState(null); // { a, b }
+  const [showIgnored, setShowIgnored] = useState(false);
+  const { memory, update: updateMemory } = useAssistantMemory({ enabled: true });
+  const ignoredSet = useMemo(() => new Set(memory?.ignoredFindings || []), [memory]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -220,13 +240,22 @@ export default function QualityAuditPanel({ compact = false, onSeeAll = null, ma
     return () => clearTimeout(id);
   }, [load, dataVersion]);
 
+  const ignoredCount = useMemo(() => (audit?.findings || []).filter((f) => ignoredSet.has(f.code)).length, [audit, ignoredSet]);
   const findings = useMemo(() => {
-    const list = audit?.findings || [];
+    const all = audit?.findings || [];
+    const list = showIgnored ? all : all.filter((f) => !ignoredSet.has(f.code));
     return maxItems ? list.slice(0, maxItems) : list;
-  }, [audit, maxItems]);
-  const warnings = audit?.counts?.warning || 0;
-  const infos = audit?.counts?.info || 0;
-  const clean = audit && audit.findings.length === 0;
+  }, [audit, maxItems, ignoredSet, showIgnored]);
+  const warnings = (audit?.findings || []).filter((f) => f.severity === "warning" && !ignoredSet.has(f.code)).length;
+  const infos = (audit?.findings || []).filter((f) => f.severity === "info" && !ignoredSet.has(f.code)).length;
+  const clean = audit && audit.findings.filter((f) => !ignoredSet.has(f.code)).length === 0;
+
+  const toggleIgnore = useCallback(
+    (code, ignore) => {
+      updateMemory(ignore ? { ignore: [code] } : { unignore: [code] }).catch(() => {});
+    },
+    [updateMemory],
+  );
 
   const askAi = useCallback(
     (finding) => {
@@ -318,12 +347,31 @@ export default function QualityAuditPanel({ compact = false, onSeeAll = null, ma
       {findings.length > 0 && (
         <Box sx={{ display: "flex", flexDirection: "column", gap: 0.75 }}>
           {findings.map((f) => (
-            <FindingRow key={f.code} finding={f} onAskAi={askAi} onOpenStudio={openStudio} onMerge={(a, b) => setMergePair({ a, b })} chatEnabled={chatEnabled} />
+            <FindingRow
+              key={f.code}
+              finding={f}
+              onAskAi={askAi}
+              onOpenStudio={openStudio}
+              onMerge={(a, b) => setMergePair({ a, b })}
+              onIgnore={toggleIgnore}
+              ignored={ignoredSet.has(f.code)}
+              chatEnabled={chatEnabled}
+            />
           ))}
         </Box>
       )}
 
       <MergeStopsDialog open={Boolean(mergePair)} stopA={mergePair?.a} stopB={mergePair?.b} onClose={() => setMergePair(null)} />
+
+      {ignoredCount > 0 && (
+        <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, fontSize: "0.72rem", color: "text.secondary" }}>
+          <VisibilityOffOutlinedIcon sx={{ fontSize: 14 }} />
+          {t("audit.ignoredCount", { count: ignoredCount })}
+          <Button size="small" onClick={() => setShowIgnored((v) => !v)} data-testid="audit-toggle-ignored" sx={{ textTransform: "none", fontWeight: 700, minWidth: 0, py: 0, fontSize: "0.72rem" }}>
+            {showIgnored ? t("audit.hideIgnored") : t("audit.showIgnored")}
+          </Button>
+        </Box>
+      )}
 
       {audit && audit.partial && (
         <Typography sx={{ fontSize: "0.7rem", color: "text.disabled" }}>{t("audit.partial")}</Typography>

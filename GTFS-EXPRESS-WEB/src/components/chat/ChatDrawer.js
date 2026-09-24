@@ -63,6 +63,8 @@ import {
   ACCEPTED_EXTENSIONS,
 } from "../../utils/chatAttachment";
 import ChatHistoryList from "./ChatHistoryList";
+import useAssistantMemory, { MEMORY_EVENT } from "./useAssistantMemory";
+import MemoryChip from "./MemoryChip";
 import ChatInputBar from "./ChatInputBar";
 import UpsellPanel from "./UpsellPanel";
 import BetaGateDialog, {
@@ -93,6 +95,13 @@ export default function ChatDrawer({
   sessionContext = null,
   prefillMessage = null,
   onPrefillConsumed = null,
+  // Background turn (repair plan prepared after an import): sent even while
+  // the drawer is closed; `onTurnComplete` reports its outcome.
+  backgroundMessage = null,
+  onBackgroundConsumed = null,
+  onTurnComplete = null,
+  autoPlan = false,
+  onToggleAutoPlan = null,
 }) {
   const { t } = useLanguage();
   const theme = useTheme();
@@ -130,6 +139,8 @@ export default function ChatDrawer({
   const pendingRetryRef = useRef(null);
   const abortRef = useRef(null);
   const feedEpochRef = useRef(feedEpoch);
+  const backgroundRef = useRef(null);
+  const { memory, update: updateMemory } = useAssistantMemory({ enabled: feedLoaded, feedEpoch });
 
   // Reset conversation history when a new feed is loaded.
   useEffect(() => {
@@ -337,6 +348,11 @@ export default function ChatDrawer({
                   journeys: [...(prev.journeys || []), data],
                 }));
                 break;
+              case "memory":
+                // The assistant used remember/forget: refresh the chip and
+                // the Diagnostic's muted list.
+                window.dispatchEvent(new CustomEvent(MEMORY_EVENT));
+                break;
               case "token":
                 updateTurn(assistantTurnId, (prev) => ({
                   pendingTool: null,
@@ -442,6 +458,35 @@ export default function ChatDrawer({
     if (onPrefillConsumed) onPrefillConsumed();
     if (msg.length >= 2) sendTurn({ userMessage: msg });
   }, [open, prefillMessage, streaming, sendTurn, onPrefillConsumed]);
+
+  // Background hand-off (no need for the drawer to be open).
+  useEffect(() => {
+    if (!backgroundMessage || streaming) return;
+    const msg = String(backgroundMessage).trim().slice(0, 2000);
+    if (onBackgroundConsumed) onBackgroundConsumed();
+    if (msg.length >= 2) {
+      backgroundRef.current = { message: msg };
+      sendTurn({ userMessage: msg });
+    }
+  }, [backgroundMessage, streaming, sendTurn, onBackgroundConsumed]);
+
+  // Report the outcome of the background turn once its assistant reply settles.
+  useEffect(() => {
+    const bg = backgroundRef.current;
+    if (!bg || !onTurnComplete) return;
+    let idx = -1;
+    for (let i = turns.length - 1; i >= 0; i--) {
+      if (turns[i].role === "user" && turns[i].content === bg.message) {
+        idx = i;
+        break;
+      }
+    }
+    const reply = idx >= 0 ? turns[idx + 1] : null;
+    if (reply && reply.role === "assistant" && (reply.status === "complete" || reply.status === "error" || reply.status === "aborted")) {
+      backgroundRef.current = null;
+      onTurnComplete({ background: true, proposals: (reply.proposals || []).length, error: reply.status !== "complete" });
+    }
+  }, [turns, onTurnComplete]);
 
   const handleSend = useCallback(() => {
     const trimmed = draft.trim();
@@ -721,6 +766,7 @@ export default function ChatDrawer({
             )}
           </Box>
         </Box>
+        {feedLoaded && <MemoryChip memory={memory} onUpdate={updateMemory} />}
         {!isMobile && (
           <Tooltip title={wide ? t("chat.action.narrow") : t("chat.action.widen")}>
             <IconButton size="small" onClick={toggleWide} aria-label={wide ? t("chat.action.narrow") : t("chat.action.widen")} sx={{ width: 28, height: 28 }}>
@@ -809,6 +855,8 @@ export default function ChatDrawer({
           onReplayAction={performUiAction}
           suggestions={suggestions}
           onPickSuggestion={handlePickSuggestion}
+          autoPlan={autoPlan}
+          onToggleAutoPlan={onToggleAutoPlan}
         />
       )}
 

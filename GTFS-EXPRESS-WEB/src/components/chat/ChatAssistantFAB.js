@@ -20,7 +20,7 @@
  *   - Small β badge regardless of beta status (marks it as early-access).
  */
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Box,
   Button,
@@ -44,6 +44,7 @@ import InsightsOutlinedIcon from "@mui/icons-material/InsightsOutlined";
 import LockOutlinedIcon from "@mui/icons-material/LockOutlined";
 import MailOutlineIcon from "@mui/icons-material/MailOutline";
 import TerminalOutlinedIcon from "@mui/icons-material/TerminalOutlined";
+import AutoFixHighIcon from "@mui/icons-material/AutoFixHigh";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { useFeatures } from "../../utils/featuresApi";
 import { BETA_CODE_STORAGE_KEY } from "../edit/BetaGateDialog";
@@ -317,6 +318,10 @@ function AIAccessDialog({ open, onClose, onActivated }) {
 // the user keeps their place while the assistant answers.
 export const CHAT_OPEN_EVENT = "gtfs:chat-open";
 
+// Opt-in: prepare a repair plan in the background after each import.
+export const AUTO_PLAN_STORAGE_KEY = "gtfs:chat-auto-plan";
+const AUTO_PLAN_DELAY_MS = 3500;
+
 export default function ChatAssistantFAB({
   feedLoaded,
   feedEpoch,
@@ -330,7 +335,24 @@ export default function ChatAssistantFAB({
   const [open, setOpen] = useState(false);
   const [accessOpen, setAccessOpen] = useState(false);
   const [prefillMessage, setPrefillMessage] = useState(null);
+  const [backgroundMessage, setBackgroundMessage] = useState(null);
+  const [planReady, setPlanReady] = useState(null); // { proposals, error }
+  const [autoPlan, setAutoPlanState] = useState(() => {
+    try {
+      return localStorage.getItem(AUTO_PLAN_STORAGE_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
   const isDark = theme.palette.mode === "dark";
+  const setAutoPlan = useCallback((on) => {
+    setAutoPlanState(on);
+    try {
+      localStorage.setItem(AUTO_PLAN_STORAGE_KEY, on ? "1" : "0");
+    } catch {
+      /* storage disabled */
+    }
+  }, []);
 
   const enabled = loaded && features?.chat?.enabled === true;
   const visible = enabled && feedLoaded;
@@ -360,8 +382,35 @@ export default function ChatAssistantFAB({
     return () => window.removeEventListener(CHAT_OPEN_EVENT, handler);
   }, [visible, features?.chat?.freeMessages]);
 
+  // Background repair plan: a few seconds after a new feed lands (the
+  // conversation was just reset), send the "repair everything" prompt while
+  // the drawer stays closed; the badge below tells the user when it is done.
+  const lastPlannedEpochRef = useRef(0);
+  useEffect(() => {
+    if (!visible || !autoPlan || !feedEpoch || feedEpoch === lastPlannedEpochRef.current) return undefined;
+    let hasCode = false;
+    try {
+      hasCode = Boolean(localStorage.getItem(BETA_CODE_STORAGE_KEY));
+    } catch {
+      /* storage disabled */
+    }
+    if (!hasCode && !(features?.chat?.freeMessages > 0)) return undefined;
+    lastPlannedEpochRef.current = feedEpoch;
+    setPlanReady(null);
+    const id = setTimeout(() => setBackgroundMessage(t("audit.aiRepairAllPrompt")), AUTO_PLAN_DELAY_MS);
+    return () => clearTimeout(id);
+  }, [visible, autoPlan, feedEpoch, features?.chat?.freeMessages, t]);
+
+  const handleTurnComplete = useCallback(({ background, proposals, error }) => {
+    if (background) setPlanReady({ proposals, error });
+  }, []);
+  useEffect(() => {
+    if (open) setPlanReady(null);
+  }, [open]);
+
   const errorCount = sessionContext?.validation?.errors || 0;
-  const showRescueBadge = errorCount > 0 && !open;
+  const showRescueBadge = errorCount > 0 && !open && !planReady;
+  const showPlanBadge = Boolean(planReady) && !open;
 
   if (!visible) return null;
 
@@ -386,11 +435,15 @@ export default function ChatAssistantFAB({
         >
           <Tooltip
             title={
-              showRescueBadge
-                ? t("chat.fab.rescueTooltip", { count: errorCount })
-                : betaPresent
-                  ? t("chat.fab.tooltip")
-                  : t("beta.title")
+              showPlanBadge
+                ? planReady.proposals > 0
+                  ? t("chat.fab.planReady", { count: planReady.proposals })
+                  : t("chat.fab.planEmpty")
+                : showRescueBadge
+                  ? t("chat.fab.rescueTooltip", { count: errorCount })
+                  : betaPresent
+                    ? t("chat.fab.tooltip")
+                    : t("beta.title")
             }
             placement="right"
             arrow
@@ -461,6 +514,40 @@ export default function ChatAssistantFAB({
             </Box>
           )}
 
+          {/* Background repair plan ready */}
+          {showPlanBadge && (
+            <Box
+              aria-hidden
+              data-testid="chat-plan-badge"
+              sx={{
+                position: "absolute",
+                top: -7,
+                left: -7,
+                minWidth: 18,
+                height: 18,
+                px: "4px",
+                borderRadius: "9px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "2px",
+                background: planReady.proposals > 0 ? theme.palette.warning.main : theme.palette.success.main,
+                color: "#fff",
+                fontSize: "0.6rem",
+                fontWeight: 700,
+                lineHeight: 1,
+                pointerEvents: "none",
+                userSelect: "none",
+                boxShadow: `0 0 0 2px ${theme.palette.background.default}`,
+                animation: "gtfsPlanPulse 1.6s ease-in-out 3",
+                "@keyframes gtfsPlanPulse": { "0%, 100%": { transform: "scale(1)" }, "50%": { transform: "scale(1.25)" } },
+              }}
+            >
+              <AutoFixHighIcon sx={{ fontSize: 10 }} />
+              {planReady.proposals > 0 ? planReady.proposals : ""}
+            </Box>
+          )}
+
           {/* β badge */}
           <Box
             aria-hidden
@@ -507,6 +594,11 @@ export default function ChatAssistantFAB({
         sessionContext={sessionContext}
         prefillMessage={prefillMessage}
         onPrefillConsumed={() => setPrefillMessage(null)}
+        backgroundMessage={backgroundMessage}
+        onBackgroundConsumed={() => setBackgroundMessage(null)}
+        onTurnComplete={handleTurnComplete}
+        autoPlan={autoPlan}
+        onToggleAutoPlan={setAutoPlan}
       />
     </>
   );

@@ -26,6 +26,7 @@ import { fetchWithSession } from "../../utils/sessionManager";
 import { useEditMode } from "../../contexts/EditModeContext";
 import { useLanguage } from "../../contexts/LanguageContext";
 import ColorPickerField, { bestContrastColor } from "./ColorPickerField";
+import SuggestFieldButton from "./SuggestFieldButton";
 import EntityAutocomplete from "./EntityAutocomplete";
 import TranslationsRecordPanel from "./TranslationsRecordPanel";
 
@@ -479,6 +480,11 @@ function EditRouteDialog({
               size="small"
               sx={{ flex: 1 }}
               autoFocus
+              InputProps={{
+              endAdornment: (
+                <SuggestFieldButton entity="route" field="route_short_name" form={form} id={route?.route_id || null} onSuggest={(v) => setForm((f) => ({ ...f, route_short_name: v }))} />
+              ),
+            }}
               {...fieldProps("route_short_name")}
             />
             <TextField
@@ -487,6 +493,11 @@ function EditRouteDialog({
               onChange={handleChange("route_long_name")}
               size="small"
               sx={{ flex: 2 }}
+              InputProps={{
+              endAdornment: (
+                <SuggestFieldButton entity="route" field="route_long_name" form={form} id={route?.route_id || null} onSuggest={(v) => setForm((f) => ({ ...f, route_long_name: v }))} />
+              ),
+            }}
               {...fieldProps("route_long_name")}
             />
           </Box>
@@ -550,6 +561,11 @@ function EditRouteDialog({
               sx={{ flex: 2 }}
               helperText={t("edit.route.url.help")}
               inputProps={{ style: { fontFamily: "monospace" } }}
+              InputProps={{
+              endAdornment: (
+                <SuggestFieldButton entity="route" field="route_url" form={form} id={route?.route_id || null} onSuggest={(v) => setForm((f) => ({ ...f, route_url: v }))} />
+              ),
+            }}
               {...fieldProps("route_url")}
             />
             <TextField
@@ -578,6 +594,11 @@ function EditRouteDialog({
             size="small"
             multiline
             minRows={2}
+            InputProps={{
+              endAdornment: (
+                <SuggestFieldButton entity="route" field="route_desc" form={form} id={route?.route_id || null} onSuggest={(v) => setForm((f) => ({ ...f, route_desc: v }))} />
+              ),
+            }}
             {...fieldProps("route_desc")}
           />
 

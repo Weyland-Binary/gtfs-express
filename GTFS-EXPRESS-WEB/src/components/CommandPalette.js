@@ -23,6 +23,7 @@ import { useLanguage } from "../contexts/LanguageContext";
 import { useEditMode } from "../contexts/EditModeContext";
 import { useDetailPanel } from "../contexts/DetailPanelContext";
 import { useDestructiveGuard } from "../contexts/DestructiveGuardContext";
+import { useFeatures } from "../utils/featuresApi";
 import {
   useKeyboardShortcut,
   formatChord,
@@ -178,6 +179,8 @@ function CommandPalette() {
 
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const { features } = useFeatures();
+  const chatEnabled = Boolean(features?.chat?.enabled);
   const [entityResults, setEntityResults] = useState(null);
   const [searching, setSearching] = useState(false);
   const [selectedIdx, setSelectedIdx] = useState(0);
@@ -452,6 +455,19 @@ function CommandPalette() {
   // as non-selectable entries so selectedIdx only advances across items.
   const flatRows = useMemo(() => {
     const rows = [];
+    // Anything typed can be handed to the assistant, with the screen context
+    // (route, direction, date, open panel) attached by the FAB.
+    const q = query.trim();
+    if (chatEnabled && q.length >= 2) {
+      rows.push({ section: t("palette.section.assistant") });
+      rows.push({
+        kind: "action",
+        id: "askAiQuery",
+        label: t("palette.action.askAiQuery", { query: q.length > 60 ? `${q.slice(0, 60)}…` : q }),
+        hint: t("palette.action.askAiQueryHint"),
+        run: () => window.dispatchEvent(new CustomEvent("gtfs:chat-open", { detail: { message: q } })),
+      });
+    }
     if (filtered.length > 0) {
       rows.push({ section: t("palette.section.actions") });
       rows.push(...filtered.map((a) => ({ kind: "action", ...a })));
@@ -477,7 +493,7 @@ function CommandPalette() {
       rows.push(...entityFlat.map((e) => ({ kind: "entity", ...e })));
     }
     return rows;
-  }, [filtered, extraShortcuts, entityFlat, t]);
+  }, [filtered, extraShortcuts, entityFlat, t, query, chatEnabled]);
 
   const selectableIndices = useMemo(
     () => flatRows.map((r, i) => (r.section ? -1 : i)).filter((i) => i >= 0),

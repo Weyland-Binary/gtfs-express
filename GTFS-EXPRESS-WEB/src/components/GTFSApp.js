@@ -361,12 +361,26 @@ function GTFSApp() {
         ? importAdjustments
         : null;
 
+    // What is on screen: "this route" / "this stop" in a question resolves
+    // to it (Ctrl+K → ask the assistant).
+    const routeId =
+      typeof selectedRoute === "string" ? selectedRoute : selectedRoute?.route_id || null;
+    const focusParts = {
+      ...(routeId ? { routeId: String(routeId) } : {}),
+      ...(selectedRouteDetails?.route_short_name ? { routeName: String(selectedRouteDetails.route_short_name) } : {}),
+      ...(selectedDirection !== "" && selectedDirection != null ? { directionId: String(selectedDirection) } : {}),
+      ...(selectedDate ? { date: String(selectedDate).replace(/-/g, "") } : {}),
+      ...(entity && entity.type && entity.id != null ? { panel: { type: String(entity.type), id: String(entity.id) } } : {}),
+    };
+    const focus = Object.keys(focusParts).length > 0 ? focusParts : null;
+
     const summary = summarizeReport(validationReport);
     if (!summary.validated) {
-      if (!feed && !adjustments) return null;
+      if (!feed && !adjustments && !focus) return null;
       return {
         ...(feed ? { feed } : {}),
         ...(adjustments ? { importAdjustments: adjustments } : {}),
+        ...(focus ? { focus } : {}),
         tab,
       };
     }
@@ -381,6 +395,7 @@ function GTFSApp() {
       },
       feed,
       ...(adjustments ? { importAdjustments: adjustments } : {}),
+      ...(focus ? { focus } : {}),
       tab,
     };
   }, [
@@ -389,6 +404,11 @@ function GTFSApp() {
     selectedMainTab,
     agencies,
     importAdjustments,
+    selectedRoute,
+    selectedRouteDetails,
+    selectedDirection,
+    selectedDate,
+    entity,
   ]);
 
   // ── Session heartbeat ────────────────────────────────────────────────────

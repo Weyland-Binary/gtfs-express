@@ -335,6 +335,13 @@ router.post("/journey", journey);
 // gated like the chat (beta code or free trial).
 const { summarize } = require("../services/aiSummaryService");
 router.post("/ai/summarize", chatAccessGate, summarize);
+const { suggestField } = require("../services/aiSuggestService");
+router.post("/ai/suggest-field", chatAccessGate, suggestField);
+
+// What the assistant remembers about this session (notes, muted findings).
+const { getMemory, putMemory } = require("../services/assistantMemoryService");
+router.get("/assistant/memory", getMemory);
+router.put("/assistant/memory", putMemory);
 
 // SQL console (read-only public — works without entering edit mode).
 // Allowed: SELECT / WITH / EXPLAIN / read-only PRAGMA. Mutations always 403.

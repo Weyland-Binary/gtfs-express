@@ -170,6 +170,22 @@ test("merging duplicate stops from the Diagnostic is a single undoable step", as
   await expect(page.getByTestId("audit-finding-duplicate_stops")).toBeVisible({ timeout: 30_000 });
 });
 
+test("ignoring a Diagnostic finding hides it and is remembered for the session", async () => {
+  const finding = page.getByTestId("audit-finding-duplicate_stops");
+  await expect(finding).toBeVisible({ timeout: 30_000 });
+  // The row may still be expanded from the merge scenario.
+  if (!(await page.getByTestId("audit-ignore").first().isVisible().catch(() => false))) {
+    await finding.click();
+  }
+  await page.getByTestId("audit-ignore").first().click();
+  await expect(page.getByTestId("audit-finding-duplicate_stops")).toBeHidden({ timeout: 15_000 });
+  await page.getByTestId("audit-toggle-ignored").first().click();
+  await expect(page.getByTestId("audit-finding-duplicate_stops")).toBeVisible({ timeout: 15_000 });
+  await page.getByTestId("audit-finding-duplicate_stops").click();
+  await page.getByTestId("audit-unignore").first().click();
+  await expect(page.getByTestId("audit-toggle-ignored")).toBeHidden({ timeout: 15_000 });
+});
+
 test("export produces a GTFS zip", async () => {
   test.setTimeout(180_000);
   await page.getByTestId("edit-export").click();

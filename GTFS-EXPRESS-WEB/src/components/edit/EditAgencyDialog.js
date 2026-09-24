@@ -22,6 +22,7 @@ import MenuItem from "@mui/material/MenuItem";
 import API_BASE_URL from "../../config";
 import { fetchWithSession } from "../../utils/sessionManager";
 import { useEditMode } from "../../contexts/EditModeContext";
+import SuggestFieldButton from "./SuggestFieldButton";
 import { useLanguage } from "../../contexts/LanguageContext";
 import TranslationsRecordPanel from "./TranslationsRecordPanel";
 
@@ -218,6 +219,11 @@ function EditAgencyDialog({ open, agency, onClose, onSaved }) {
             size="small"
             required
             placeholder="https://..."
+            InputProps={{
+              endAdornment: (
+                <SuggestFieldButton entity="agency" field="agency_url" form={form} id={agency?.agency_id || null} onSuggest={(v) => setForm((f) => ({ ...f, agency_url: v }))} />
+              ),
+            }}
           />
           <Box display="flex" gap={2}>
             <TextField
@@ -228,6 +234,11 @@ function EditAgencyDialog({ open, agency, onClose, onSaved }) {
               required
               placeholder="Europe/Paris"
               sx={{ flex: 1 }}
+              InputProps={{
+              endAdornment: (
+                <SuggestFieldButton entity="agency" field="agency_timezone" form={form} id={agency?.agency_id || null} onSuggest={(v) => setForm((f) => ({ ...f, agency_timezone: v }))} />
+              ),
+            }}
             />
             <TextField
               label={t("edit.agency.lang")}
@@ -236,6 +247,11 @@ function EditAgencyDialog({ open, agency, onClose, onSaved }) {
               size="small"
               placeholder="fr"
               sx={{ flex: 1 }}
+              InputProps={{
+              endAdornment: (
+                <SuggestFieldButton entity="agency" field="agency_lang" form={form} id={agency?.agency_id || null} onSuggest={(v) => setForm((f) => ({ ...f, agency_lang: v }))} />
+              ),
+            }}
             />
           </Box>
           <Box display="flex" gap={2}>

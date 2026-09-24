@@ -227,6 +227,7 @@ const generateChatTurn = async (req, res) => {
       userMessage,
       language,
       sessionContext,
+      memoryBlock: require("./assistantMemoryService").buildMemoryBlock(sessionCtx.sessionId),
       attachmentRefs: attachments.refs,
       freeRemaining,
       freeTier: Boolean(req.freeTier),

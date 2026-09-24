@@ -20,6 +20,7 @@ const qualityAuditService = require("./qualityAuditService");
 const tripEditService = require("./edit/tripEditService");
 const smartEditService = require("./edit/smartEditService");
 const journeyService = require("./journeyService");
+const assistantMemoryService = require("./assistantMemoryService");
 const { getRule } = require("../utils/rulesCatalog");
 
 // ── Caps ──────────────────────────────────────────────────────────────────
@@ -579,8 +580,10 @@ const runQualityAudit = {
   },
   run(_input, ctx) {
     const audit = qualityAuditService.auditForSession(ctx.dbCtx.db, ctx.dbCtx.sessionId);
+    const ignored = new Set(assistantMemoryService.load(ctx.dbCtx.sessionId).ignoredFindings);
     const findings = audit.findings.map((f) => ({
       code: f.code,
+      ...(ignored.has(f.code) ? { ignored_by_user: true } : {}),
       severity: f.severity,
       count: f.count,
       unit: f.unit,
@@ -598,7 +601,7 @@ const runQualityAudit = {
         note:
           findings.length === 0
             ? "No semantic issue found."
-            : "fix=sql: draft with propose_fix after inspecting; fix=studio: point the user to the Shape Studio (navigate shape_studio); fix=review: explain and let the user decide (show rows with run_sql).",
+            : "fix=sql: draft with propose_fix after inspecting; fix=studio: point the user to the Shape Studio (navigate shape_studio); fix=review: explain and let the user decide (show rows with run_sql). ignored_by_user=true: the user muted this finding — do not propose a fix unless asked.",
       }),
     };
   },
@@ -1043,6 +1046,62 @@ const planJourney = {
   },
 };
 
+// ── remember / forget ─────────────────────────────────────────────────────
+const remember = {
+  definition: {
+    name: "remember",
+    description:
+      "Store a short fact or decision about THIS feed for the rest of the session ('route 12 is a school service, keep its calendar', 'stop codes are the SAE ids', 'the user wants names in Title Case'), or mute a Diagnostic finding code the user does not care about. Call it when the user states a rule, a preference or a decision you should not ask about again — say what you remembered.",
+    input_schema: {
+      type: "object",
+      properties: {
+        note: { type: "string", description: "One sentence, in the user's language (≤ 240 chars)." },
+        ignore_finding: { type: "string", description: "A Diagnostic finding code to mute (e.g. duplicate_stops)." },
+      },
+    },
+  },
+  run(input, ctx) {
+    const note = typeof input?.note === "string" ? input.note.trim() : "";
+    const code = typeof input?.ignore_finding === "string" ? input.ignore_finding.trim() : "";
+    if (!note && !code) return { content: "Error: give a note and/or an ignore_finding code.", isError: true };
+    if (code && !RULE_CODE_RE.test(code)) return { content: "Error: invalid finding code.", isError: true };
+    const mem = assistantMemoryService.update(ctx.dbCtx.sessionId, { addNotes: note ? [note] : [], ignore: code ? [code] : [] }, "assistant");
+    ctx.emit("memory", { notes: mem.notes.length, ignoredFindings: mem.ignoredFindings });
+    return { content: `Remembered. Memory now holds ${mem.notes.length} note(s)${mem.ignoredFindings.length ? ` and ignores: ${mem.ignoredFindings.join(", ")}` : ""}.` };
+  },
+};
+
+const forget = {
+  definition: {
+    name: "forget",
+    description: "Remove a remembered note (by its text, matched loosely) or un-mute a Diagnostic finding code, when the user changes their mind. `everything: true` clears the session memory.",
+    input_schema: {
+      type: "object",
+      properties: {
+        note: { type: "string" },
+        unignore_finding: { type: "string" },
+        everything: { type: "boolean" },
+      },
+    },
+  },
+  run(input, ctx) {
+    const sessionId = ctx.dbCtx.sessionId;
+    if (input?.everything === true) {
+      assistantMemoryService.update(sessionId, { clear: true }, "assistant");
+      ctx.emit("memory", { notes: 0, ignoredFindings: [] });
+      return { content: "Memory cleared." };
+    }
+    const note = typeof input?.note === "string" ? input.note.trim().toLowerCase() : "";
+    const code = typeof input?.unignore_finding === "string" ? input.unignore_finding.trim() : "";
+    const current = assistantMemoryService.load(sessionId);
+    const ids = note ? current.notes.filter((n) => n.text.toLowerCase().includes(note) || note.includes(n.text.toLowerCase())).map((n) => n.id) : [];
+    if (!ids.length && !code) return { content: "Nothing matched: no such note or code in memory.", isError: true };
+    const mem = assistantMemoryService.update(sessionId, { removeNoteIds: ids, unignore: code ? [code] : [] }, "assistant");
+    ctx.emit("memory", { notes: mem.notes.length, ignoredFindings: mem.ignoredFindings });
+    return { content: `Forgotten (${ids.length} note(s) removed${code ? `, ${code} no longer ignored` : ""}).` };
+  },
+};
+
 const TOOLS = [
   runSql,
   proposeFix,
@@ -1060,6 +1119,8 @@ const TOOLS = [
   renameStops,
   extendCalendar,
   planJourney,
+  remember,
+  forget,
 ];
 const TOOL_DEFINITIONS = TOOLS.map((t) => t.definition);
 const TOOLS_BY_NAME = Object.fromEntries(TOOLS.map((t) => [t.definition.name, t]));

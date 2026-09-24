@@ -181,6 +181,20 @@ const buildSessionContextBlock = (raw) => {
   // model drafts DELETE statements against duplicates that no longer exist
   // and the upload report's duplicate_key findings look unfixed when they
   // are already resolved in the working database.
+  // What the user is looking at (client-supplied, sanitized): the assistant
+  // can act on "this route" / "this stop" without asking which.
+  const focus = raw.focus;
+  if (focus && typeof focus === "object") {
+    const parts = [];
+    const idOk = (v) => typeof v === "string" && SAFE_ID_RE.test(v);
+    if (idOk(focus.routeId)) parts.push(`route ${focus.routeId}${typeof focus.routeName === "string" && focus.routeName.trim() ? ` (${focus.routeName.trim().slice(0, 60)})` : ""}${idOk(focus.directionId) ? `, direction ${focus.directionId}` : ""}`);
+    if (typeof focus.date === "string" && /^\d{8}$/.test(focus.date)) parts.push(`date ${focus.date}`);
+    if (focus.panel && typeof focus.panel === "object" && /^[a-z_]{1,32}$/.test(String(focus.panel.type || "")) && idOk(String(focus.panel.id || ""))) {
+      parts.push(`open detail panel: ${focus.panel.type} ${focus.panel.id}`);
+    }
+    if (parts.length) lines.push(`Currently on screen: ${parts.join("; ")}. "This route/stop/trip" refers to it.`);
+  }
+
   const adj = raw.importAdjustments;
   if (adj && typeof adj === "object" && !Array.isArray(adj)) {
     const entries = Object.entries(adj)
@@ -494,6 +508,7 @@ const streamChatTurn = async ({
   userMessage,
   language,
   sessionContext = null,
+  memoryBlock = "",
   attachmentRefs = [],
   freeRemaining = null,
   freeTier = false,
@@ -582,6 +597,7 @@ const streamChatTurn = async ({
   );
   const outboundUserMessage = [
     contextBlock ? `${contextBlock}\nUI language: ${langName}.` : `[UI language: ${langName}]`,
+    memoryBlock || "",
     attachmentBlock,
     trimmed,
   ]

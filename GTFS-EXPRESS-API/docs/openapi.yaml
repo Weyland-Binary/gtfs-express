@@ -762,6 +762,61 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "503":
           $ref: "#/components/responses/BadRequest"
+  /gtfs/ai/suggest-field:
+    post:
+      tags:
+        - NL2SQL
+      summary: "AI suggestion for one field of a stop/route/agency edit form, from the feed's context. Gated like the chat."
+      security:
+        - SessionId: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/BadRequest"
+        "429":
+          $ref: "#/components/responses/BadRequest"
+        "503":
+          $ref: "#/components/responses/BadRequest"
+  /gtfs/assistant/memory:
+    get:
+      tags:
+        - NL2SQL
+      summary: What the assistant remembers about this session (notes, ignored Diagnostic findings).
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags:
+        - NL2SQL
+      summary: Update the assistant's memory (addNotes, removeNoteIds, ignore, unignore, clear).
+      security:
+        - SessionId: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /gtfs/diff:
     post:
       tags:

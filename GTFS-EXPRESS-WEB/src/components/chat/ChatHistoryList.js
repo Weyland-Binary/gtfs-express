@@ -14,7 +14,7 @@
  */
 
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Box, Fade, alpha, useTheme } from "@mui/material";
+import { Box, Fade, FormControlLabel, Switch, alpha, useTheme } from "@mui/material";
 import AutoFixHighIcon from "@mui/icons-material/AutoFixHigh";
 import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
 import TravelExploreIcon from "@mui/icons-material/TravelExplore";
@@ -89,7 +89,7 @@ const Group = ({ Icon, title, children }) => {
   );
 };
 
-const EmptyState = ({ onPickExample, suggestions = [], onPickSuggestion }) => {
+const EmptyState = ({ onPickExample, suggestions = [], onPickSuggestion, autoPlan = false, onToggleAutoPlan = null }) => {
   const { t } = useLanguage();
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
@@ -172,6 +172,16 @@ const EmptyState = ({ onPickExample, suggestions = [], onPickSuggestion }) => {
             ))}
           </Group>
         ))}
+        {onToggleAutoPlan && (
+          <Box sx={{ mt: 0.5, px: 1, py: 0.75, borderRadius: 1.5, border: `1px solid ${alpha(aiColor, 0.25)}`, background: alpha(aiColor, 0.04) }}>
+            <FormControlLabel
+              control={<Switch size="small" checked={autoPlan} onChange={(e) => onToggleAutoPlan(e.target.checked)} inputProps={{ "data-testid": "chat-auto-plan" }} />}
+              label={<Box sx={{ fontSize: "0.76rem", fontWeight: 600 }}>{t("chat.autoPlan.label")}</Box>}
+              sx={{ m: 0 }}
+            />
+            <Box sx={{ fontSize: "0.68rem", color: "text.secondary", lineHeight: 1.4, pl: 0.5 }}>{t("chat.autoPlan.hint")}</Box>
+          </Box>
+        )}
       </Box>
     </Box>
   );
@@ -188,6 +198,8 @@ export default function ChatHistoryList({
   onReplayAction = null,
   suggestions = [],
   onPickSuggestion = null,
+  autoPlan = false,
+  onToggleAutoPlan = null,
 }) {
   const { t } = useLanguage();
   const theme = useTheme();
@@ -231,7 +243,7 @@ export default function ChatHistoryList({
   }, [turns]);
 
   if (turns.length === 0) {
-    return <EmptyState onPickExample={onPickExample} suggestions={suggestions} onPickSuggestion={onPickSuggestion} />;
+    return <EmptyState onPickExample={onPickExample} suggestions={suggestions} onPickSuggestion={onPickSuggestion} autoPlan={autoPlan} onToggleAutoPlan={onToggleAutoPlan} />;
   }
 
   let lastAssistantIdx = -1;
