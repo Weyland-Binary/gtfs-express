@@ -282,6 +282,15 @@ function EditTripDialog({
         Object.keys(initial).forEach((k) => {
           if (form[k] !== initial[k]) payload[k] = form[k];
         });
+        // Re-assigning a trip to another route / service is a normal
+        // scheduling task (the backend has always accepted it): moving a
+        // trip to the Saturday service no longer needs the SQL console.
+        if (routeId.trim() && routeId.trim() !== (trip.route_id || "")) {
+          payload.route_id = routeId.trim();
+        }
+        if (serviceId.trim() && serviceId.trim() !== (trip.service_id || "")) {
+          payload.service_id = serviceId.trim();
+        }
         if (Object.keys(payload).length === 0) {
           onClose();
           setSaving(false);
@@ -461,7 +470,7 @@ function EditTripDialog({
                 onChange={(e) => setTripId(e.target.value)}
                 size="small"
                 fullWidth
-                required
+                placeholder={t("edit.trip.tripIdAuto")}
                 helperText={t("edit.trip.tripIdHelp")}
                 slotProps={{
                   htmlInput: { style: { fontFamily: "monospace" } },
@@ -507,6 +516,28 @@ function EditTripDialog({
               )}
               <Divider />
             </>
+          )}
+
+          {/* Route / service are editable on an existing trip too */}
+          {!isCreate && (
+            <Box display="flex" gap={2}>
+              <EntityAutocomplete
+                entity="route"
+                value={routeId}
+                onChange={(v) => setRouteId(v)}
+                label={t("edit.trip.routeId")}
+                size="small"
+                sx={{ flex: 1 }}
+              />
+              <EntityAutocomplete
+                entity="service"
+                value={serviceId}
+                onChange={(v) => setServiceId(v)}
+                label={t("edit.trip.serviceId")}
+                size="small"
+                sx={{ flex: 1 }}
+              />
+            </Box>
           )}
 
           <TextField

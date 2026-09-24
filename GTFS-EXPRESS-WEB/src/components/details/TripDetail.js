@@ -35,6 +35,7 @@ import { useKeyboardShortcut } from "../../contexts/ShortcutsContext";
 import EditTripDialog from "../edit/EditTripDialog";
 import CascadePreviewDialog from "../edit/CascadePreviewDialog";
 import EditFrequencyDialog from "../edit/EditFrequencyDialog";
+import InsertStopDialog from "../edit/InsertStopDialog";
 import PanelSkeleton from "../common/PanelSkeleton";
 
 const hasNonZeroSeconds = (times) =>
@@ -85,6 +86,7 @@ function TripDetail({ tripId }) {
   const [duplicateOpen, setDuplicateOpen] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [insertStopOpen, setInsertStopOpen] = useState(false);
 
   // Frequencies state
   const [frequencies, setFrequencies] = useState([]);
@@ -632,15 +634,36 @@ function TripDetail({ tripId }) {
 
       {/* Stop sequence timeline */}
       <Box sx={{ background: cardBg, borderRadius: 2, p: 2 }}>
-        <Typography
-          variant="subtitle2"
-          fontWeight={700}
-          color="text.secondary"
-          sx={{ textTransform: "uppercase", letterSpacing: "0.05em", mb: 1.5 }}
-        >
-          <PlaceIcon sx={{ fontSize: 16, verticalAlign: "middle", mr: 0.5 }} />
-          Stop sequence
-        </Typography>
+        <Box display="flex" alignItems="center" sx={{ mb: 1.5 }}>
+          <Typography
+            variant="subtitle2"
+            fontWeight={700}
+            color="text.secondary"
+            sx={{ textTransform: "uppercase", letterSpacing: "0.05em", flex: 1 }}
+          >
+            <PlaceIcon sx={{ fontSize: 16, verticalAlign: "middle", mr: 0.5 }} />
+            {t("trip.stopSequence")}
+          </Typography>
+          {editing && (
+            <Tooltip title={t("schedule.insertStop.tooltip")} arrow>
+              <Button
+                size="small"
+                variant="outlined"
+                startIcon={<AddIcon sx={{ fontSize: 16 }} />}
+                onClick={() => setInsertStopOpen(true)}
+                data-testid="trip-add-stop"
+                sx={{ textTransform: "none", fontWeight: 600, py: 0.25 }}
+              >
+                {t("trip.addStop")}
+              </Button>
+            </Tooltip>
+          )}
+        </Box>
+        {stop_sequence.length === 0 && (
+          <Alert severity="info" sx={{ mb: 1 }}>
+            {t("trip.noStopsHint")}
+          </Alert>
+        )}
         <Box sx={{ maxHeight: 500, overflow: "auto" }}>
           {stop_sequence.map((st, i) => {
             const isFirst = i === 0;
@@ -762,6 +785,21 @@ function TripDetail({ tripId }) {
         onCancel={() => setDeleteConfirm(false)}
         onConfirm={handleDeleteTrip}
       />
+
+      {/* Insert a stop into this trip — the only way to give a freshly
+          created (empty) trip its first stops without the SQL console. */}
+      {insertStopOpen && (
+        <InsertStopDialog
+          open
+          onClose={() => setInsertStopOpen(false)}
+          tripId={trip.trip_id}
+          tripLabel={trip.trip_headsign || trip.trip_id}
+          existingStopTimes={stop_sequence}
+          stopsMap={Object.fromEntries(
+            stop_sequence.map((st) => [st.stop_id, st]),
+          )}
+        />
+      )}
     </Box>
   );
 }

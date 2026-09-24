@@ -39,6 +39,10 @@ import API_BASE_URL from "../config";
 import { fetchWithSession } from "../utils/sessionManager";
 import InsertStopDialog from "./edit/InsertStopDialog";
 import EditStopTimeDialog from "./edit/EditStopTimeDialog";
+import ShiftTimesDialog from "./edit/ShiftTimesDialog";
+import EditTripDialog from "./edit/EditTripDialog";
+import CascadePreviewDialog from "./edit/CascadePreviewDialog";
+import ScheduleIcon from "@mui/icons-material/Schedule";
 
 // ── Segmented time input (HH:MM:SS with fixed colons) ──────────────────────
 // GTFS times support hours > 23 (e.g. 25:30:00 for next-day service).
@@ -334,6 +338,10 @@ const ScheduleGrid = ({
   const [insertDialogTrip, setInsertDialogTrip] = useState(null);
   // EditStopTimeDialog state: stopTime row object | null
   const [stopTimeDetail, setStopTimeDetail] = useState(null);
+  // Shift-times dialog: trip_id | null
+  const [shiftDialogTrip, setShiftDialogTrip] = useState(null);
+  // Column actions needing the trip row: { kind: "duplicate"|"delete", tripId, trip }
+  const [tripAction, setTripAction] = useState(null);
 
   // Trip column pagination state. The toolbar (rendered below) lets the
   // user navigate / change page size. Both pieces of state are reset to
@@ -384,7 +392,7 @@ const ScheduleGrid = ({
   );
 
   // Keep only stops present in stops.txt, in master order.
-  // sortedStopIds is also used as-is by computeStopSequence
+  // sortedStopIds is also used as-is by computeInsertSequence
   // in edit mode (stopId.indexOf), so we expose it separately.
   const sortedStopIds = useMemo(
     () => masterStopOrder.filter((stop_id) => stopsMap[stop_id]),
@@ -421,18 +429,19 @@ const ScheduleGrid = ({
   // cost: a Set + sort whose comparator re-accessed grid on every
   // call (sort = O(n log n) comparator calls). We pre-compute the
   // sort key once.
-  const tripIds = useMemo(() => {
+  const { tripIds, firstTimeByTrip } = useMemo(() => {
     const firstArrivalByTrip = new Map();
     for (const st of stopTimes) {
-      const t = st.arrival_time || "";
+      const t = st.arrival_time || st.departure_time || "";
       const cur = firstArrivalByTrip.get(st.trip_id);
-      if (cur === undefined || (t && t < cur)) {
+      if (cur === undefined || (t && (!cur || t < cur))) {
         firstArrivalByTrip.set(st.trip_id, t);
       }
     }
-    return Array.from(firstArrivalByTrip.entries())
+    const ids = Array.from(firstArrivalByTrip.entries())
       .sort((a, b) => (a[1] || "").localeCompare(b[1] || ""))
       .map(([tripId]) => tripId);
+    return { tripIds: ids, firstTimeByTrip: firstArrivalByTrip };
   }, [stopTimes]);
 
   // Data passed to <DataTable value=…>. A new array instance on
@@ -557,21 +566,43 @@ const ScheduleGrid = ({
         iconComponent = <DirectionsBusIcon className="schedule-icon" />;
       }
     }
+    // Dwell: show the departure next to the arrival when they differ so a
+    // 08:15 › 08:17 stop is readable at a glance instead of hidden behind
+    // the popover.
+    const departure = timeInfo.departure_time;
+    const hasDwell =
+      Boolean(arrival_time) && Boolean(departure) && departure !== arrival_time;
     return (
       <div className="schedule-cell">
         <span className="schedule-time">
-          {formatTime(arrival_time, showSeconds)}
+          {formatTime(arrival_time || departure, showSeconds)}
         </span>
+        {hasDwell && (
+          <span className="schedule-time schedule-time-departure">
+            ›{formatTime(departure, showSeconds)}
+          </span>
+        )}
         {showIcon && iconComponent}
       </div>
     );
   }, [showSeconds]);
 
   // ── Edit mode: inline schedule editing ──────────────────────────────────────────────────
-  const computeStopSequence = (stopId, tripId) => {
+  // Position at which a stop that the trip does not serve yet should be
+  // inserted, in "insert with renumbering" semantics (POST
+  // /edit/stop_times/insert shifts every sequence >= the requested one).
+  // We take the sequence of the next stop the trip DOES serve in the master
+  // order, so the new stop lands between its neighbours; with no later stop
+  // it goes after the last one.
+  const computeInsertSequence = (stopId, tripId) => {
     const myIdx = sortedStopIds.indexOf(stopId);
-    // Collect all existing sequences for this trip to guarantee uniqueness
-    let maxSeq = 0;
+    let maxSeq = -1;
+    for (let i = myIdx + 1; i < sortedStopIds.length; i++) {
+      const ti = grid[sortedStopIds[i]]?.times[tripId];
+      if (ti && ti.length > 0 && ti[0].stop_sequence != null) {
+        return ti[0].stop_sequence;
+      }
+    }
     Object.keys(grid).forEach((sid) => {
       const ti = grid[sid]?.times[tripId];
       if (ti)
@@ -580,30 +611,7 @@ const ScheduleGrid = ({
             maxSeq = t.stop_sequence;
         });
     });
-    let prevSeq = null,
-      nextSeq = null;
-    for (let i = myIdx - 1; i >= 0; i--) {
-      const sid = sortedStopIds[i];
-      const ti = grid[sid]?.times[tripId];
-      if (ti && ti.length > 0 && ti[0].stop_sequence != null) {
-        prevSeq = ti[0].stop_sequence;
-        break;
-      }
-    }
-    for (let i = myIdx + 1; i < sortedStopIds.length; i++) {
-      const sid = sortedStopIds[i];
-      const ti = grid[sid]?.times[tripId];
-      if (ti && ti.length > 0 && ti[0].stop_sequence != null) {
-        nextSeq = ti[0].stop_sequence;
-        break;
-      }
-    }
-    if (prevSeq != null && nextSeq != null && nextSeq - prevSeq > 1)
-      return Math.floor((prevSeq + nextSeq) / 2);
-    if (prevSeq != null && nextSeq != null) return maxSeq + 1; // no integer gap — use max+1 to avoid PK collision
-    if (prevSeq != null) return prevSeq + 1;
-    if (nextSeq != null) return Math.max(0, nextSeq - 1);
-    return (myIdx + 1) * 10;
+    return maxSeq + 1;
   };
 
   const handleCellClick = useCallback(
@@ -633,10 +641,14 @@ const ScheduleGrid = ({
           mode: "create",
           arrival: "",
           departure: "",
+          stopSequence: computeInsertSequence(stopId, tripId),
         });
       }
     },
-    [editing],
+    // computeInsertSequence reads grid/sortedStopIds which are memoised on
+    // stopTimes; the popover snapshot is taken at click time.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [editing, grid, sortedStopIds],
   );
 
   const handleSaveStopTime = async () => {
@@ -696,7 +708,14 @@ const ScheduleGrid = ({
           entityId: `${tripId}:${stopSequence}`,
         });
       } else {
-        const seq = computeStopSequence(stopId, tripId);
+        // Insert WITH renumbering so the stop lands between its neighbours
+        // in the trip's sequence. The former plain POST reused the "+ cell"
+        // arithmetic and, whenever the numbering had no gap, appended the
+        // stop at the END of the trip regardless of the row it was clicked on.
+        const seq =
+          stopSequence != null
+            ? stopSequence
+            : computeInsertSequence(stopId, tripId);
         if (seq == null) {
           showToast(t("schedule.editError"), "error");
           setSaving(false);
@@ -709,11 +728,14 @@ const ScheduleGrid = ({
         };
         if (arrival) postBody.arrival_time = arrival;
         if (departure) postBody.departure_time = departure;
-        const res = await fetchWithSession(`${API_BASE_URL}/edit/stop_times`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(postBody),
-        });
+        const res = await fetchWithSession(
+          `${API_BASE_URL}/edit/stop_times/insert`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(postBody),
+          },
+        );
         const postRespBody = await res.json().catch(() => ({}));
         if (!res.ok) {
           showToast(postRespBody.error || t("schedule.editError"), "error");
@@ -759,14 +781,76 @@ const ScheduleGrid = ({
     }
   };
 
+  // Keyboard navigation between editable cells: each cell is focusable and
+  // tagged with its row/column index; arrows move the focus, Enter / F2 /
+  // Space open the editor, Home/End jump to the first/last trip of the row.
+  const gridRef = useRef(null);
+  const focusCell = useCallback((row, col) => {
+    const el = gridRef.current?.querySelector(
+      `[data-cell="${row}:${col}"]`,
+    );
+    if (el) {
+      el.focus();
+      el.scrollIntoView({ block: "nearest", inline: "nearest" });
+      return true;
+    }
+    return false;
+  }, []);
+
+  const handleCellKeyDown = useCallback(
+    (e, rowData, tripId, timeInfos, row, col) => {
+      let handled = true;
+      switch (e.key) {
+        case "Enter":
+        case "F2":
+        case " ":
+          handleCellClick(e, rowData.stop_id, tripId, timeInfos);
+          break;
+        case "ArrowDown":
+          focusCell(row + 1, col);
+          break;
+        case "ArrowUp":
+          focusCell(row - 1, col);
+          break;
+        case "ArrowRight":
+          focusCell(row, col + 1);
+          break;
+        case "ArrowLeft":
+          focusCell(row, col - 1);
+          break;
+        case "Home":
+          focusCell(row, 0);
+          break;
+        case "End": {
+          let c = col;
+          while (focusCell(row, c + 1)) c += 1;
+          break;
+        }
+        default:
+          handled = false;
+      }
+      if (handled) e.preventDefault();
+    },
+    [handleCellClick, focusCell],
+  );
+
   const renderEditableCell = useCallback(
-    (rowData, tripId) => {
+    (rowData, tripId, row, col) => {
       const timeInfos = rowData.times[tripId];
       const hasTimes = timeInfos && timeInfos.length > 0;
+      const stopName = stopsMap[rowData.stop_id]?.stop_name || rowData.stop_id;
       return (
         <div
+          className="schedule-editable-cell"
+          role="gridcell"
+          tabIndex={0}
+          data-cell={`${row}:${col}`}
+          aria-label={`${stopName} · ${tripId}`}
           onClick={(e) =>
             handleCellClick(e, rowData.stop_id, tripId, timeInfos)
+          }
+          onKeyDown={(e) =>
+            handleCellKeyDown(e, rowData, tripId, timeInfos, row, col)
           }
           style={{
             cursor: "pointer",
@@ -794,10 +878,59 @@ const ScheduleGrid = ({
         </div>
       );
     },
-    // handleCellClick is defined just above and uses setEditCell which is
-    // stable, so we treat it as stable too.
-    [isDark, renderScheduleTime, handleCellClick],
+    [isDark, renderScheduleTime, handleCellClick, handleCellKeyDown, stopsMap],
   );
+
+  // Column actions that need the trip row (duplicate keeps every attribute,
+  // the cascade preview wants the headsign): fetch it once, then open the
+  // same dialogs the trip panel uses.
+  const openTripAction = useCallback(
+    async (tripId, kind) => {
+      try {
+        const res = await fetchWithSession(
+          `${API_BASE_URL}/trip_detail/${encodeURIComponent(tripId)}`,
+        );
+        const data = res.ok ? await res.json() : null;
+        const trip = data?.trip || null;
+        if (kind === "duplicate" && !trip) {
+          showToast(t("schedule.editError"), "error");
+          return;
+        }
+        setTripAction({ kind, tripId, trip });
+      } catch (err) {
+        showToast(err.message || "Network error", "error");
+      }
+    },
+    [showToast, t],
+  );
+
+  const handleDeleteTrip = useCallback(async () => {
+    const tripId = tripAction?.tripId;
+    if (!tripId) return;
+    try {
+      const res = await fetchWithSession(
+        `${API_BASE_URL}/edit/trips/${encodeURIComponent(tripId)}`,
+        { method: "DELETE" },
+      );
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showToast(body.error || t("schedule.editError"), "error");
+        return;
+      }
+      recordEdit(
+        t("edit.trip.deletedToast", {
+          id: tripId,
+          stopTimes: body.cascade?.stop_times || 0,
+        }),
+        body.validation,
+        { entity: "trip", entityId: tripId },
+      );
+    } catch (err) {
+      showToast(err.message || "Network error", "error");
+    } finally {
+      setTripAction(null);
+    }
+  }, [tripAction, recordEdit, showToast, t]);
 
   // Function to copy trip_id via right-click on the header.
   const handleRightClick = useCallback(
@@ -823,11 +956,12 @@ const ScheduleGrid = ({
   // the underlying data changed.
   const tripColumns = useMemo(
     () =>
-      visibleTripIds.map((tripId) => {
+      visibleTripIds.map((tripId, colIdx) => {
         const isFreq = tripId.startsWith("freq_");
         const display = isFreq
           ? `F${tripId.split("freq_")[1]}`
           : tripId.substring(0, 10);
+        const firstTime = formatTime(firstTimeByTrip.get(tripId) || "", false);
         return (
           <Column
             key={tripId}
@@ -849,9 +983,27 @@ const ScheduleGrid = ({
                       color: "white",
                       fontStyle: isFreq ? "italic" : "normal",
                       cursor: "pointer",
+                      display: "inline-flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      lineHeight: 1.15,
                     }}
                   >
-                    {display}
+                    <span>{display}</span>
+                    {/* First departure of the trip: what a scheduler
+                        actually scans for, the trip_id being opaque. */}
+                    {firstTime && (
+                      <span
+                        style={{
+                          fontSize: "0.68rem",
+                          fontWeight: 400,
+                          opacity: 0.8,
+                          fontVariantNumeric: "tabular-nums",
+                        }}
+                      >
+                        {firstTime}
+                      </span>
+                    )}
                   </span>
                 </Tooltip>
                 {editing && !isFreq && (
@@ -882,9 +1034,11 @@ const ScheduleGrid = ({
                 )}
               </Box>
             }
-            body={(rowData) =>
-              editing
-                ? renderEditableCell(rowData, tripId)
+            body={(rowData, options) =>
+              // Frequency-generated synthetic columns are read-only: they
+              // used to look editable (pointer + "+") but clicks did nothing.
+              editing && !isFreq
+                ? renderEditableCell(rowData, tripId, options.rowIndex, colIdx)
                 : renderScheduleTime(rowData, tripId)
             }
             className="schedule-time"
@@ -894,6 +1048,7 @@ const ScheduleGrid = ({
       }),
     [
       visibleTripIds,
+      firstTimeByTrip,
       editing,
       renderEditableCell,
       renderScheduleTime,
@@ -1074,6 +1229,7 @@ const ScheduleGrid = ({
           pagination toolbar above is outside this wrapper so it stays
           fully visible when the user pans across 50+ trip columns. */}
       <Box
+        ref={gridRef}
         className="schedule-grid-container"
         data-testid="schedule-grid"
         sx={{
@@ -1117,6 +1273,14 @@ const ScheduleGrid = ({
         open={Boolean(editCell)}
         anchorEl={editCell?.anchorEl}
         onClose={() => setEditCell(null)}
+        // Hand the focus back to the cell so keyboard users can keep moving
+        // with the arrows right after Enter / Esc.
+        TransitionProps={{
+          onExited: () => {
+            const el = editCell?.anchorEl;
+            if (el && typeof el.focus === "function") el.focus();
+          },
+        }}
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
         transformOrigin={{ vertical: "top", horizontal: "center" }}
         slotProps={{
@@ -1191,7 +1355,11 @@ const ScheduleGrid = ({
                   {stopName}
                 </Box>
                 <Chip
-                  label={`#${editCell.stopSequence}`}
+                  label={
+                    editCell.stopSequence != null
+                      ? `#${editCell.stopSequence}`
+                      : "#?"
+                  }
                   size="small"
                   sx={{
                     height: 18,
@@ -1458,7 +1626,76 @@ const ScheduleGrid = ({
             {t("schedule.insertStop.tooltip")}
           </Typography>
         </MenuItem>
+        <MenuItem
+          onClick={() => {
+            const tid = colMenu.tripId;
+            setColMenu(null);
+            setShiftDialogTrip(tid);
+          }}
+          dense
+          data-testid="col-menu-shift"
+        >
+          <ScheduleIcon sx={{ fontSize: 16, mr: 1.5, color: "primary.main" }} />
+          <Typography variant="body2">{t("schedule.colMenu.shift")}</Typography>
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            const tid = colMenu.tripId;
+            setColMenu(null);
+            openTripAction(tid, "duplicate");
+          }}
+          dense
+        >
+          <ContentCopyIcon sx={{ fontSize: 16, mr: 1.5, color: "info.main" }} />
+          <Typography variant="body2">{t("schedule.colMenu.duplicate")}</Typography>
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            const tid = colMenu.tripId;
+            setColMenu(null);
+            openTripAction(tid, "delete");
+          }}
+          dense
+        >
+          <DeleteIcon sx={{ fontSize: 16, mr: 1.5, color: "error.main" }} />
+          <Typography variant="body2">{t("schedule.colMenu.delete")}</Typography>
+        </MenuItem>
       </Menu>
+
+      {/* Shift all times of one trip */}
+      <ShiftTimesDialog
+        open={Boolean(shiftDialogTrip)}
+        tripIds={shiftDialogTrip ? [shiftDialogTrip] : []}
+        tripLabel={shiftDialogTrip || ""}
+        onClose={() => setShiftDialogTrip(null)}
+      />
+
+      {/* Duplicate trip (same dialog as the trip panel) */}
+      {tripAction?.kind === "duplicate" && tripAction.trip && (
+        <EditTripDialog
+          open
+          trip={tripAction.trip}
+          mode="duplicate"
+          routeId={tripAction.trip.route_id}
+          serviceId={tripAction.trip.service_id}
+          onClose={() => setTripAction(null)}
+          onCreated={(created) => {
+            if (created?.trip_id) openPanel("trip", created.trip_id);
+          }}
+        />
+      )}
+
+      {/* Delete trip with cascade preview */}
+      {tripAction?.kind === "delete" && (
+        <CascadePreviewDialog
+          open
+          entity="trip"
+          entityId={tripAction.tripId}
+          entityLabel={tripAction.trip?.trip_headsign || tripAction.tripId}
+          onCancel={() => setTripAction(null)}
+          onConfirm={handleDeleteTrip}
+        />
+      )}
 
       {/* Insert stop dialog */}
       {insertDialogTrip && (

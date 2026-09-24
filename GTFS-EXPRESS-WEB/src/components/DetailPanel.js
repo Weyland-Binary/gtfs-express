@@ -1,7 +1,15 @@
-import React, { useRef, useEffect } from "react";
-import { Drawer, Box, IconButton, Typography, Chip } from "@mui/material";
+import React, { useRef, useEffect, useState } from "react";
+import {
+  Drawer,
+  Box,
+  IconButton,
+  Typography,
+  Chip,
+  Tooltip,
+} from "@mui/material";
 import { useTheme } from "@mui/material/styles";
 import CloseIcon from "@mui/icons-material/Close";
+import PushPinOutlinedIcon from "@mui/icons-material/PushPinOutlined";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import PlaceIcon from "@mui/icons-material/Place";
 import RouteIcon from "@mui/icons-material/Route";
@@ -60,6 +68,7 @@ const ENTITY_CONFIG = {
 };
 
 const DEFAULT_PANEL_WIDTH = 420;
+const PIN_KEY = "gtfs_detail_panel_pinned";
 
 function DetailPanel() {
   const theme = useTheme();
@@ -69,10 +78,32 @@ function DetailPanel() {
   const { t } = useLanguage();
   const paperRef = useRef(null);
 
+  // Pinned = stays open while the user clicks around the grid / map. Without
+  // it, consulting a trip while editing its cells was impossible: the first
+  // click outside the panel closed it. Remembered per browser.
+  const [pinned, setPinned] = useState(() => {
+    try {
+      return localStorage.getItem(PIN_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const togglePinned = () => {
+    setPinned((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(PIN_KEY, next ? "1" : "0");
+      } catch {
+        /* private mode — in-memory state still applies */
+      }
+      return next;
+    });
+  };
+
   // Close on outside click — but ignore clicks in MUI portals (Dialog, Menu, Select, Tooltip…)
   // that are rendered outside the Drawer DOM.
   useEffect(() => {
-    if (!panelOpen) return;
+    if (!panelOpen || pinned) return;
     const handleClickOutside = (e) => {
       if (!paperRef.current) return;
       if (paperRef.current.contains(e.target)) return;
@@ -81,7 +112,7 @@ function DetailPanel() {
     };
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [panelOpen, closePanel]);
+  }, [panelOpen, pinned, closePanel]);
 
   if (!entity) return null;
 
@@ -135,6 +166,15 @@ function DetailPanel() {
         },
       }}
       hideBackdrop
+      // The panel is a side inspector, not a modal: keyboard focus must be
+      // free to stay in the schedule grid (arrow-key navigation) while the
+      // panel is open, and the page must keep scrolling.
+      ModalProps={{
+        disableEnforceFocus: true,
+        disableAutoFocus: true,
+        disableRestoreFocus: true,
+        disableScrollLock: true,
+      }}
       PaperProps={{ ref: paperRef }}
       sx={{
         pointerEvents: "none",
@@ -259,22 +299,40 @@ function DetailPanel() {
             {entity.id}
           </Typography>
         </Box>
-        <IconButton
-          size="small"
-          onClick={closePanel}
-          aria-label={t("app.close")}
-          sx={{
-            transition: "transform 0.2s ease, background 0.2s ease",
-            "&:hover": {
-              transform: "rotate(90deg)",
-              background: isDark
-                ? "rgba(255,255,255,0.08)"
-                : "rgba(0,0,0,0.06)",
-            },
-          }}
-        >
-          <CloseIcon fontSize="small" />
-        </IconButton>
+        <Box display="flex" alignItems="center" gap={0.25}>
+          <Tooltip title={pinned ? t("detail.unpin") : t("detail.pin")} arrow>
+            <IconButton
+              size="small"
+              onClick={togglePinned}
+              aria-label={pinned ? t("detail.unpin") : t("detail.pin")}
+              aria-pressed={pinned}
+              data-testid="detail-panel-pin"
+              sx={{
+                color: pinned ? accentColor : "text.secondary",
+                transform: pinned ? "rotate(-45deg)" : "none",
+                transition: "transform 0.2s ease, color 0.2s ease",
+              }}
+            >
+              <PushPinOutlinedIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+          <IconButton
+            size="small"
+            onClick={closePanel}
+            aria-label={t("app.close")}
+            sx={{
+              transition: "transform 0.2s ease, background 0.2s ease",
+              "&:hover": {
+                transform: "rotate(90deg)",
+                background: isDark
+                  ? "rgba(255,255,255,0.08)"
+                  : "rgba(0,0,0,0.06)",
+              },
+            }}
+          >
+            <CloseIcon fontSize="small" />
+          </IconButton>
+        </Box>
       </Box>
 
       {/* Content — fades up with slight delay */}
