@@ -912,6 +912,42 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "503":
           $ref: "#/components/responses/BadRequest"
+  /gtfs/network/territory:
+    post:
+      tags:
+        - Network Studio
+      summary: "Territory dossier of an area from public worldwide data: place, timezone, population, existing stops and lines, trip generators, public and school holidays (OpenStreetMap, Wikidata, Nager.Date, OpenHolidays, Open-Meteo)."
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/network/coverage:
+    post:
+      tags:
+        - Network Studio
+      summary: "How a Network Spec covers a territory: generators within 400 m of a planned stop, existing stops reused, top missed places."
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
   /gtfs/network/spec:
     get:
       tags:

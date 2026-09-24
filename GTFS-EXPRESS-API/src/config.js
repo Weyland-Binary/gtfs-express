@@ -137,6 +137,15 @@ module.exports = {
   NETWORK_ROUTING_ENABLED: process.env.NETWORK_ROUTING_ENABLED !== "false",
   OSRM_URL: process.env.OSRM_URL || "https://router.project-osrm.org/route/v1/driving",
   GEOCODER_URL: process.env.GEOCODER_URL || "https://photon.komoot.io/api/",
+  // Territory dossier: public, keyless, worldwide sources (see
+  // services/network/territoryService.js). Self-host Nominatim/Overpass for
+  // production volumes; every source is attributed in the UI.
+  NOMINATIM_URL: process.env.NOMINATIM_URL || "https://nominatim.openstreetmap.org",
+  OVERPASS_URL: process.env.OVERPASS_URL || "https://overpass-api.de/api/interpreter",
+  WIKIDATA_SPARQL_URL: process.env.WIKIDATA_SPARQL_URL || "https://query.wikidata.org/sparql",
+  NAGER_URL: process.env.NAGER_URL || "https://date.nager.at",
+  OPENHOLIDAYS_URL: process.env.OPENHOLIDAYS_URL || "https://openholidaysapi.org",
+  OPEN_METEO_URL: process.env.OPEN_METEO_URL || "https://api.open-meteo.com",
   // Planner model: designing a network from a brief is the reasoning-heavy
   // step, so it defaults to the strongest tier; falls back to the chat model.
   NETWORK_PLANNER_MODEL: process.env.NETWORK_PLANNER_MODEL || "claude-opus-5-5",

@@ -20,7 +20,7 @@ import MarkdownText from "../chat/MarkdownText";
 import GTFSAIIcon from "../chat/GTFSAIIcon";
 import { readBriefFile } from "../../utils/networkStudioApi";
 
-const STEP_ICON = { geocode: PlaceOutlinedIcon, spec: RuleOutlinedIcon, geometry: RouteOutlinedIcon, questions: HelpOutlineIcon };
+const STEP_ICON = { geocode: PlaceOutlinedIcon, spec: RuleOutlinedIcon, geometry: RouteOutlinedIcon, questions: HelpOutlineIcon, territory: PlaceOutlinedIcon };
 
 function StepChip({ step }) {
   const { t } = useLanguage();
@@ -28,6 +28,7 @@ function StepChip({ step }) {
   let label = t(`network.step.${step.kind}`);
   if (step.kind === "geocode") label = t("network.step.geocodeResult", { found: step.found, total: step.queries });
   if (step.kind === "spec") label = step.ok ? t("network.step.specOk") : t("network.step.specIssues", { count: step.blockers });
+  if (step.kind === "territory") label = t("network.step.territory", { place: step.place || "" });
   return <Chip size="small" icon={<Icon sx={{ fontSize: 13 }} />} label={label} color={step.kind === "spec" && !step.ok ? "warning" : "default"} variant="outlined" sx={{ height: 20, fontSize: "0.64rem", fontWeight: 600 }} />;
 }
 

@@ -239,7 +239,7 @@ function LocateButton({ stop, near, onPick }) {
   );
 }
 
-export function StopsEditor({ spec, onChange, selectedStopId, onSelectStop, placingStopId, onPlaceRequest, near }) {
+export function StopsEditor({ spec, onChange, selectedStopId, onSelectStop, placingStopId, onPlaceRequest, near, existingStops = [] }) {
   const { t } = useLanguage();
   const theme = useTheme();
   const stops = spec.stops || [];
@@ -275,9 +275,24 @@ export function StopsEditor({ spec, onChange, selectedStopId, onSelectStop, plac
           </Box>
         );
       })}
-      <Button size="small" startIcon={<AddIcon />} onClick={() => onChange({ ...spec, stops: [...stops, { name: t("network.newStop", { n: stops.length + 1 }) }] })} sx={{ alignSelf: "flex-start", textTransform: "none" }} data-testid="add-stop">
-        {t("network.addStopRow")}
-      </Button>
+      <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
+        <Button size="small" startIcon={<AddIcon />} onClick={() => onChange({ ...spec, stops: [...stops, { name: t("network.newStop", { n: stops.length + 1 }) }] })} sx={{ textTransform: "none" }} data-testid="add-stop">
+          {t("network.addStopRow")}
+        </Button>
+        {existingStops.length > 0 && (
+          <Autocomplete
+            size="small"
+            sx={{ minWidth: 260, flex: 1 }}
+            options={existingStops.filter((s) => s.name && !stops.some((x) => x.id === s.id))}
+            getOptionLabel={(o) => `${o.name}${o.kind === "station" ? " (station)" : ""}`}
+            value={null}
+            onChange={(_, s) => s && onChange({ ...spec, stops: [...stops, { id: s.id, name: s.name, lat: s.lat, lon: s.lon, source: "osm" }] })}
+            renderInput={(params) => <TextField {...params} label={t("territory.addExisting")} placeholder={t("territory.addExistingPlaceholder")} inputProps={{ ...params.inputProps, "data-testid": "add-existing-stop" }} />}
+            blurOnSelect
+            clearOnBlur
+          />
+        )}
+      </Box>
     </Box>
   );
 }

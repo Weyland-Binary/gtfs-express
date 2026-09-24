@@ -43,12 +43,14 @@ export const validateSpec = (spec) => post("/network/validate", { spec });
 export const estimateSpec = (spec, routing = null) => post("/network/estimate", { spec, ...(routing ? { routing } : {}) });
 export const geocodeQuery = (query, near = null, lang = null) => post("/network/geocode", { query, near, lang, limit: 5 });
 export const compileSpec = (spec, options = {}) => post("/network/compile", { spec, options });
+export const fetchTerritory = (place, force = false) => post("/network/territory", { place, force });
+export const fetchCoverage = (spec, place) => post("/network/coverage", { spec, place });
 
 /** Stream a planner turn; resolves at `done`. Mid-stream errors arrive as `error` events. */
-export async function streamPlan({ brief, spec = null, messages = [], language = "en", near = null, signal, onEvent }) {
+export async function streamPlan({ brief, spec = null, messages = [], language = "en", near = null, territory = null, signal, onEvent }) {
   let response;
   try {
-    response = await fetch(`${API_BASE_URL}/network/plan`, { method: "POST", headers: betaHeaders(), body: JSON.stringify({ brief, spec, messages, language, near }), signal });
+    response = await fetch(`${API_BASE_URL}/network/plan`, { method: "POST", headers: betaHeaders(), body: JSON.stringify({ brief, spec, messages, language, near, territory }), signal });
   } catch (err) {
     const e = new Error(err.name === "AbortError" ? "aborted" : err.message || "Network error");
     e.code = err.name === "AbortError" ? "ABORTED" : "NETWORK_ERROR";

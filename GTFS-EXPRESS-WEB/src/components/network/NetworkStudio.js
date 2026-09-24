@@ -29,7 +29,8 @@ import RefreshIcon from "@mui/icons-material/Refresh";
 import LockOutlinedIcon from "@mui/icons-material/LockOutlined";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { useFeatures } from "../../utils/featuresApi";
-import { validateSpec, estimateSpec, compileSpec, streamPlan, loadDraft, saveDraft } from "../../utils/networkStudioApi";
+import { validateSpec, estimateSpec, compileSpec, streamPlan, loadDraft, saveDraft, fetchCoverage } from "../../utils/networkStudioApi";
+import TerritoryPanel from "./TerritoryPanel";
 import NetworkMap from "./NetworkMap";
 import PlanChat from "./PlanChat";
 import { LinesEditor, StopsEditor, JsonEditor } from "./SpecEditors";
@@ -76,6 +77,10 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
   const [fitEpoch, setFitEpoch] = useState(0);
   const [restored, setRestored] = useState(false);
   const [shared, setShared] = useState(false);
+  const [territory, setTerritory] = useState(null);
+  const [layers, setLayers] = useState({ stops: true, pois: true });
+  const [coverage, setCoverage] = useState(null);
+  const coverageTimer = useRef(null);
   const abortRef = useRef(null);
   const validateTimer = useRef(null);
 
@@ -88,13 +93,29 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
       setTurns(Array.isArray(draft.turns) ? draft.turns.filter((x) => x.status !== "streaming") : []);
       setGeometryStale(true);
     }
+    if (draft && draft.territory) setTerritory(draft.territory);
     setRestored(true);
   }, [open, restored]);
   useEffect(() => {
     if (!restored) return;
-    const hasContent = (spec.lines || []).length > 0 || (spec.stops || []).length > 0 || turns.length > 0;
-    saveDraft(hasContent ? { spec, turns: turns.slice(-12) } : null);
-  }, [spec, turns, restored]);
+    const hasContent = (spec.lines || []).length > 0 || (spec.stops || []).length > 0 || turns.length > 0 || territory;
+    saveDraft(hasContent ? { spec, turns: turns.slice(-12), territory: territory ? { ...territory, existing_stops: territory.existing_stops.slice(0, 300), pois: { ...territory.pois, items: territory.pois.items.slice(0, 200) } } : null } : null);
+  }, [spec, turns, restored, territory]);
+
+  // Coverage of the plan against the territory (debounced, after validation).
+  useEffect(() => {
+    if (!territory || !validation || !(validation.spec?.lines || []).length) {
+      setCoverage(null);
+      return undefined;
+    }
+    clearTimeout(coverageTimer.current);
+    coverageTimer.current = setTimeout(() => {
+      fetchCoverage(spec, territory.place.query)
+        .then(setCoverage)
+        .catch(() => {});
+    }, 500);
+    return () => clearTimeout(coverageTimer.current);
+  }, [validation, territory, spec]);
 
   // Live validation (debounced) on every change.
   useEffect(() => {
@@ -143,7 +164,20 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
     setGeometryStale(true);
   }, []);
 
-  const near = useMemo(() => centroid(spec.stops), [spec.stops]);
+  const useExistingStops = useCallback(
+    (d) => {
+      // The named existing stops become plan stops (capped; the planner can add more).
+      const have = new Set((spec.stops || []).map((s) => s.id));
+      const candidates = d.existing_stops.filter((s) => s.name && !have.has(s.id)).slice(0, 80).map((s) => ({ id: s.id, name: s.name, lat: s.lat, lon: s.lon, source: "osm" }));
+      if (!candidates.length) return;
+      updateSpec({ ...spec, stops: [...(spec.stops || []), ...candidates] });
+      setTab("stops");
+      setFitEpoch((e) => e + 1);
+    },
+    [spec, updateSpec],
+  );
+
+  const near = useMemo(() => centroid(spec.stops) || (territory ? { lat: territory.place.lat, lon: territory.place.lon } : null), [spec.stops, territory]);
 
   // ── Planner turn ─────────────────────────────────────────────────────────
   const runPlan = useCallback(
@@ -166,6 +200,7 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
           messages: history,
           language,
           near,
+          territory: territory ? { place: territory.place.query } : null,
           signal: abort.signal,
           onEvent: (event, data) => {
             switch (event) {
@@ -196,6 +231,14 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
               case "questions":
                 patch(() => ({ questions: data.questions || [] }));
                 break;
+              case "territory":
+                setTerritory(data);
+                setFitEpoch((e) => e + 1);
+                patch((x) => ({ steps: [...x.steps, { kind: "territory", place: data.place?.name }] }));
+                break;
+              case "coverage":
+                setCoverage(data);
+                break;
               case "error":
                 patch(() => ({ error: data.message || data.code, status: "error" }));
                 break;
@@ -214,7 +257,7 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
         setPendingTool(null);
       }
     },
-    [streaming, turns, spec, language, near, t, validation],
+    [streaming, turns, spec, language, near, territory, t, validation],
   );
 
   const stopPlan = useCallback(() => abortRef.current?.abort(), []);
@@ -240,6 +283,8 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
     setCompile({ state: "idle" });
     setSelectedStopId(null);
     setPlacingStopId(null);
+    setTerritory(null);
+    setCoverage(null);
     saveDraft(null);
   }, []);
 
@@ -306,6 +351,7 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
       {/* Body */}
       <Box sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: isMobile ? "column" : "row" }}>
         <Box sx={{ width: isMobile ? "100%" : 440, flexShrink: 0, borderRight: isMobile ? "none" : `1px solid ${alpha(theme.palette.divider, 1)}`, background: theme.palette.background.paper, minHeight: isMobile ? 320 : 0, display: "flex", flexDirection: "column" }}>
+          <TerritoryPanel territory={territory} onTerritory={(d) => { setTerritory(d); setFitEpoch((e) => e + 1); }} layers={layers} onToggleLayer={(k) => setLayers((l) => ({ ...l, [k]: !l[k] }))} coverage={coverage} onUseExistingStops={useExistingStops} />
           <PlanChat turns={turns} streaming={streaming} pendingTool={pendingTool} onSend={runPlan} onStop={stopPlan} canPlan={canPlan} disabledReason={disabledReason} />
         </Box>
         <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column" }}>
@@ -328,13 +374,13 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
           <Box sx={{ flex: 1, minHeight: 0, position: "relative", overflow: tab === "map" ? "hidden" : "auto", p: tab === "map" ? 0 : 1.5 }}>
             {tab === "map" && (
               <>
-                <NetworkMap stops={spec.stops || []} lines={validation?.spec?.lines || spec.lines || []} geometry={geometry} selectedStopId={selectedStopId} placingStopId={placingStopId} onSelectStop={setSelectedStopId} onMoveStop={(id, lat, lon) => updateSpec({ ...spec, stops: spec.stops.map((s) => (s.id === id ? { ...s, lat, lon } : s)) })} onPlaceStop={(id, lat, lon) => { updateSpec({ ...spec, stops: spec.stops.map((s) => (s.id === id ? { ...s, lat, lon } : s)) }); setPlacingStopId(null); }} fitEpoch={fitEpoch} />
+                <NetworkMap stops={spec.stops || []} lines={validation?.spec?.lines || spec.lines || []} geometry={geometry} existingStops={territory && layers.stops ? territory.existing_stops : []} pois={territory && layers.pois ? territory.pois.items : []} onPickExistingStop={(s) => { if (!(spec.stops || []).some((x) => x.id === s.id)) updateSpec({ ...spec, stops: [...(spec.stops || []), { id: s.id, name: s.name || s.kind, lat: s.lat, lon: s.lon, source: "osm" }] }); }} selectedStopId={selectedStopId} placingStopId={placingStopId} onSelectStop={setSelectedStopId} onMoveStop={(id, lat, lon) => updateSpec({ ...spec, stops: spec.stops.map((s) => (s.id === id ? { ...s, lat, lon } : s)) })} onPlaceStop={(id, lat, lon) => { updateSpec({ ...spec, stops: spec.stops.map((s) => (s.id === id ? { ...s, lat, lon } : s)) }); setPlacingStopId(null); }} fitEpoch={fitEpoch} />
                 {placingStopId && (
                   <Box sx={{ position: "absolute", top: 12, left: "50%", transform: "translateX(-50%)", zIndex: 1000, px: 1.5, py: 0.6, borderRadius: 99, background: theme.palette.warning.main, color: theme.palette.warning.contrastText, fontSize: "0.76rem", fontWeight: 700, boxShadow: 3 }}>
                     {t("network.placingHint", { name: (spec.stops || []).find((s) => s.id === placingStopId)?.name || "" })}
                   </Box>
                 )}
-                {!(spec.stops || []).some((s) => Number.isFinite(s.lat)) && (
+                {!(spec.stops || []).some((s) => Number.isFinite(s.lat)) && !territory && (
                   <Box sx={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none", zIndex: 900 }}>
                     <Typography sx={{ px: 2, py: 1, borderRadius: 2, background: alpha(theme.palette.background.paper, 0.9), fontSize: "0.82rem", color: "text.secondary", maxWidth: 360, textAlign: "center" }}>{t("network.map.empty")}</Typography>
                   </Box>
@@ -342,7 +388,7 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
               </>
             )}
             {tab === "lines" && <LinesEditor spec={spec} onChange={updateSpec} />}
-            {tab === "stops" && <StopsEditor spec={spec} onChange={updateSpec} selectedStopId={selectedStopId} onSelectStop={setSelectedStopId} placingStopId={placingStopId} onPlaceRequest={(id) => { setPlacingStopId(id); if (id) setTab("map"); }} near={near} />}
+            {tab === "stops" && <StopsEditor spec={spec} onChange={updateSpec} selectedStopId={selectedStopId} onSelectStop={setSelectedStopId} placingStopId={placingStopId} onPlaceRequest={(id) => { setPlacingStopId(id); if (id) setTab("map"); }} near={near} existingStops={territory ? territory.existing_stops : []} />}
             {tab === "json" && <JsonEditor key={turns.length} spec={spec} onChange={updateSpec} />}
           </Box>
 

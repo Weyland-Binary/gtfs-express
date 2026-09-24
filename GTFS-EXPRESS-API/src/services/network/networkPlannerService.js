@@ -34,6 +34,7 @@ const { normalizeSpec, MODES, NAMED_CALENDARS, LIMITS } = require("./networkSpec
 const geocoderModule = require("./geocoder");
 const roadRouter = require("./roadRouter");
 const compiler = require("./compiler");
+const territoryService = require("./territoryService");
 const { haversineMeters } = require("../../utils/geoUtils");
 
 const MAX_ROUNDS = 14;
@@ -44,7 +45,7 @@ const MAX_HISTORY = 20;
 const LANG_NAMES = { en: "English", fr: "French", es: "Spanish", de: "German", pt: "Portuguese", zh: "Chinese", ar: "Arabic", hi: "Hindi" };
 
 // Injectable for tests (no network).
-const deps = { geocode: geocoderModule.geocode, createRouter: roadRouter.createRouter };
+const deps = { geocode: geocoderModule.geocode, createRouter: roadRouter.createRouter, buildTerritory: territoryService.buildTerritory };
 
 const clip = (s, n) => (typeof s === "string" && s.length > n ? `${s.slice(0, n)}…` : s);
 
@@ -70,6 +71,9 @@ You NEVER write GTFS rows yourself. You produce a Network Spec through the set_s
 }
 Limits: ≤ ${LIMITS.lines} lines, ≤ ${LIMITS.stops} stops, ≤ ${LIMITS.stopsPerDirection} stops per direction, ≤ ${LIMITS.trips} trips.
 
+# Territory first
+Real networks start from the ground: call get_territory with the town or area named in the brief (once; the dossier is cached) unless a [Territory] block is already in the message. It gives the timezone, the population, the EXISTING stops and stations from OpenStreetMap (reuse their names, coordinates and ids instead of geocoding — passengers know them), the existing transit lines (do not duplicate a line that already runs; connect to it), the trip generators (schools, hospitals, universities, stations, malls, stadiums, industrial areas) that the lines must serve, and the public and school holidays for the calendars. Use find_existing_stops to resolve a stop name mentioned in the brief before geocoding it. After set_spec, call coverage_score and improve the plan if major generators are unserved (add a stop or a via) — say what you left out and why.
+
 # Method
 1. Read the brief. Extract: operator (name, website, timezone from the country/city), area, lines (name, mode, termini, via stops, one-way loops), service (days, first/last departures, headways by period, explicit departures), holidays, constraints. Everything the brief states is law; do not "improve" it silently.
 2. Stops need real coordinates: call geocode_stops with the stop names (add the city/area to each query) and \`near\` set to the area centre; take the candidate the tool marks as chosen unless the brief's context contradicts it. Never invent coordinates. If a stop cannot be geocoded, keep it in the spec without coordinates: the user places it on the map.
@@ -80,7 +84,8 @@ Limits: ≤ ${LIMITS.lines} lines, ≤ ${LIMITS.stops} stops, ≤ ${LIMITS.stops
 # Defaults when the brief is silent
 - Service: weekday 06:00–21:00, peak (07:00–09:00, 16:30–19:00) headway 15 min, off-peak 30 min; saturday 08:00–20:00 every 30 min; sunday 09:00–19:00 every 60 min. Shuttles/school lines: explicit departures.
 - Modes and speeds: the compiler knows commercial speeds per mode; set speed_kmh only when the brief implies express or slow service.
-- Feed dates: today → +1 year. Holidays: only when the brief names them or the country's public holidays are obvious for the period (list the dates).
+- Feed dates: today → +1 year. Holidays: the territory's public holidays (dates from get_territory) with holiday_service "sunday" unless the brief says otherwise; when school holidays matter (school lines, reduced summer service) build a second calendar with days and dates.
+- Agency timezone: the territory's timezone.
 - Colours: one distinct colour per line; keep the brief's colours when given.
 - Stop naming: proper case, no codes; termini names as headsigns.
 - Ids: short and stable (line short name; stop slug); the compiler slugs missing ids.
@@ -205,7 +210,65 @@ const createTools = (ctx) => {
     },
   };
 
-  const tools = [geocodeStops, setSpec, estimateRoutes, askUser];
+  const getTerritory = {
+    definition: {
+      name: "get_territory",
+      description: "The public-data dossier of an area (town, district, region name): timezone, population, existing stops and stations with coordinates (OpenStreetMap), existing transit lines, trip generators (schools, hospitals, universities, stations, malls, stadiums, industry) with coordinates, public holidays and school holidays. Call it once at the start; the user's map shows the layers.",
+      input_schema: { type: "object", properties: { place: { type: "string", description: "Town or area name, with the country when ambiguous ('Vendôme, France')." } }, required: ["place"] },
+    },
+    async run(input) {
+      const place = String(input?.place || "").trim();
+      if (place.length < 2) return { content: "Error: place is required.", isError: true };
+      try {
+        const d = await deps.buildTerritory(place);
+        ctx.territory = d;
+        ctx.near = ctx.near || { lat: d.place.lat, lon: d.place.lon };
+        ctx.emit("territory", d);
+        ctx.emit("step", { kind: "territory", place: d.place.display_name, stops: d.existing_stops.length, pois: d.pois.items.length, lines: d.existing_lines.length });
+        return { content: territoryService.summarizeForModel(d) };
+      } catch (err) {
+        return { content: `Territory lookup failed: ${err.message}. Continue with geocode_stops.`, isError: true };
+      }
+    },
+  };
+
+  const findExistingStops = {
+    definition: {
+      name: "find_existing_stops",
+      description: "Existing stops of the territory whose name matches (loose match), nearest to `near` first, with ids and coordinates. Needs get_territory first.",
+      input_schema: { type: "object", properties: { query: { type: "string" }, near: { type: "object", properties: { lat: { type: "number" }, lon: { type: "number" } } }, limit: { type: "integer" } }, required: ["query"] },
+    },
+    run(input) {
+      if (!ctx.territory) return { content: "Error: call get_territory first.", isError: true };
+      const near = input?.near && Number.isFinite(Number(input.near.lat)) ? { lat: Number(input.near.lat), lon: Number(input.near.lon) } : null;
+      const hits = territoryService.findStops(ctx.territory, input?.query, near, Math.min(15, parseInt(input?.limit, 10) || 8));
+      if (!hits.length) return { content: `No existing stop matches "${input?.query}". Geocode it or create it.` };
+      return { content: JSON.stringify(hits.map((h) => ({ id: h.id, name: h.name, kind: h.kind, lat: h.lat, lon: h.lon, distance_m: h.distance_m, operator: h.operator || undefined }))) };
+    },
+  };
+
+  const coverageScore = {
+    definition: {
+      name: "coverage_score",
+      description: "How the current spec covers the territory: share of trip generators within 400 m of a served stop (weighted by importance), per category, existing stops reused, and the main places left unserved. Needs get_territory and set_spec.",
+      input_schema: { type: "object", properties: {} },
+    },
+    run() {
+      if (!ctx.territory) return { content: "Error: call get_territory first.", isError: true };
+      if (!ctx.spec) return { content: "Error: call set_spec first.", isError: true };
+      const c = territoryService.coverageOf(ctx.spec, ctx.territory);
+      ctx.emit("coverage", c);
+      return {
+        content: [
+          `Coverage: ${c.coverage_pct == null ? "n/a" : `${c.coverage_pct}%`} of trip generators within ${c.radius_m} m of a served stop (${c.pois_covered}/${c.pois_total}); ${c.existing_stops_reused}/${c.stops_planned} planned stops are existing stops.`,
+          `By category: ${Object.entries(c.by_category).map(([k, v]) => `${k} ${v.covered}/${v.total}`).join(", ") || "none"}.`,
+          c.top_missed.length ? `Main unserved places: ${c.top_missed.map((m) => `${m.name} (${m.category}, ${m.lat.toFixed(5)},${m.lon.toFixed(5)})`).join("; ")}.` : "Every major generator is served.",
+        ].join("\n"),
+      };
+    },
+  };
+
+  const tools = [getTerritory, findExistingStops, geocodeStops, setSpec, estimateRoutes, coverageScore, askUser];
   return { definitions: tools.map((t) => t.definition), byName: Object.fromEntries(tools.map((t) => [t.definition.name, t])) };
 };
 
@@ -239,7 +302,7 @@ const runRound = async ({ client, model, messages, tools, signal, emit }) => {
   return { content, toolUses: content.filter((b) => b.type === "tool_use"), stopReason: finalMessage?.stop_reason || null, usage };
 };
 
-const buildMessages = ({ history, brief, spec, language, near }) => {
+const buildMessages = ({ history, brief, spec, language, near, territoryBlock = "" }) => {
   const msgs = [];
   for (const h of (history || []).slice(-MAX_HISTORY)) {
     if (!h || (h.role !== "user" && h.role !== "assistant")) continue;
@@ -250,6 +313,7 @@ const buildMessages = ({ history, brief, spec, language, near }) => {
   }
   const blocks = [`[UI language: ${LANG_NAMES[language] || "English"}]`];
   if (near) blocks.push(`[Area hint] lat ${near.lat}, lon ${near.lon}`);
+  if (territoryBlock) blocks.push(territoryBlock);
   if (spec) blocks.push(`[Current spec]\n${clip(JSON.stringify(spec), 40000)}`);
   blocks.push(brief);
   const text = blocks.join("\n\n");
@@ -260,7 +324,7 @@ const buildMessages = ({ history, brief, spec, language, near }) => {
 };
 
 /** The planner turn. Emits SSE-style events through `emit`. */
-const planNetwork = async ({ brief, spec = null, history = [], language = "en", near = null, freeTier = false, rateKey, aiLimits = {}, signal, emit, req = null }) => {
+const planNetwork = async ({ brief, spec = null, history = [], language = "en", near = null, territoryPlace = null, freeTier = false, rateKey, aiLimits = {}, signal, emit, req = null }) => {
   const text = String(brief || "").trim();
   if (text.length < 3) throw Object.assign(new Error("brief is required (≥ 3 characters)."), { code: "INVALID_INPUT", status: 400 });
   if (text.length > MAX_BRIEF_CHARS) throw Object.assign(new Error(`brief is too long (max ${MAX_BRIEF_CHARS} characters).`), { code: "INVALID_INPUT", status: 400 });
@@ -271,9 +335,19 @@ const planNetwork = async ({ brief, spec = null, history = [], language = "en", 
   const client = nl2sqlChatService.getClient();
   const model = freeTier ? nl2sqlChatService.resolveChatModel({ freeTier: true }) : config.NETWORK_PLANNER_MODEL || nl2sqlChatService.resolveChatModel({});
   const startedAt = Date.now();
-  const ctx = { spec: spec && typeof spec === "object" ? normalizeSpec(spec).spec : null, specOk: false, near, language, emit, asked: false };
+  const ctx = { spec: spec && typeof spec === "object" ? normalizeSpec(spec).spec : null, specOk: false, near, language, emit, asked: false, territory: null };
+  // A dossier the studio already loaded rides along as context (cached server-side).
+  let territoryBlock = "";
+  if (territoryPlace) {
+    const cached = territoryService.getCachedTerritory(territoryPlace);
+    if (cached) {
+      ctx.territory = cached;
+      ctx.near = ctx.near || { lat: cached.place.lat, lon: cached.place.lon };
+      territoryBlock = territoryService.summarizeForModel(cached);
+    }
+  }
   const tools = createTools(ctx);
-  const messages = buildMessages({ history, brief: text, spec: ctx.spec, language, near });
+  const messages = buildMessages({ history, brief: text, spec: ctx.spec, language, near: ctx.near, territoryBlock });
   emit("meta", { model, mode: "planner" });
   const usageTotals = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
   let rounds = 0;

@@ -40,7 +40,9 @@ const stopIcon = (color, selected) =>
     iconAnchor: [8, 8],
   });
 
-export default function NetworkMap({ stops = [], lines = [], geometry = [], selectedStopId = null, placingStopId = null, onSelectStop = null, onMoveStop = null, onPlaceStop = null, fitEpoch = 0, height = "100%" }) {
+const POI_COLOR = { school: "#F9A825", college: "#F57F17", hospital: "#D32F2F", civic: "#5E35B1", market: "#00897B", station: "#1E88E5", leisure: "#43A047", work: "#6D4C41" };
+
+export default function NetworkMap({ stops = [], lines = [], geometry = [], existingStops = [], pois = [], selectedStopId = null, placingStopId = null, onSelectStop = null, onMoveStop = null, onPlaceStop = null, onPickExistingStop = null, fitEpoch = 0, height = "100%" }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const located = useMemo(() => stops.filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lon)), [stops]);
@@ -66,6 +68,22 @@ export default function NetworkMap({ stops = [], lines = [], geometry = [], sele
         />
         <FitBounds points={points} epoch={fitEpoch} />
         <ClickToPlace active={Boolean(placingStopId)} onPlace={(lat, lon) => onPlaceStop && onPlaceStop(placingStopId, lat, lon)} />
+        {pois.map((p) => (
+          <CircleMarker key={p.id} center={[p.lat, p.lon]} radius={3 + Math.min(3, p.weight || 1)} pathOptions={{ color: POI_COLOR[p.category] || "#888", fillColor: POI_COLOR[p.category] || "#888", fillOpacity: 0.55, weight: 1 }}>
+            <LeafletTooltip direction="top" offset={[0, -4]}>{`${p.name}`}</LeafletTooltip>
+          </CircleMarker>
+        ))}
+        {existingStops.map((s) => (
+          <CircleMarker
+            key={s.id}
+            center={[s.lat, s.lon]}
+            radius={s.kind === "station" ? 5 : 3}
+            pathOptions={{ color: isDark ? "#cbd5e1" : "#475569", fillColor: isDark ? "#0f172a" : "#fff", fillOpacity: 1, weight: 1.5, dashArray: s.kind === "station" ? null : "2 2" }}
+            eventHandlers={{ click: () => onPickExistingStop && onPickExistingStop(s) }}
+          >
+            <LeafletTooltip direction="top" offset={[0, -4]}>{s.name || s.kind}</LeafletTooltip>
+          </CircleMarker>
+        ))}
         {geometry.map((g) => (
           <Polyline key={`${g.lineId}_${g.directionId}`} positions={g.points} pathOptions={{ color: `#${g.color || "1E88E5"}`, weight: g.directionId === "0" ? 5 : 3, opacity: g.directionId === "0" ? 0.85 : 0.5, dashArray: g.directionId === "0" ? null : "6 6" }} />
         ))}

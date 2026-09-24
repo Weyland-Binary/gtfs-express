@@ -16,6 +16,7 @@ const { normalizeSpec } = require("./networkSpec");
 const { geocode, geocodeMany } = require("./geocoder");
 const { createRouter } = require("./roadRouter");
 const { compileSpec, estimateGeometry, createSessionFromSpec, loadStoredSpec, saveStoredSpec } = require("./compiler");
+const territoryService = require("./territoryService");
 const { requireSession } = require("../edit/_editCore");
 const { recordEvent, extractReqMeta } = require("../eventLogger");
 
@@ -128,4 +129,32 @@ const putNetworkSpec = (req, res) => {
   res.json({ ok: true, savedAt: new Date().toISOString(), issues: norm.issues });
 };
 
-module.exports = { validateNetworkSpec, geocodeStops, estimateNetwork, compileNetwork, getNetworkSpec, putNetworkSpec, _internals: { planLimits, compileSpec } };
+/** POST /network/territory { place, force? } → the public-data dossier of an area. */
+const getTerritory = async (req, res) => {
+  const place = typeof req.body?.place === "string" ? req.body.place.trim() : "";
+  if (place.length < 2) return res.status(400).json({ error: "INVALID_INPUT", message: "place (≥ 2 chars) is required." });
+  try {
+    const dossier = await territoryService.buildTerritory(place.slice(0, 200), { force: req.body?.force === true });
+    recordEvent("network.territory", { ...extractReqMeta(req), country: dossier.place.country_code, stops: dossier.existing_stops.length, pois: dossier.pois.items.length, fromCache: dossier.fromCache, warnings: dossier.warnings.length });
+    res.json(dossier);
+  } catch (err) {
+    res.status(err.status || 502).json({ error: err.code || "TERRITORY_FAILED", message: err.message });
+  }
+};
+
+/** POST /network/coverage { spec, place } → how the plan covers the territory. */
+const getCoverage = async (req, res) => {
+  const spec = specFromBody(req.body, res);
+  if (!spec) return;
+  const place = typeof req.body?.place === "string" ? req.body.place.trim() : "";
+  if (place.length < 2) return res.status(400).json({ error: "INVALID_INPUT", message: "place is required." });
+  try {
+    const dossier = territoryService.getCachedTerritory(place) || (await territoryService.buildTerritory(place));
+    const norm = normalizeSpec(spec);
+    res.json({ place: dossier.place.display_name, ...territoryService.coverageOf(norm.spec, dossier) });
+  } catch (err) {
+    res.status(err.status || 502).json({ error: err.code || "TERRITORY_FAILED", message: err.message });
+  }
+};
+
+module.exports = { validateNetworkSpec, geocodeStops, estimateNetwork, compileNetwork, getNetworkSpec, putNetworkSpec, getTerritory, getCoverage, _internals: { planLimits, compileSpec } };
