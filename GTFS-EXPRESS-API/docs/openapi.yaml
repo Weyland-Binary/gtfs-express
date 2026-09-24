@@ -1318,6 +1318,96 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+  /gtfs/edit/stop_times/insert_pattern:
+    post:
+      tags:
+        - Edit
+      summary: Insert a stop in every selected trip (route/direction or trip ids) between two stops, times interpolated from distances (dry_run supported); one undo entry.
+      security:
+        - SessionId: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "201":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/stops/merge:
+    post:
+      tags:
+        - Edit
+      summary: "Merge duplicate stops into a survivor: references re-pointed, duplicates deleted, optional fields back-filled (dry_run supported); one undo entry."
+      security:
+        - SessionId: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/stops/rename_batch:
+    post:
+      tags:
+        - Edit
+      summary: Rename many stops at once (dry_run supported); one undo entry.
+      security:
+        - SessionId: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
+  /gtfs/edit/calendar/extend:
+    post:
+      tags:
+        - Edit
+      summary: Extend the end_date of services (and feed_info.feed_end_date) (dry_run supported); one undo entry.
+      security:
+        - SessionId: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/EditModeRequired"
   /gtfs/edit/calendar:
     post:
       tags:

@@ -150,6 +150,26 @@ test("shifting a trip's times from the column menu is a single undoable step", a
   await expect(page.getByText(/Undone:/)).toBeVisible({ timeout: 30_000 });
 });
 
+test("merging duplicate stops from the Diagnostic is a single undoable step", async () => {
+  await page.getByTestId("tab-home").click();
+  const finding = page.getByTestId("audit-finding-duplicate_stops");
+  await expect(finding).toBeVisible({ timeout: 30_000 });
+  await finding.click();
+  await page.getByTestId("audit-merge").first().click();
+  const dialog = page.getByTestId("merge-stops-dialog");
+  await expect(dialog).toBeVisible();
+  // The dry-run of both sides has to come back before the survivor choice
+  // is offered; the default is the stop with the most stop times.
+  await expect(dialog.getByRole("radio").first()).toBeVisible({ timeout: 30_000 });
+  await page.getByTestId("merge-stops-confirm").click();
+  await expect(dialog).toBeHidden({ timeout: 30_000 });
+  // One undo step puts the duplicate back; the Diagnostic re-runs after it.
+  const undo = page.getByTestId("edit-undo");
+  await expect(undo).toBeEnabled({ timeout: 30_000 });
+  await undo.click();
+  await expect(page.getByTestId("audit-finding-duplicate_stops")).toBeVisible({ timeout: 30_000 });
+});
+
 test("export produces a GTFS zip", async () => {
   test.setTimeout(180_000);
   await page.getByTestId("edit-export").click();

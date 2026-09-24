@@ -280,6 +280,41 @@ describe("chat agent loop", () => {
     expect(db.prepare("SELECT COUNT(*) AS n FROM trips").get().n).toBe(tripsBefore);
   });
 
+  test("insert_stop, merge_stops, rename_stops and extend_calendar plan operations without writing", async () => {
+    const stopsBefore = db.prepare("SELECT COUNT(*) AS n FROM stops").get().n;
+    const stopTimesBefore = db.prepare("SELECT COUNT(*) AS n FROM stop_times").get().n;
+    __script.push(
+      {
+        toolUses: [
+          { id: "tu1", name: "insert_stop", input: { stop_id: "DOM", after_stop_id: "DYK", before_stop_id: "S1_0_X2_1", route_id: "S1", direction_id: "0", title: "Ajouter Domino Park" } },
+          { id: "tu2", name: "merge_stops", input: { survivor_id: "B4_0_X7_2", duplicate_ids: ["B4_1_X2_1"] } },
+          { id: "tu3", name: "get_stop_name_variants", input: { limit: 5 } },
+          { id: "tu4", name: "rename_stops", input: { renames: [{ stop_id: "DOM", stop_name: "Domino Park" }, { stop_id: "B4_0_X7_1", stop_name: "Domino Park / Greenpoint" }], rationale: "Sans numéro" } },
+          { id: "tu5", name: "extend_calendar", input: { end_date: "2027-12-31", service_ids: ["WKD"] } },
+          { id: "tu6", name: "extend_calendar", input: { end_date: "20270331" } },
+        ],
+      },
+      { text: "ok" },
+    );
+    const events = await runTurn(dbCtx, "répare");
+    const proposals = byName(events, "proposal");
+    expect(proposals.map((p) => p.operation)).toEqual(["insert_stop", "merge_stops", "rename_stops", "extend_calendar"]);
+    expect(proposals[0].title).toBe("Ajouter Domino Park");
+    expect(proposals[0].preview.trip_count).toBeGreaterThan(1);
+    expect(proposals[0].preview.shapes_to_review.length).toBeGreaterThan(0);
+    expect(proposals[1].preview.by_table.stop_times).toBeGreaterThan(0);
+    expect(proposals[2].params.renames).toEqual([{ stop_id: "B4_0_X7_1", stop_name: "Domino Park / Greenpoint" }]);
+    expect(proposals[2].rationale).toBe("Sans numéro");
+    expect(proposals[3].params.end_date).toBe("20271231");
+    expect(proposals[3].preview.services[0]).toMatchObject({ service_id: "WKD", old_end_date: "20270331" });
+    const results = __captured[1].messages[__captured[1].messages.length - 1].content;
+    const variants = JSON.parse(results[2].content);
+    expect(variants.groups).toBeGreaterThanOrEqual(0);
+    expect(results[5].is_error).toBe(true);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM stops").get().n).toBe(stopsBefore);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM stop_times").get().n).toBe(stopTimesBefore);
+  });
+
   test("history is flattened with the tool trace and roles alternate", () => {
     const { buildAnthropicMessages, flattenAssistantTurn } = nl2sqlChatService._internals;
     const flat = flattenAssistantTurn({

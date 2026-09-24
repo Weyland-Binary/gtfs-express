@@ -56,6 +56,10 @@ const {
   deleteTrip,
   shiftTripTimes,
   createTripsFromTemplate,
+  insertStopInPattern,
+  mergeStops,
+  renameStopsBatch,
+  extendCalendar,
   createCalendar,
   deleteCalendar,
   getStopTime,
@@ -394,6 +398,11 @@ router.delete("/edit/routes/:route_id", deleteRoute);
 // `shift` segment can never be captured as a trip id.
 router.post("/edit/trips/shift", shiftTripTimes);
 router.post("/edit/trips/create_from_template", createTripsFromTemplate);
+// Assistant-planned batch operations (dry_run supported, one undo entry each).
+router.post("/edit/stop_times/insert_pattern", insertStopInPattern);
+router.post("/edit/stops/merge", mergeStops);
+router.post("/edit/stops/rename_batch", renameStopsBatch);
+router.post("/edit/calendar/extend", extendCalendar);
 router.patch("/edit/trips/:trip_id", updateTrip);
 router.post("/edit/trips", createTrip);
 router.delete("/edit/trips/:trip_id", deleteTrip);

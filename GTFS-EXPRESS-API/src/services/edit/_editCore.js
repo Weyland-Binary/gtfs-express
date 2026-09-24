@@ -1202,9 +1202,20 @@ const resyncCacheForLogEntry = (sessionId, db, entry) => {
       data.calendar = db.prepare("SELECT * FROM calendar").all().map(sqliteRowToCSVRow);
       data.calendarDates = db.prepare("SELECT * FROM calendar_dates").all().map(sqliteRowToCSVRow);
     }
+  } else if (entry.entity === "stop" && entry.action === "merge") {
+    // Stop merge: survivor + deleted duplicates, plus every table whose
+    // references were re-pointed (stop_times, transfers, pathways, …).
+    for (const stopId of entry.entity_id.split(",")) {
+      syncCacheEntry(sessionId, db, "stop", stopId.trim());
+    }
+    const touched = tablesTouchedByOps(entry.redo_ops).filter((t) => t !== "stops");
+    if (touched.length > 0) {
+      const { resyncCacheForTables } = require("./sqlConsoleService");
+      resyncCacheForTables(sessionId, db, touched);
+    }
   } else if (
     entry.entity === "trip" &&
-    (entry.action === "bulk_delete" || entry.action === "shift_times")
+    (entry.action === "bulk_delete" || entry.action === "shift_times" || entry.action === "stop_times_batch")
   ) {
     const tripIds = entry.entity_id.split(",").map((t) => t.trim());
     for (const tid of tripIds) {
@@ -1228,6 +1239,14 @@ const resyncCacheForLogEntry = (sessionId, db, entry) => {
   } else if (entry.action === "bulk_update") {
     for (const id of entry.entity_id.split(",")) {
       syncCacheEntry(sessionId, db, entry.entity, id.trim());
+    }
+    // Side tables rewritten by the same batch (e.g. feed_info.feed_end_date
+    // alongside a calendar extension).
+    const mainTable = ENTITY_CONFIG[entry.entity]?.table;
+    const side = tablesTouchedByOps(entry.redo_ops).filter((t) => t !== mainTable);
+    if (side.length > 0) {
+      const { resyncCacheForTables } = require("./sqlConsoleService");
+      resyncCacheForTables(sessionId, db, side);
     }
   } else if (entry.entity === "route") {
     syncCacheAfterRouteCascade(sessionId, db, entry.entity_id);

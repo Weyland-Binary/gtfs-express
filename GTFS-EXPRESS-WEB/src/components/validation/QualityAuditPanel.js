@@ -30,6 +30,8 @@ import CheckCircleOutlineIcon from "@mui/icons-material/CheckCircleOutline";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import EditLocationAltIcon from "@mui/icons-material/EditLocationAlt";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
+import MergeTypeIcon from "@mui/icons-material/MergeType";
+import MergeStopsDialog from "./MergeStopsDialog";
 import API_BASE_URL from "../../config";
 import { fetchWithSession } from "../../utils/sessionManager";
 import { useLanguage } from "../../contexts/LanguageContext";
@@ -40,7 +42,7 @@ import { CHAT_OPEN_EVENT } from "../chat/ChatAssistantFAB";
 
 const PANEL_TYPES = new Set(["stop", "route", "trip", "shape", "calendar"]);
 
-function FindingRow({ finding, onAskAi, onOpenStudio, chatEnabled }) {
+function FindingRow({ finding, onAskAi, onOpenStudio, onMerge, chatEnabled }) {
   const { t } = useLanguage();
   const theme = useTheme();
   const { openPanel } = useDetailPanel();
@@ -103,32 +105,48 @@ function FindingRow({ finding, onAskAi, onOpenStudio, chatEnabled }) {
             <Box sx={{ display: "flex", flexDirection: "column", gap: 0.3 }}>
               {finding.samples.map((s, i) => {
                 const clickable = s.id && PANEL_TYPES.has(finding.entityType);
+                const mergeable = finding.code === "duplicate_stops" && s.id && s.otherId && onMerge;
                 return (
-                  <Box
-                    key={`${s.id || "x"}-${i}`}
-                    component={clickable ? "button" : "div"}
-                    type={clickable ? "button" : undefined}
-                    onClick={clickable ? () => openPanel(finding.entityType, s.id) : undefined}
-                    sx={{
-                      all: "unset",
-                      display: "flex",
-                      alignItems: "baseline",
-                      gap: 1,
-                      fontSize: "0.74rem",
-                      px: 0.75,
-                      py: 0.35,
-                      borderRadius: 1,
-                      cursor: clickable ? "pointer" : "default",
-                      "&:hover": clickable ? { background: alpha(theme.palette.primary.main, 0.08) } : {},
-                    }}
-                  >
-                    <Box component="span" sx={{ fontWeight: 600, color: clickable ? "primary.main" : "text.primary", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "55%" }}>
-                      {s.label}
+                  <Box key={`${s.id || "x"}-${i}`} sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+                    <Box
+                      component={clickable ? "button" : "div"}
+                      type={clickable ? "button" : undefined}
+                      onClick={clickable ? () => openPanel(finding.entityType, s.id) : undefined}
+                      sx={{
+                        all: "unset",
+                        flex: 1,
+                        minWidth: 0,
+                        display: "flex",
+                        alignItems: "baseline",
+                        gap: 1,
+                        fontSize: "0.74rem",
+                        px: 0.75,
+                        py: 0.35,
+                        borderRadius: 1,
+                        cursor: clickable ? "pointer" : "default",
+                        "&:hover": clickable ? { background: alpha(theme.palette.primary.main, 0.08) } : {},
+                      }}
+                    >
+                      <Box component="span" sx={{ fontWeight: 600, color: clickable ? "primary.main" : "text.primary", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "55%" }}>
+                        {s.label}
+                      </Box>
+                      <Box component="span" sx={{ color: "text.secondary", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {s.detail}
+                      </Box>
+                      {clickable && <OpenInNewIcon sx={{ fontSize: 12, color: "text.disabled" }} />}
                     </Box>
-                    <Box component="span" sx={{ color: "text.secondary", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {s.detail}
-                    </Box>
-                    {clickable && <OpenInNewIcon sx={{ fontSize: 12, color: "text.disabled" }} />}
+                    {mergeable && (
+                      <Tooltip title={t("audit.merge.action")}>
+                        <Chip
+                          size="small"
+                          icon={<MergeTypeIcon sx={{ fontSize: 13 }} />}
+                          label={t("audit.merge.action")}
+                          onClick={() => onMerge(s.id, s.otherId)}
+                          data-testid="audit-merge"
+                          sx={{ height: 20, fontSize: "0.62rem", fontWeight: 700, flexShrink: 0 }}
+                        />
+                      </Tooltip>
+                    )}
                   </Box>
                 );
               })}
@@ -180,6 +198,7 @@ export default function QualityAuditPanel({ compact = false, onSeeAll = null, ma
   const [audit, setAudit] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [mergePair, setMergePair] = useState(null); // { a, b }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -299,10 +318,12 @@ export default function QualityAuditPanel({ compact = false, onSeeAll = null, ma
       {findings.length > 0 && (
         <Box sx={{ display: "flex", flexDirection: "column", gap: 0.75 }}>
           {findings.map((f) => (
-            <FindingRow key={f.code} finding={f} onAskAi={askAi} onOpenStudio={openStudio} chatEnabled={chatEnabled} />
+            <FindingRow key={f.code} finding={f} onAskAi={askAi} onOpenStudio={openStudio} onMerge={(a, b) => setMergePair({ a, b })} chatEnabled={chatEnabled} />
           ))}
         </Box>
       )}
+
+      <MergeStopsDialog open={Boolean(mergePair)} stopA={mergePair?.a} stopB={mergePair?.b} onClose={() => setMergePair(null)} />
 
       {audit && audit.partial && (
         <Typography sx={{ fontSize: "0.7rem", color: "text.disabled" }}>{t("audit.partial")}</Typography>

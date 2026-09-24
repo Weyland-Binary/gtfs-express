@@ -18,6 +18,7 @@ const sqlConsoleService = require("./edit/sqlConsoleService");
 const validationReportStore = require("./validationReportStore");
 const qualityAuditService = require("./qualityAuditService");
 const tripEditService = require("./edit/tripEditService");
+const smartEditService = require("./edit/smartEditService");
 const { getRule } = require("../utils/rulesCatalog");
 
 // ── Caps ──────────────────────────────────────────────────────────────────
@@ -749,7 +750,260 @@ const shiftTrips = {
   },
 };
 
-const TOOLS = [runSql, proposeFix, getValidationFindings, getRuleInfo, getFeedOverview, navigate, showChart, runQualityAudit, createTrips, shiftTrips];
+// ── insert_stop ───────────────────────────────────────────────────────────
+const insertStop = {
+  definition: {
+    name: "insert_stop",
+    description:
+      "Propose adding an existing stop to every trip of a route/direction (or given trip ids) between two stops it already serves: 'add stop X after Y on line 12 northbound'. The server interpolates arrival/departure times from the real distances between the stops, skips trips already serving X, and flags shapes that would need a re-fit in the Shape Studio. Nothing is written until the user applies it (one undo step). Find the stop ids with run_sql first.",
+    input_schema: {
+      type: "object",
+      properties: {
+        stop_id: { type: "string", description: "The stop to insert (must exist in stops)." },
+        after_stop_id: { type: "string", description: "Insert right after this stop of the trip." },
+        before_stop_id: { type: "string", description: "Insert right before this stop (give both when the stop goes between two known stops)." },
+        route_id: { type: "string" },
+        direction_id: { type: "string" },
+        service_id: { type: "string" },
+        trip_ids: { type: "array", items: { type: "string" }, description: "Explicit trips instead of route/direction." },
+        title: { type: "string", description: "Short title for the proposal card, in the user's language." },
+      },
+      required: ["stop_id"],
+    },
+  },
+  run(input, ctx) {
+    const params = {};
+    for (const k of ["stop_id", "after_stop_id", "before_stop_id", "route_id", "direction_id", "service_id"]) {
+      if (input?.[k] != null && String(input[k]).trim() !== "") params[k] = String(input[k]).trim();
+    }
+    if (Array.isArray(input?.trip_ids) && input.trip_ids.length) params.trip_ids = input.trip_ids.map(String);
+    const plan = smartEditService.planStopInsertion(ctx.dbCtx.db, params);
+    if (!plan.ok) {
+      const sk = plan.skipped ? ` (skipped: ${JSON.stringify(plan.skipped)})` : "";
+      return { content: `Cannot plan the insertion: ${plan.error}${sk}`, isError: true };
+    }
+    const preview = {
+      stop: plan.stop,
+      route_id: plan.route_id,
+      direction_id: plan.direction_id,
+      after_stop_id: plan.after_stop_id,
+      before_stop_id: plan.before_stop_id,
+      trips: plan.trips.slice(0, 200).map((t) => ({ trip_id: t.trip_id, stop_sequence: t.stop_sequence, arrival_time: t.arrival_time, after: t.after, before: t.before })),
+      trip_count: plan.trips.length,
+      skipped: plan.skipped,
+      shapes_to_review: plan.shapes_to_review,
+    };
+    const proposalId = ctx.nextProposalId();
+    const title = clip(typeof input?.title === "string" ? input.title.trim() : "", 80) || `Add stop ${plan.stop.stop_name || plan.stop.stop_id} to ${plan.trips.length} trip(s)`;
+    ctx.emit("proposal", { proposalId, kind: "operation", operation: "insert_stop", title, rationale: "", params, preview });
+    const sample = plan.trips.slice(0, 6).map((t) => `- ${t.trip_id}: seq ${t.stop_sequence}, ${t.arrival_time || "no time"} (after ${t.after || "—"}, before ${t.before || "—"})`);
+    return {
+      content: [
+        `proposal_id: ${proposalId}`,
+        `${plan.trips.length} trip(s) of route ${plan.route_id} would get stop ${plan.stop.stop_id} (${plan.stop.stop_name || ""}); skipped: ${plan.skipped.already_present} already serve it, ${plan.skipped.no_anchor} do not serve the anchor, ${plan.skipped.not_consecutive} have other stops between the anchors.`,
+        ...sample,
+        plan.shapes_to_review.length
+          ? `${plan.shapes_to_review.length} shape(s) run more than ${plan.shapes_to_review[0].distance_m >= 0 ? "50" : "50"} m from the stop (${plan.shapes_to_review.slice(0, 5).map((s) => `${s.shape_id}: ${s.distance_m} m`).join(", ")}): tell the user to re-fit them in the Shape Studio after applying.`
+          : "Shapes are fine (the stop lies on or near them).",
+        "The user can apply this from the chat. Do not claim it is done.",
+      ].join("\n"),
+    };
+  },
+};
+
+// ── merge_stops ───────────────────────────────────────────────────────────
+const mergeStops = {
+  definition: {
+    name: "merge_stops",
+    description:
+      "Propose merging duplicate stops into one survivor: every reference (stop_times, transfers, pathways, child stops, stop areas, fare rules) is re-pointed to the survivor, the duplicates are deleted, and the survivor's empty optional fields are filled from them. Use it for the duplicate_stops audit finding or when the user says two stops are the same. Prefer as survivor the stop with the most stop_times or the cleanest name. Nothing is written until the user applies it (one undo step).",
+    input_schema: {
+      type: "object",
+      properties: {
+        survivor_id: { type: "string" },
+        duplicate_ids: { type: "array", items: { type: "string" }, description: "Stops to fold into the survivor (1–50)." },
+        fill_missing: { type: "boolean", description: "Copy the duplicates' optional fields into the survivor's empty ones (default true)." },
+        title: { type: "string" },
+      },
+      required: ["survivor_id", "duplicate_ids"],
+    },
+  },
+  run(input, ctx) {
+    const params = {
+      survivor_id: String(input?.survivor_id || "").trim(),
+      duplicate_ids: Array.isArray(input?.duplicate_ids) ? input.duplicate_ids.map(String) : [],
+      ...(input?.fill_missing === false ? { fill_missing: false } : {}),
+    };
+    const plan = smartEditService.planStopMerge(ctx.dbCtx.db, params);
+    if (!plan.ok) return { content: `Cannot plan the merge: ${plan.error}`, isError: true };
+    const preview = {
+      survivor: { stop_id: plan.survivor.stop_id, stop_name: plan.survivor.stop_name },
+      duplicates: plan.duplicates,
+      by_table: plan.by_table,
+      trips_with_both: plan.trips_with_both,
+      filled: plan.filled,
+    };
+    const proposalId = ctx.nextProposalId();
+    const title = clip(typeof input?.title === "string" ? input.title.trim() : "", 80) || `Merge ${plan.duplicates.length} stop(s) into ${plan.survivor.stop_name || plan.survivor.stop_id}`;
+    ctx.emit("proposal", { proposalId, kind: "operation", operation: "merge_stops", title, rationale: "", params, preview });
+    return {
+      content: [
+        `proposal_id: ${proposalId}`,
+        `Survivor ${plan.survivor.stop_id} (${plan.survivor.stop_name || ""}) absorbs: ${plan.duplicates.map((d) => `${d.stop_id} (${d.stop_name || ""}, ${d.distance_m ?? "?"} m away, ${d.stop_times} stop_times)`).join("; ")}.`,
+        `References re-pointed: ${Object.entries(plan.by_table).map(([t, n]) => `${n} ${t}`).join(", ") || "none"}.`,
+        plan.trips_with_both > 0 ? `WARNING: ${plan.trips_with_both} trip(s) serve both stops and would call at the survivor twice — mention it.` : "",
+        Object.keys(plan.filled).length ? `Survivor fields filled from the duplicates: ${Object.keys(plan.filled).join(", ")}.` : "",
+        "The user can apply this from the chat. Do not claim it is done.",
+      ].filter(Boolean).join("\n"),
+    };
+  },
+};
+
+// ── get_stop_name_variants ────────────────────────────────────────────────
+const VARIANT_GROUPS_MAX = 40;
+const getStopNameVariants = {
+  definition: {
+    name: "get_stop_name_variants",
+    description:
+      "Groups of stops whose names are the same once case, accents, punctuation and spacing are ignored, with every spelling and the stops using it. Call it before rename_stops to harmonise names: pick the best spelling per group (correct case and accents, no abbreviations or trailing codes) and propose the renames.",
+    input_schema: {
+      type: "object",
+      properties: { limit: { type: "integer", description: `Max groups (default 25, max ${VARIANT_GROUPS_MAX}).` } },
+    },
+  },
+  run(input, ctx) {
+    const limit = Math.min(VARIANT_GROUPS_MAX, Math.max(1, parseInt(input?.limit, 10) || 25));
+    const groups = new Map();
+    for (const s of ctx.dbCtx.db.prepare("SELECT stop_id, stop_name FROM stops WHERE stop_name IS NOT NULL AND stop_name != ''").iterate()) {
+      const key = qualityAuditService._internals.normalizeName(s.stop_name);
+      if (!key) continue;
+      if (!groups.has(key)) groups.set(key, new Map());
+      const variants = groups.get(key);
+      if (!variants.has(s.stop_name)) variants.set(s.stop_name, []);
+      variants.get(s.stop_name).push(s.stop_id);
+    }
+    const out = [];
+    for (const [key, variants] of groups) {
+      if (variants.size < 2) continue;
+      out.push({
+        key,
+        variants: [...variants.entries()].map(([name, ids]) => ({ name, stops: ids.length, stop_ids: ids.slice(0, 20) })),
+      });
+    }
+    out.sort((a, b) => b.variants.length - a.variants.length || a.key.localeCompare(b.key));
+    return {
+      content: JSON.stringify({ groups: out.length, shown: Math.min(out.length, limit), items: out.slice(0, limit) }),
+    };
+  },
+};
+
+// ── rename_stops ──────────────────────────────────────────────────────────
+const renameStops = {
+  definition: {
+    name: "rename_stops",
+    description:
+      "Propose renaming stops in batch (name harmonisation, fixing ALL-CAPS names, removing codes from names…). The user reviews the list, unticks what they disagree with and applies (one undo step). Give the final stop_name for each stop_id; unchanged names are ignored.",
+    input_schema: {
+      type: "object",
+      properties: {
+        renames: {
+          type: "array",
+          items: { type: "object", properties: { stop_id: { type: "string" }, stop_name: { type: "string" } }, required: ["stop_id", "stop_name"] },
+        },
+        title: { type: "string" },
+        rationale: { type: "string", description: "One sentence on the naming rule applied, in the user's language." },
+      },
+      required: ["renames"],
+    },
+  },
+  run(input, ctx) {
+    const params = { renames: Array.isArray(input?.renames) ? input.renames.map((r) => ({ stop_id: String(r?.stop_id || ""), stop_name: String(r?.stop_name || "") })) : [] };
+    const plan = smartEditService.planStopRenames(ctx.dbCtx.db, params);
+    if (!plan.ok) return { content: `Cannot plan the renames: ${plan.error}`, isError: true };
+    const preview = { renames: plan.renames, unchanged: plan.unchanged };
+    const proposalId = ctx.nextProposalId();
+    const title = clip(typeof input?.title === "string" ? input.title.trim() : "", 80) || `Rename ${plan.renames.length} stop(s)`;
+    const rationale = clip(typeof input?.rationale === "string" ? input.rationale.trim() : "", 300);
+    ctx.emit("proposal", { proposalId, kind: "operation", operation: "rename_stops", title, rationale, params: { renames: plan.renames.map((r) => ({ stop_id: r.stop_id, stop_name: r.stop_name })) }, preview });
+    return {
+      content: [
+        `proposal_id: ${proposalId}`,
+        `${plan.renames.length} rename(s) planned (${plan.unchanged} already correct):`,
+        ...plan.renames.slice(0, 15).map((r) => `- ${r.stop_id}: "${r.old_name}" → "${r.stop_name}"`),
+        plan.renames.length > 15 ? `… and ${plan.renames.length - 15} more` : "",
+        "The user can review, untick and apply from the chat. Do not claim it is done.",
+      ].filter(Boolean).join("\n"),
+    };
+  },
+};
+
+// ── extend_calendar ───────────────────────────────────────────────────────
+const DATE_RE = /^\d{8}$/;
+const extendCalendar = {
+  definition: {
+    name: "extend_calendar",
+    description:
+      "Propose extending the validity of services: sets calendar.end_date (and feed_info.feed_end_date) to a new date for the given services, or for every service ending before it. Use it for expired feeds / feeds ending soon ('extend the feed to the end of the year', 'prolong the winter service by 3 months'). Existing calendar_dates exceptions are kept; the preview counts those falling in the new window. Nothing is written until the user applies it (one undo step).",
+    input_schema: {
+      type: "object",
+      properties: {
+        end_date: { type: "string", description: "New end date, YYYYMMDD." },
+        service_ids: { type: "array", items: { type: "string" }, description: "Services to extend (default: all services ending before end_date)." },
+        update_feed_info: { type: "boolean", description: "Also push feed_info.feed_end_date (default true)." },
+        title: { type: "string" },
+      },
+      required: ["end_date"],
+    },
+  },
+  run(input, ctx) {
+    const endDate = String(input?.end_date || "").replace(/-/g, "").trim();
+    if (!DATE_RE.test(endDate)) return { content: "Error: end_date must be YYYYMMDD.", isError: true };
+    const params = {
+      end_date: endDate,
+      ...(Array.isArray(input?.service_ids) && input.service_ids.length ? { service_ids: input.service_ids.map(String) } : {}),
+      ...(input?.update_feed_info === false ? { update_feed_info: false } : {}),
+    };
+    const plan = smartEditService.planCalendarExtension(ctx.dbCtx.db, params);
+    if (!plan.ok) return { content: `Cannot plan the extension: ${plan.error}`, isError: true };
+    const preview = {
+      end_date: plan.end_date,
+      services: plan.services,
+      unchanged: plan.unchanged,
+      feed_info: plan.feed_info ? { old_end_date: plan.feed_info.old, end_date: plan.feed_info.new } : null,
+    };
+    const proposalId = ctx.nextProposalId();
+    const title = clip(typeof input?.title === "string" ? input.title.trim() : "", 80) || `Extend ${plan.services.length} service(s) to ${plan.end_date}`;
+    ctx.emit("proposal", { proposalId, kind: "operation", operation: "extend_calendar", title, rationale: "", params, preview });
+    return {
+      content: [
+        `proposal_id: ${proposalId}`,
+        `${plan.services.length} service(s) extended to ${plan.end_date} (${plan.unchanged} already reach it):`,
+        ...plan.services.slice(0, 12).map((s) => `- ${s.service_id}: ${s.old_end_date || "no end"} → ${s.end_date}, ${s.trips} trip(s)${s.exceptions_in_window ? `, ${s.exceptions_in_window} exception date(s) in the new window` : ""}`),
+        plan.services.length > 12 ? `… and ${plan.services.length - 12} more` : "",
+        plan.feed_info ? `feed_info.feed_end_date ${plan.feed_info.old} → ${plan.feed_info.new}.` : "",
+        "Remind the user that public holidays in the new window are not added automatically (calendar_dates). The user can apply this from the chat.",
+      ].filter(Boolean).join("\n"),
+    };
+  },
+};
+
+const TOOLS = [
+  runSql,
+  proposeFix,
+  getValidationFindings,
+  getRuleInfo,
+  getFeedOverview,
+  navigate,
+  showChart,
+  runQualityAudit,
+  createTrips,
+  shiftTrips,
+  insertStop,
+  mergeStops,
+  getStopNameVariants,
+  renameStops,
+  extendCalendar,
+];
 const TOOL_DEFINITIONS = TOOLS.map((t) => t.definition);
 const TOOLS_BY_NAME = Object.fromEntries(TOOLS.map((t) => [t.definition.name, t]));
 

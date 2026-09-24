@@ -48,6 +48,13 @@ const {
 } = require("./edit/tripEditService");
 
 const {
+  insertStopInPattern,
+  mergeStops,
+  renameStopsBatch,
+  extendCalendar,
+} = require("./edit/smartEditService");
+
+const {
   updateCalendar,
   getStopTime,
   updateStopTime,
@@ -208,6 +215,11 @@ module.exports = {
   deleteTrip,
   shiftTripTimes,
   createTripsFromTemplate,
+  // Assistant-planned batch operations
+  insertStopInPattern,
+  mergeStops,
+  renameStopsBatch,
+  extendCalendar,
   // Calendar CRUD
   createCalendar,
   deleteCalendar,
