@@ -22,6 +22,9 @@ import {
   DialogContent,
   DialogActions,
   Alert,
+  ToggleButton,
+  ToggleButtonGroup,
+  Divider,
 } from "@mui/material";
 import { useTheme, alpha } from "@mui/material/styles";
 import SaveIcon from "@mui/icons-material/Save";
@@ -35,130 +38,40 @@ import TimelineIcon from "@mui/icons-material/Timeline";
 import StraightenIcon from "@mui/icons-material/Straighten";
 import CompressIcon from "@mui/icons-material/Compress";
 import WarningIcon from "@mui/icons-material/Warning";
-import { Polyline, Marker, useMap } from "react-leaflet";
+import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
+import AltRouteIcon from "@mui/icons-material/AltRoute";
+import HorizontalRuleIcon from "@mui/icons-material/HorizontalRule";
+import FirstPageIcon from "@mui/icons-material/FirstPage";
+import LastPageIcon from "@mui/icons-material/LastPage";
+import WrongLocationIcon from "@mui/icons-material/WrongLocation";
+import LowPriorityIcon from "@mui/icons-material/LowPriority";
+import CheckCircleOutlineIcon from "@mui/icons-material/CheckCircleOutline";
+import { Polyline, Marker, useMap, useMapEvents } from "react-leaflet";
 import L from "leaflet";
 import { fetchWithSession } from "../../utils/sessionManager";
 import { useEditMode } from "../../contexts/EditModeContext";
 import { useLanguage } from "../../contexts/LanguageContext";
 import API_BASE_URL from "../../config";
 import LinkShapeToTripsDialog from "./LinkShapeToTripsDialog";
-import { OSRM_BASE } from "../../utils/osrmRouting";
+import { fetchRoadRouteVia } from "../../utils/osrmRouting";
+import {
+  totalDistanceKm,
+  nearestSegmentProjection,
+  simplifyRDP,
+  analyzeStopFit,
+} from "../../utils/shapeGeometry";
 
-// ── OSRM routing ────────────────────────────────────────────────────────────
+// ── Constants ───────────────────────────────────────────────────────────────
 
-// Re-throws AbortError so callers can distinguish user-cancellation from
-// network/OSRM failures (the latter fall back to straight-line).
-async function fetchRoadRoute(from, to, signal) {
-  const url = `${OSRM_BASE}/${from.lon},${from.lat};${to.lon},${to.lat}?overview=full&geometries=geojson`;
-  try {
-    const res = await fetch(url, { signal });
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (data.code !== "Ok" || !data.routes?.[0]) return null;
-    const coords = data.routes[0].geometry.coordinates;
-    // OSRM returns [lon, lat]; convert to {lat, lon}
-    // Skip first point (it's the `from` point already in our array)
-    return coords.slice(1).map(([lon, lat]) => ({ lat, lon }));
-  } catch (err) {
-    if (err?.name === "AbortError") throw err;
-    return null;
-  }
-}
+// Stops farther than this from the polyline are reported as "off trace".
+const FIT_THRESHOLD_M = 100;
+// Vertex markers rendered at once. Beyond this the visible stretch is
+// decimated; zooming in always brings every vertex back.
+const MAX_VISIBLE_VERTICES = 400;
+const MAX_MIDPOINTS = 250;
 
-// ── Haversine (client-side distance) ────────────────────────────────────────
-function haversineM(lat1, lon1, lat2, lon2) {
-  const R = 6_371_000;
-  const toRad = (d) => (d * Math.PI) / 180;
-  const dLat = toRad(lat2 - lat1);
-  const dLon = toRad(lon2 - lon1);
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-function totalDistanceKm(pts) {
-  let d = 0;
-  for (let i = 1; i < pts.length; i++) {
-    d += haversineM(pts[i - 1].lat, pts[i - 1].lon, pts[i].lat, pts[i].lon);
-  }
-  return (d / 1000).toFixed(2);
-}
-
-// ── Planar geometry (local equirectangular projection) ─────────────────────
-// Lat/lon are mapped onto a flat frame scaled to meters at the segment's mean
-// latitude (x = lon·cos(lat0), y = lat, both × meters/degree). Plenty
-// accurate at the city scale where GTFS shapes live.
-const M_PER_DEG = 111_320;
-
-// Projects p onto segment [a, b]. Returns the clamped projection point, the
-// clamped parametric position t in [0, 1], and the distance to p in meters.
-function projectPointOnSegment(p, a, b) {
-  const lat0Rad = (((a.lat + b.lat) / 2) * Math.PI) / 180;
-  const kx = M_PER_DEG * Math.cos(lat0Rad);
-  const ky = M_PER_DEG;
-  const apx = (p.lon - a.lon) * kx;
-  const apy = (p.lat - a.lat) * ky;
-  const abx = (b.lon - a.lon) * kx;
-  const aby = (b.lat - a.lat) * ky;
-  const len2 = abx * abx + aby * aby;
-  const t =
-    len2 === 0 ? 0 : Math.min(1, Math.max(0, (apx * abx + apy * aby) / len2));
-  const projX = abx * t;
-  const projY = aby * t;
-  return {
-    point: { lat: a.lat + projY / ky, lon: a.lon + projX / kx },
-    t,
-    distM: Math.hypot(apx - projX, apy - projY),
-  };
-}
-
-// Finds the polyline segment closest to p. Returns { index, point, distM }
-// where `index` is the segment's start vertex and `point` the clamped
-// projection of p onto that segment, or null when pts has no segment.
-function nearestSegmentProjection(p, pts) {
-  let best = null;
-  for (let i = 0; i < pts.length - 1; i++) {
-    const proj = projectPointOnSegment(p, pts[i], pts[i + 1]);
-    if (!best || proj.distM < best.distM) {
-      best = { index: i, point: proj.point, distM: proj.distM };
-    }
-  }
-  return best;
-}
-
-// ── Ramer–Douglas–Peucker simplification (metric tolerance) ────────────────
-// Iterative RDP over {lat, lon} points. Perpendicular distances are measured
-// in meters via projectPointOnSegment (point-to-SEGMENT, so collapsed or
-// folded chords degrade gracefully). First and last points are always kept,
-// so the result never drops below 2 points.
-function simplifyRDP(pts, toleranceM) {
-  if (pts.length <= 2) return pts;
-  const keep = new Uint8Array(pts.length);
-  keep[0] = 1;
-  keep[pts.length - 1] = 1;
-  const stack = [[0, pts.length - 1]];
-  while (stack.length > 0) {
-    const [start, end] = stack.pop();
-    let maxDist = -1;
-    let maxIdx = -1;
-    for (let i = start + 1; i < end; i++) {
-      const { distM } = projectPointOnSegment(pts[i], pts[start], pts[end]);
-      if (distM > maxDist) {
-        maxDist = distM;
-        maxIdx = i;
-      }
-    }
-    if (maxIdx !== -1 && maxDist > toleranceM) {
-      keep[maxIdx] = 1;
-      stack.push([start, maxIdx], [maxIdx, end]);
-    }
-  }
-  return pts.filter((_, i) => keep[i] === 1);
-}
-
-// ── Vertex DivIcon ──────────────────────────────────────────────────────────
-const makeVertexIcon = (color = "#1976d2", size = 12) =>
+// ── Vertex DivIcons ─────────────────────────────────────────────────────────
+const makeVertexIcon = (color = "#1976d2", size = 12, ring = false) =>
   L.divIcon({
     className: "",
     iconSize: [size, size],
@@ -166,12 +79,15 @@ const makeVertexIcon = (color = "#1976d2", size = 12) =>
     html: `<div style="
       width:${size}px;height:${size}px;border-radius:50%;
       background:${color};border:2px solid #fff;
-      box-shadow:0 1px 4px rgba(0,0,0,0.4);cursor:grab;
+      box-shadow:0 1px 4px rgba(0,0,0,0.4)${ring ? ",0 0 0 3px rgba(255,152,0,0.45)" : ""};cursor:grab;
     "></div>`,
   });
 
 const vertexIcon = makeVertexIcon("#1976d2", 12);
 const endpointIcon = makeVertexIcon("#f44336", 14);
+const selectedVertexIcon = makeVertexIcon("#ff9800", 14, true);
+const selectedEndpointIcon = makeVertexIcon("#ff9800", 16, true);
+const extendTargetIcon = makeVertexIcon("#2e7d32", 18, true);
 
 const midpointIcon = L.divIcon({
   className: "",
@@ -184,11 +100,35 @@ const midpointIcon = L.divIcon({
   "></div>`,
 });
 
+// Numbered badge shown above the pattern's stops while editing: blue when the
+// stop sits on the trace, red when it is off trace, orange when the trace
+// serves it out of order.
+const stopBadgeCache = new Map();
+const makeStopBadge = (n, kind) => {
+  const key = `${n}:${kind}`;
+  if (stopBadgeCache.has(key)) return stopBadgeCache.get(key);
+  const bg = kind === "off" ? "#d32f2f" : kind === "order" ? "#ef6c00" : "#1565c0";
+  const icon = L.divIcon({
+    className: "",
+    iconSize: [20, 20],
+    iconAnchor: [10, 36],
+    html: `<div style="
+      width:20px;height:20px;border-radius:50%;background:${bg};color:#fff;
+      font:700 10px/20px system-ui,sans-serif;text-align:center;
+      border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,0.45);
+      pointer-events:none;
+    ">${n}</div>`,
+  });
+  stopBadgeCache.set(key, icon);
+  return icon;
+};
+
 // ── Leaflet path colors (hex by file convention — Leaflet renders outside
 // the MUI theme) ────────────────────────────────────────────────────────────
 const EDIT_LINE_COLOR = "#1976d2";
 const EDIT_LINE_HOVER_COLOR = "#42a5f5";
 const SIMPLIFY_PREVIEW_COLOR = "#9c27b0";
+const SELECTION_COLOR = "#ff9800";
 
 // ── MapControl — renders React children into a Leaflet control ──────────────
 function MapControl({ position = "topleft", children }) {
@@ -213,6 +153,24 @@ function MapControl({ position = "topleft", children }) {
   return ReactDOM.createPortal(children, container);
 }
 
+const SmallIconButton = ({ title, testid, disabled, onClick, children, color }) => (
+  <Tooltip title={title} arrow>
+    <span>
+      <IconButton
+        size="small"
+        onClick={onClick}
+        disabled={disabled}
+        aria-label={typeof title === "string" ? title : undefined}
+        data-testid={testid}
+        color={color}
+        sx={{ border: 1, borderColor: "divider", borderRadius: 1.5, p: 0.5 }}
+      >
+        {children}
+      </IconButton>
+    </span>
+  </Tooltip>
+);
+
 // ── Toolbar (MUI, dark-mode aware) ──────────────────────────────────────────
 function EditorToolbar({
   shapeId,
@@ -223,12 +181,16 @@ function EditorToolbar({
   distanceKm,
   snapToRoad,
   extending,
+  extendAt,
   undoAvailable,
   redoAvailable,
   canReverse,
   mode,
   linkTripCount,
   sharedTripCount,
+  selection,
+  selectionDistanceM,
+  fit,
   simplifyOpen,
   simplifyTolerance,
   simplifyAfter,
@@ -239,25 +201,37 @@ function EditorToolbar({
   onRedo,
   onReverse,
   onToggleExtend,
+  onExtendAtChange,
   onToggleSnap,
   onToggleSimplify,
   onSimplifyToleranceChange,
   onSimplifyApply,
   onSimplifyCancel,
+  onSectionReroute,
+  onSectionStraighten,
+  onSelectionDelete,
+  onClearSelection,
+  onFlyOffTrace,
+  onFlyOutOfOrder,
 }) {
   const theme = useTheme();
   const { t } = useLanguage();
+  const hasRange = selection && selection.end > selection.start;
+  const rangeCount = selection ? selection.end - selection.start + 1 : 0;
+  const offCount = fit ? fit.offTrace.length : 0;
+  const orderCount = fit ? fit.outOfOrder.length : 0;
+  const fitChecked = fit && fit.results.length > 0;
 
   return (
     <MapControl position="bottomright">
       <Box
+        data-testid="shape-editor-toolbar"
         sx={{
-          background: alpha(theme.palette.background.paper, 0.95),
+          background: alpha(theme.palette.background.paper, 0.96),
           backdropFilter: "blur(8px)",
           borderRadius: 2.5,
           p: 1.5,
-          minWidth: 220,
-          maxWidth: 264,
+          width: 276,
           boxShadow: theme.shadows[8],
           border: `1px solid ${theme.palette.divider}`,
           display: "flex",
@@ -272,38 +246,42 @@ function EditorToolbar({
           <TimelineIcon
             sx={{
               fontSize: 18,
-              color:
-                mode === "create" ? "success.main" : "primary.main",
+              color: mode === "create" ? "success.main" : "primary.main",
             }}
           />
-          <Typography
-            variant="subtitle2"
-            fontWeight={700}
-            color={mode === "create" ? "success.main" : "primary"}
-            noWrap
-          >
-            {mode === "create"
-              ? t("edit.shape.createTitle")
-              : t("edit.shape.editorTitle")}
-          </Typography>
-          <Box sx={{ flex: 1 }} />
+          <Box sx={{ minWidth: 0, flex: 1 }}>
+            <Typography
+              variant="subtitle2"
+              fontWeight={700}
+              color={mode === "create" ? "success.main" : "primary"}
+              noWrap
+              sx={{ lineHeight: 1.2 }}
+            >
+              {mode === "create"
+                ? t("edit.shape.createTitle")
+                : t("edit.shape.editorTitle")}
+            </Typography>
+            <Typography
+              variant="caption"
+              fontFamily="monospace"
+              color="text.secondary"
+              noWrap
+              sx={{ fontSize: 10, display: "block" }}
+            >
+              {shapeId}
+            </Typography>
+          </Box>
           <Tooltip title={t("edit.shape.cancel")} arrow>
-            <IconButton size="small" onClick={onCancel} sx={{ p: 0.3 }}>
+            <IconButton
+              size="small"
+              onClick={onCancel}
+              sx={{ p: 0.3 }}
+              data-testid="shape-cancel"
+            >
               <CloseIcon sx={{ fontSize: 16 }} />
             </IconButton>
           </Tooltip>
         </Box>
-
-        {/* Shape ID */}
-        <Typography
-          variant="caption"
-          fontFamily="monospace"
-          color="text.secondary"
-          noWrap
-          sx={{ fontSize: 10 }}
-        >
-          {shapeId}
-        </Typography>
 
         {mode === "create" && linkTripCount > 0 && (
           <Typography
@@ -315,7 +293,7 @@ function EditorToolbar({
           </Typography>
         )}
 
-        {/* Stats */}
+        {/* Stats + fit */}
         <Box display="flex" gap={0.5} flexWrap="wrap">
           <Chip
             label={`${pointCount} ${t("edit.shape.points")}`}
@@ -344,6 +322,45 @@ function EditorToolbar({
               sx={{ fontSize: 10, height: 20 }}
             />
           )}
+          {fitChecked && offCount === 0 && orderCount === 0 && (
+            <Tooltip title={t("edit.shape.fit.okTooltip", { m: FIT_THRESHOLD_M })} arrow>
+              <Chip
+                icon={<CheckCircleOutlineIcon sx={{ fontSize: 14 }} />}
+                label={t("edit.shape.fit.ok", { count: fit.results.length })}
+                size="small"
+                color="success"
+                variant="outlined"
+                data-testid="shape-fit-ok"
+                sx={{ fontSize: 10, height: 20 }}
+              />
+            </Tooltip>
+          )}
+          {offCount > 0 && (
+            <Tooltip title={t("edit.shape.fit.offTraceTooltip", { m: FIT_THRESHOLD_M })} arrow>
+              <Chip
+                icon={<WrongLocationIcon sx={{ fontSize: 14 }} />}
+                label={t("edit.shape.fit.offTrace", { count: offCount })}
+                size="small"
+                color="error"
+                onClick={onFlyOffTrace}
+                data-testid="shape-fit-offtrace"
+                sx={{ fontSize: 10, height: 20, fontWeight: 700 }}
+              />
+            </Tooltip>
+          )}
+          {orderCount > 0 && (
+            <Tooltip title={t("edit.shape.fit.orderTooltip")} arrow>
+              <Chip
+                icon={<LowPriorityIcon sx={{ fontSize: 14 }} />}
+                label={t("edit.shape.fit.order", { count: orderCount })}
+                size="small"
+                color="warning"
+                onClick={onFlyOutOfOrder}
+                data-testid="shape-fit-order"
+                sx={{ fontSize: 10, height: 20, fontWeight: 700 }}
+              />
+            </Tooltip>
+          )}
         </Box>
 
         {/* Shared-shape banner — edits to this geometry propagate to every
@@ -367,6 +384,165 @@ function EditorToolbar({
             />
           </Tooltip>
         )}
+
+        <Divider sx={{ my: 0.25 }} />
+
+        {/* Section / vertex selection */}
+        {selection ? (
+          <Box
+            data-testid="shape-selection-panel"
+            sx={{
+              border: `1px solid ${alpha(SELECTION_COLOR, 0.6)}`,
+              background: alpha(SELECTION_COLOR, 0.08),
+              borderRadius: 1.5,
+              px: 1,
+              py: 0.75,
+              display: "flex",
+              flexDirection: "column",
+              gap: 0.5,
+            }}
+          >
+            <Box display="flex" alignItems="center" gap={0.5}>
+              <Typography variant="caption" fontWeight={700} sx={{ fontSize: 11, flex: 1 }}>
+                {hasRange
+                  ? t("edit.shape.selection.range", {
+                      from: selection.start + 1,
+                      to: selection.end + 1,
+                      count: rangeCount,
+                      m: Math.round(selectionDistanceM),
+                    })
+                  : t("edit.shape.selection.single", { n: selection.start + 1 })}
+              </Typography>
+              <IconButton
+                size="small"
+                onClick={onClearSelection}
+                aria-label={t("app.close")}
+                sx={{ p: 0.2 }}
+              >
+                <CloseIcon sx={{ fontSize: 13 }} />
+              </IconButton>
+            </Box>
+            {!hasRange && (
+              <Typography variant="caption" color="text.secondary" sx={{ fontSize: 10, lineHeight: 1.3 }}>
+                {t("edit.shape.selection.hintShift")}
+              </Typography>
+            )}
+            <Box display="flex" gap={0.5}>
+              <Tooltip title={t("edit.shape.selection.rerouteTooltip")} arrow>
+                <span style={{ flex: 1, display: "flex" }}>
+                  <Button
+                    size="small"
+                    variant="contained"
+                    onClick={onSectionReroute}
+                    disabled={!hasRange || routing}
+                    startIcon={<AltRouteIcon sx={{ fontSize: 14 }} />}
+                    data-testid="shape-section-reroute"
+                    sx={{ flex: 1, fontSize: 10, px: 0.5 }}
+                  >
+                    {t("edit.shape.selection.reroute")}
+                  </Button>
+                </span>
+              </Tooltip>
+              <Tooltip title={t("edit.shape.selection.straightenTooltip")} arrow>
+                <span>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={onSectionStraighten}
+                    disabled={!hasRange || rangeCount < 3}
+                    data-testid="shape-section-straighten"
+                    sx={{ minWidth: 0, px: 0.75 }}
+                  >
+                    <HorizontalRuleIcon sx={{ fontSize: 16 }} />
+                  </Button>
+                </span>
+              </Tooltip>
+              <Tooltip title={t("edit.shape.selection.deleteTooltip")} arrow>
+                <span>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    color="error"
+                    onClick={onSelectionDelete}
+                    disabled={pointCount - rangeCount < 2}
+                    data-testid="shape-section-delete"
+                    sx={{ minWidth: 0, px: 0.75 }}
+                  >
+                    <DeleteOutlineIcon sx={{ fontSize: 16 }} />
+                  </Button>
+                </span>
+              </Tooltip>
+            </Box>
+          </Box>
+        ) : (
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ fontSize: 10, lineHeight: 1.4, opacity: 0.85 }}
+          >
+            {extending ? t("edit.shape.hintExtend") : t("edit.shape.hintSelect")}
+          </Typography>
+        )}
+
+        {/* Extend line: where new points go + road snapping */}
+        <Box display="flex" gap={0.5} alignItems="center">
+          <Button
+            size="small"
+            variant={extending ? "contained" : "outlined"}
+            color={extending ? "success" : "inherit"}
+            onClick={onToggleExtend}
+            startIcon={<AddIcon sx={{ fontSize: 14 }} />}
+            data-testid="shape-extend"
+            sx={{ flex: 1, fontSize: 11 }}
+          >
+            {t("edit.shape.extendLine")}
+          </Button>
+          {extending && (
+            <ToggleButtonGroup
+              size="small"
+              exclusive
+              value={extendAt}
+              onChange={(_e, v) => v && onExtendAtChange(v)}
+              aria-label={t("edit.shape.extendAt")}
+            >
+              <ToggleButton value="start" sx={{ px: 0.6, py: 0.3 }} data-testid="shape-extend-start">
+                <Tooltip title={t("edit.shape.extendAtStart")} arrow>
+                  <FirstPageIcon sx={{ fontSize: 16 }} />
+                </Tooltip>
+              </ToggleButton>
+              <ToggleButton value="end" sx={{ px: 0.6, py: 0.3 }} data-testid="shape-extend-end">
+                <Tooltip title={t("edit.shape.extendAtEnd")} arrow>
+                  <LastPageIcon sx={{ fontSize: 16 }} />
+                </Tooltip>
+              </ToggleButton>
+            </ToggleButtonGroup>
+          )}
+        </Box>
+        <FormControlLabel
+          control={
+            <Switch
+              checked={snapToRoad}
+              onChange={onToggleSnap}
+              size="small"
+              color="primary"
+            />
+          }
+          label={
+            <Box display="flex" alignItems="center" gap={0.5}>
+              {snapToRoad ? (
+                <RouteIcon sx={{ fontSize: 14 }} />
+              ) : (
+                <StraightenIcon sx={{ fontSize: 14 }} />
+              )}
+              <Typography variant="caption" fontWeight={600} sx={{ fontSize: 11 }}>
+                {snapToRoad
+                  ? t("edit.shape.snapToRoad")
+                  : t("edit.shape.straightLine")}
+              </Typography>
+            </Box>
+          }
+          sx={{ mx: 0, mt: -0.5 }}
+        />
 
         {/* Simplify — Ramer–Douglas–Peucker with live preview */}
         <Button
@@ -439,108 +615,39 @@ function EditorToolbar({
           </Box>
         )}
 
-        {/* Hints */}
-        <Typography
-          variant="caption"
-          color="text.secondary"
-          sx={{ fontSize: 9, lineHeight: 1.4, opacity: 0.7 }}
-        >
-          {t("edit.shape.hintDrag")}
-          <br />
-          {t("edit.shape.hintMidpoint")}
-          <br />
-          {t("edit.shape.hintRightClick")}
-          <br />
-          {t("edit.shape.hintKeys")}
-        </Typography>
-
-        {/* Snap to road toggle */}
-        <FormControlLabel
-          control={
-            <Switch
-              checked={snapToRoad}
-              onChange={onToggleSnap}
-              size="small"
-              color="primary"
-            />
-          }
-          label={
-            <Box display="flex" alignItems="center" gap={0.5}>
-              {snapToRoad ? (
-                <RouteIcon sx={{ fontSize: 14 }} />
-              ) : (
-                <StraightenIcon sx={{ fontSize: 14 }} />
-              )}
-              <Typography variant="caption" fontWeight={600} sx={{ fontSize: 11 }}>
-                {snapToRoad
-                  ? t("edit.shape.snapToRoad")
-                  : t("edit.shape.straightLine")}
-              </Typography>
-            </Box>
-          }
-          sx={{ mx: 0, mt: 0.25 }}
-        />
-
-        {/* Buttons */}
-        <Box display="flex" gap={0.5}>
-          <Tooltip title="Ctrl+Z" arrow>
-            <span>
-              <Button
-                size="small"
-                variant="outlined"
-                onClick={onUndo}
-                disabled={!undoAvailable}
-                aria-label={t("edit.undoTooltip")}
-                data-testid="shape-undo"
-                sx={{ minWidth: 0, px: 1 }}
-              >
-                <UndoIcon sx={{ fontSize: 16 }} />
-              </Button>
-            </span>
-          </Tooltip>
-          <Tooltip title="Ctrl+Shift+Z" arrow>
-            <span>
-              <Button
-                size="small"
-                variant="outlined"
-                onClick={onRedo}
-                disabled={!redoAvailable}
-                aria-label={t("edit.redoTooltip")}
-                data-testid="shape-redo"
-                sx={{ minWidth: 0, px: 1 }}
-              >
-                <RedoIcon sx={{ fontSize: 16 }} />
-              </Button>
-            </span>
-          </Tooltip>
-          <Tooltip title={t("edit.shape.reverse")} arrow>
-            <span>
-              <Button
-                size="small"
-                variant="outlined"
-                onClick={onReverse}
-                disabled={!canReverse}
-                aria-label={t("edit.shape.reverse")}
-                data-testid="shape-reverse"
-                sx={{ minWidth: 0, px: 1 }}
-              >
-                <SwapCallsIcon sx={{ fontSize: 16 }} />
-              </Button>
-            </span>
-          </Tooltip>
-
-          <Button
-            size="small"
-            variant={extending ? "contained" : "outlined"}
-            color={extending ? "success" : "inherit"}
-            onClick={onToggleExtend}
-            startIcon={<AddIcon sx={{ fontSize: 14 }} />}
-            sx={{ flex: 1, fontSize: 11 }}
+        {/* History + reverse */}
+        <Box display="flex" gap={0.5} alignItems="center">
+          <SmallIconButton
+            title={`${t("edit.undoTooltip")} (Ctrl+Z)`}
+            testid="shape-undo"
+            disabled={!undoAvailable}
+            onClick={onUndo}
           >
-            {t("edit.shape.extendLine")}
-          </Button>
+            <UndoIcon sx={{ fontSize: 16 }} />
+          </SmallIconButton>
+          <SmallIconButton
+            title={`${t("edit.redoTooltip")} (Ctrl+Shift+Z)`}
+            testid="shape-redo"
+            disabled={!redoAvailable}
+            onClick={onRedo}
+          >
+            <RedoIcon sx={{ fontSize: 16 }} />
+          </SmallIconButton>
+          <SmallIconButton
+            title={t("edit.shape.reverse")}
+            testid="shape-reverse"
+            disabled={!canReverse}
+            onClick={onReverse}
+          >
+            <SwapCallsIcon sx={{ fontSize: 16 }} />
+          </SmallIconButton>
+          <Box sx={{ flex: 1 }} />
+          <Typography variant="caption" color="text.secondary" sx={{ fontSize: 9, opacity: 0.7 }}>
+            {t("edit.shape.hintKeysShort")}
+          </Typography>
         </Box>
 
+        {/* Save / cancel */}
         <Box display="flex" gap={0.5} mt={0.25}>
           <Button
             size="small"
@@ -556,6 +663,7 @@ function EditorToolbar({
             variant="contained"
             onClick={onSave}
             disabled={saving || !dirty}
+            data-testid="shape-save"
             startIcon={
               saving ? <CircularProgress size={12} /> : <SaveIcon sx={{ fontSize: 14 }} />
             }
@@ -570,7 +678,10 @@ function EditorToolbar({
 }
 
 // ── Main Overlay ────────────────────────────────────────────────────────────
-function ShapeEditorOverlay({ editShapeRequest = null }) {
+// fitStops: ordered stops ({stop_id, stop_name, lat, lon}) the edited shape
+// is expected to serve — the pattern's stops in Shape Studio. Drives the
+// numbered badges and the off-trace / out-of-order feedback.
+function ShapeEditorOverlay({ editShapeRequest = null, fitStops = null }) {
   const map = useMap();
   const { editing, recordEdit, showToast } = useEditMode();
   const { t } = useLanguage();
@@ -582,6 +693,7 @@ function ShapeEditorOverlay({ editShapeRequest = null }) {
   const [redoStack, setRedoStack] = useState([]); // redo stack (mirror of history)
   const [saving, setSaving] = useState(false);
   const [extending, setExtending] = useState(false);
+  const [extendAt, setExtendAt] = useState("end"); // "end" | "start"
   const [snapToRoad, setSnapToRoad] = useState(true);
   const [routing, setRouting] = useState(false);
   // "create" mode: POST new shape + optionally link trips; "edit" (default) PUTs an existing shape
@@ -595,6 +707,12 @@ function ShapeEditorOverlay({ editShapeRequest = null }) {
   const [simplifyTolerance, setSimplifyTolerance] = useState(5);
   // Pointer currently hovering the editable polyline (insert-vertex gesture)
   const [lineHover, setLineHover] = useState(false);
+  // Vertex / section selection: { anchor, start, end } (indices, start ≤ end)
+  const [selection, setSelection] = useState(null);
+  // Bumped on every map move so the visible-vertex window is recomputed.
+  const [viewTick, setViewTick] = useState(0);
+  // Cycling cursors for the "fly to next problem stop" chips.
+  const fitCursorRef = useRef({ off: 0, order: 0 });
 
   // Post-save link dialog (standalone "draw new shape" only). When the user
   // created a shape without pre-selected trips, we offer a dedicated dialog
@@ -603,6 +721,7 @@ function ShapeEditorOverlay({ editShapeRequest = null }) {
   const [savedShapeId, setSavedShapeId] = useState(null);
   const [savedPointCount, setSavedPointCount] = useState(0);
   const [savedDistanceKm, setSavedDistanceKm] = useState("0");
+  const [savedContext, setSavedContext] = useState(null);
 
   // Confirmation dialog state (replaces window.confirm / confirm)
   const [confirmDialog, setConfirmDialog] = useState({
@@ -614,6 +733,8 @@ function ShapeEditorOverlay({ editShapeRequest = null }) {
   const routingRef = useRef(0); // cancel stale routing calls
   const pointsRef = useRef(points);
   pointsRef.current = points;
+  const selectionRef = useRef(selection);
+  selectionRef.current = selection;
   // Abort controller for the current /edit/shapes/:id fetch. Switching to
   // another shape (or unmounting) cancels the previous request so the editor
   // never loads the wrong shape's points on top of newer state.
@@ -622,6 +743,9 @@ function ShapeEditorOverlay({ editShapeRequest = null }) {
   // extend-click session. Cancelling it aborts in-flight routing on
   // unmount / cancel / save / shape switch.
   const osrmAbortRef = useRef(null);
+  // Abort controller of an in-flight section re-route (kept apart from the
+  // extend-click controller so one never cancels the other).
+  const rerouteAbortRef = useRef(null);
   // Warn only once per editing session when OSRM falls back to a straight
   // segment — repeated clicks while the service is down must not spam toasts.
   const osrmWarnedRef = useRef(false);
@@ -636,6 +760,11 @@ function ShapeEditorOverlay({ editShapeRequest = null }) {
       mountedRef.current = false;
     };
   }, []);
+
+  useMapEvents({
+    moveend: () => setViewTick((n) => n + 1),
+    zoomend: () => setViewTick((n) => n + 1),
+  });
 
   const dirty = useMemo(() => {
     // In create mode, any point is "dirty" (there's nothing to compare against)
@@ -655,6 +784,19 @@ function ShapeEditorOverlay({ editShapeRequest = null }) {
     return simplifyRDP(points, simplifyTolerance);
   }, [simplifyOpen, points, simplifyTolerance]);
 
+  // How well the current geometry serves the pattern's stops.
+  const fit = useMemo(() => {
+    if (!activeShapeId || !Array.isArray(fitStops) || fitStops.length === 0) return null;
+    if (points.length < 2) return null;
+    return analyzeStopFit(points, fitStops, { thresholdM: FIT_THRESHOLD_M });
+  }, [activeShapeId, fitStops, points]);
+
+  const selectionDistanceM = useMemo(() => {
+    if (!selection || selection.end <= selection.start) return 0;
+    const slice = points.slice(selection.start, selection.end + 1);
+    return parseFloat(totalDistanceKm(slice)) * 1000;
+  }, [selection, points]);
+
   // Refs for values accessed inside the editShapeRequest effect (avoids stale closures)
   const activeShapeIdRef = useRef(activeShapeId);
   activeShapeIdRef.current = activeShapeId;
@@ -671,8 +813,8 @@ function ShapeEditorOverlay({ editShapeRequest = null }) {
 
   // Full local-session reset — used whenever an editing session starts or
   // ends (load, create, save, cancel): history stacks, simplify panel,
-  // shared-trips banner, hover highlight. Also re-arms the once-per-session
-  // OSRM fallback warning.
+  // shared-trips banner, hover highlight, selection. Also re-arms the
+  // once-per-session OSRM fallback warning.
   const resetHistoryStacks = useCallback(() => {
     setHistory([]);
     setRedoStack([]);
@@ -680,6 +822,9 @@ function ShapeEditorOverlay({ editShapeRequest = null }) {
     setSimplifyTolerance(5);
     setSharedTripCount(0);
     setLineHover(false);
+    setSelection(null);
+    setExtendAt("end");
+    fitCursorRef.current = { off: 0, order: 0 };
     osrmWarnedRef.current = false;
   }, []);
 
@@ -703,9 +848,30 @@ function ShapeEditorOverlay({ editShapeRequest = null }) {
       if (pointsRef.current.length <= 2) return;
       pushUndo();
       setPoints((prev) => prev.filter((_, i) => i !== index));
+      setSelection(null);
     },
     [pushUndo],
   );
+
+  // Click selects a vertex; Shift+click extends the selection into a
+  // section running from the anchor vertex to the clicked one.
+  const handleVertexClick = useCallback((index, e) => {
+    const shift = Boolean(e?.originalEvent?.shiftKey);
+    setSelection((prev) => {
+      if (shift && prev) {
+        const anchor = prev.anchor;
+        return {
+          anchor,
+          start: Math.min(anchor, index),
+          end: Math.max(anchor, index),
+        };
+      }
+      if (prev && prev.start === prev.end && prev.start === index) return null;
+      return { anchor: index, start: index, end: index };
+    });
+  }, []);
+
+  const handleClearSelection = useCallback(() => setSelection(null), []);
 
   const handleMidpointClick = useCallback(
     (afterIndex) => {
@@ -722,6 +888,7 @@ function ShapeEditorOverlay({ editShapeRequest = null }) {
         next.splice(afterIndex + 1, 0, mid);
         return next;
       });
+      setSelection(null);
     },
     [pushUndo],
   );
@@ -733,6 +900,7 @@ function ShapeEditorOverlay({ editShapeRequest = null }) {
       setPoints(prev[prev.length - 1]);
       return prev.slice(0, -1);
     });
+    setSelection(null);
   }, []);
 
   const handleRedo = useCallback(() => {
@@ -744,13 +912,99 @@ function ShapeEditorOverlay({ editShapeRequest = null }) {
       setPoints(prev[prev.length - 1]);
       return prev.slice(0, -1);
     });
+    setSelection(null);
   }, []);
 
   const handleReverse = useCallback(() => {
     if (pointsRef.current.length < 2) return;
     pushUndo();
     setPoints((prev) => [...prev].reverse());
+    setSelection(null);
   }, [pushUndo]);
+
+  // ── Section tools ───────────────────────────────────────────────────────
+
+  // Replace the vertices strictly between the selection's ends with a road
+  // route between those two vertices.
+  const handleSectionReroute = useCallback(async () => {
+    const sel = selectionRef.current;
+    const pts = pointsRef.current;
+    if (!sel || sel.end <= sel.start || !pts[sel.start] || !pts[sel.end]) return;
+    const controller = new AbortController();
+    rerouteAbortRef.current?.abort();
+    rerouteAbortRef.current = controller;
+    setRouting(true);
+    try {
+      const routed = await fetchRoadRouteVia([pts[sel.start], pts[sel.end]], {
+        signal: controller.signal,
+      });
+      if (!mountedRef.current || controller.signal.aborted) return;
+      if (!routed || routed.length < 2) {
+        showToast(t("edit.shape.osrmFallback"), "warning");
+        return;
+      }
+      const interior = routed.slice(1, -1);
+      pushUndo();
+      const base = pointsRef.current;
+      const next = [...base.slice(0, sel.start + 1), ...interior, ...base.slice(sel.end)];
+      setPoints(next);
+      setSelection({
+        anchor: sel.start,
+        start: sel.start,
+        end: sel.start + interior.length + 1,
+      });
+    } catch (err) {
+      if (err?.name === "AbortError") return;
+      if (mountedRef.current) showToast(t("edit.shape.osrmFallback"), "warning");
+    } finally {
+      if (mountedRef.current && rerouteAbortRef.current === controller) {
+        rerouteAbortRef.current = null;
+        setRouting(false);
+      }
+    }
+  }, [pushUndo, showToast, t]);
+
+  // Drop the interior vertices of the section: a straight segment remains.
+  const handleSectionStraighten = useCallback(() => {
+    const sel = selectionRef.current;
+    if (!sel || sel.end - sel.start < 2) return;
+    pushUndo();
+    setPoints((prev) => [...prev.slice(0, sel.start + 1), ...prev.slice(sel.end)]);
+    setSelection({ anchor: sel.start, start: sel.start, end: sel.start + 1 });
+  }, [pushUndo]);
+
+  // Remove every selected vertex (the shape keeps at least two points).
+  const handleSelectionDelete = useCallback(() => {
+    const sel = selectionRef.current;
+    if (!sel) return;
+    const count = sel.end - sel.start + 1;
+    if (pointsRef.current.length - count < 2) return;
+    pushUndo();
+    setPoints((prev) => [...prev.slice(0, sel.start), ...prev.slice(sel.end + 1)]);
+    setSelection(null);
+  }, [pushUndo]);
+
+  // ── Fit navigation ──────────────────────────────────────────────────────
+  const flyToFitEntry = useCallback(
+    (list, key) => {
+      if (!list || list.length === 0) return;
+      const idx = fitCursorRef.current[key] % list.length;
+      fitCursorRef.current[key] = idx + 1;
+      const entry = list[idx];
+      const lat = Number(entry.stop.lat ?? entry.stop.stop_lat);
+      const lon = Number(entry.stop.lon ?? entry.stop.stop_lon);
+      map.flyTo([lat, lon], Math.max(map.getZoom(), 16), { duration: 0.6 });
+    },
+    [map],
+  );
+  const handleFlyOffTrace = useCallback(
+    () => flyToFitEntry(fit?.offTrace, "off"),
+    [fit, flyToFitEntry],
+  );
+  const handleFlyOutOfOrder = useCallback(
+    () => flyToFitEntry(fit?.outOfOrder, "order"),
+    [fit, flyToFitEntry],
+  );
 
   // Click on the edit polyline inserts a vertex at the click point projected
   // onto the nearest segment — the standard GIS gesture. Midpoint markers are
@@ -774,6 +1028,13 @@ function ShapeEditorOverlay({ editShapeRequest = null }) {
         const next = [...prev];
         next.splice(nearest.index + 1, 0, nearest.point);
         return next;
+      });
+      // The new vertex becomes the selection so it can be dragged / deleted
+      // right away.
+      setSelection({
+        anchor: nearest.index + 1,
+        start: nearest.index + 1,
+        end: nearest.index + 1,
       });
     },
     [pushUndo],
@@ -809,6 +1070,7 @@ function ShapeEditorOverlay({ editShapeRequest = null }) {
     // Cancel any in-flight OSRM routing so a pending click can't append
     // points to a shape that is currently being saved.
     osrmAbortRef.current?.abort();
+    rerouteAbortRef.current?.abort();
     try {
       const isCreate = mode === "create";
       const res = await fetchWithSession(
@@ -884,7 +1146,11 @@ function ShapeEditorOverlay({ editShapeRequest = null }) {
       setExtending(false);
       setMode("edit");
       setLinkTripIds([]);
-      window.dispatchEvent(new CustomEvent("shapeEditorClosed"));
+      window.dispatchEvent(
+        new CustomEvent("shapeEditorClosed", {
+          detail: { shapeId: activeShapeId, saved: true, created: isCreate },
+        }),
+      );
     } catch (err) {
       if (!mountedRef.current) return;
       console.error("Shape save error:", err);
@@ -903,12 +1169,14 @@ function ShapeEditorOverlay({ editShapeRequest = null }) {
     recordEdit,
     showToast,
     t,
+    resetHistoryStacks,
   ]);
 
   // Extracted cancel logic — called directly when not dirty, or from dialog onConfirm
   const doCancelEditor = useCallback(() => {
     routingRef.current++; // cancel any in-flight OSRM request (legacy guard)
     osrmAbortRef.current?.abort();
+    rerouteAbortRef.current?.abort();
     loadAbortRef.current?.abort();
     setRouting(false);
     setActiveShapeId(null);
@@ -919,7 +1187,7 @@ function ShapeEditorOverlay({ editShapeRequest = null }) {
     setMode("edit");
     setLinkTripIds([]);
     window.dispatchEvent(new CustomEvent("shapeEditorClosed"));
-  }, []);
+  }, [resetHistoryStacks]);
 
   const handleCancel = useCallback(() => {
     if (dirtyRef.current) {
@@ -944,6 +1212,7 @@ function ShapeEditorOverlay({ editShapeRequest = null }) {
 
   const handleToggleExtend = useCallback(() => {
     setExtending((prev) => !prev);
+    setSelection(null);
   }, []);
 
   const handleToggleSnap = useCallback(() => {
@@ -975,6 +1244,7 @@ function ShapeEditorOverlay({ editShapeRequest = null }) {
     ) {
       pushUndo();
       setPoints(simplifiedPreview);
+      setSelection(null);
     }
     setSimplifyOpen(false);
   }, [simplifiedPreview, pushUndo]);
@@ -999,6 +1269,7 @@ function ShapeEditorOverlay({ editShapeRequest = null }) {
       // OSRM routing from the previous shape.
       routingRef.current++;
       osrmAbortRef.current?.abort();
+      rerouteAbortRef.current?.abort();
       setRouting(false);
       setExtending(false);
       resetHistoryStacks();
@@ -1060,30 +1331,33 @@ function ShapeEditorOverlay({ editShapeRequest = null }) {
           );
         });
     },
-    [map, showToast, t],
+    [map, showToast, t, resetHistoryStacks],
   );
 
   // Initialise the editor in "create" mode with a blank shape, optional pre-seeded
   // points (typically the stops of the target trips) and a list of trip_ids to bulk-link
   // on save.
   const loadCreateMode = useCallback(
-    ({ shapeId, initialPoints = [], linkTripIds: tripIds = [] }) => {
+    ({ shapeId, initialPoints = [], linkTripIds: tripIds = [], context = null }) => {
       // Cancel any in-flight shape load / OSRM routing from a prior session.
       loadAbortRef.current?.abort();
       osrmAbortRef.current?.abort();
+      rerouteAbortRef.current?.abort();
       routingRef.current++;
       setRouting(false);
       resetHistoryStacks();
       setMode("create");
       setLinkTripIds(Array.isArray(tripIds) ? tripIds : []);
+      setSavedContext(context);
       setOriginalPoints([]);
       const seed = (initialPoints || []).filter(
         (p) => Number.isFinite(p?.lat) && Number.isFinite(p?.lon),
       );
       setPoints(seed.map((p) => ({ lat: p.lat, lon: p.lon })));
       setActiveShapeId(shapeId);
-      // Auto-enable extend so the user can immediately click the map to add points
-      setExtending(true);
+      // A blank shape starts in extend mode so the first click adds a point;
+      // a pre-seeded one starts in select mode so the user can fix it.
+      setExtending(seed.length < 2);
       window.dispatchEvent(
         new CustomEvent("shapeEditorActive", { detail: { shapeId } }),
       );
@@ -1092,7 +1366,7 @@ function ShapeEditorOverlay({ editShapeRequest = null }) {
         map.fitBounds(bounds, { padding: [80, 80], maxZoom: 16 });
       }
     },
-    [map],
+    [map, resetHistoryStacks],
   );
 
   // React to shape edit/create requests (token-based).
@@ -1141,6 +1415,7 @@ function ShapeEditorOverlay({ editShapeRequest = null }) {
     return () => {
       loadAbortRef.current?.abort();
       osrmAbortRef.current?.abort();
+      rerouteAbortRef.current?.abort();
       window.dispatchEvent(new CustomEvent("shapeEditorClosed"));
     };
   }, []);
@@ -1178,28 +1453,37 @@ function ShapeEditorOverlay({ editShapeRequest = null }) {
     };
   }, [activeShapeId, dirty]);
 
-  // Escape = close simplify panel first, then exit extend, then cancel editor
+  // Keyboard: Escape closes the simplify panel, then clears the selection,
+  // then exits extend mode, then cancels the editor. Delete removes the
+  // selected vertices. Ctrl+Z / Ctrl+Shift+Z drive the local history.
   useEffect(() => {
     if (!activeShapeId) return;
     const onKey = (e) => {
+      // Leave text fields alone: keys inside an input edit the text, not
+      // the shape.
+      const tag = document.activeElement?.tagName;
+      const inField =
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        tag === "SELECT" ||
+        document.activeElement?.isContentEditable;
       if (e.key === "Escape") {
+        if (inField) return;
         if (simplifyOpen) {
           setSimplifyOpen(false);
+        } else if (selectionRef.current) {
+          setSelection(null);
         } else if (extending) {
           setExtending(false);
         } else {
           handleCancel();
         }
+        return;
       }
-      // Leave text fields alone: Ctrl+Z inside an input must edit the text,
-      // not the shape.
-      const tag = document.activeElement?.tagName;
-      if (
-        tag === "INPUT" ||
-        tag === "TEXTAREA" ||
-        tag === "SELECT" ||
-        document.activeElement?.isContentEditable
-      ) {
+      if (inField) return;
+      if ((e.key === "Delete" || e.key === "Backspace") && selectionRef.current) {
+        e.preventDefault();
+        handleSelectionDelete();
         return;
       }
       // Ctrl+Z = local undo
@@ -1219,7 +1503,15 @@ function ShapeEditorOverlay({ editShapeRequest = null }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [activeShapeId, simplifyOpen, extending, handleCancel, handleUndo, handleRedo]);
+  }, [
+    activeShapeId,
+    simplifyOpen,
+    extending,
+    handleCancel,
+    handleUndo,
+    handleRedo,
+    handleSelectionDelete,
+  ]);
 
   // Map click to extend line (with optional OSRM routing).
   //
@@ -1237,6 +1529,7 @@ function ShapeEditorOverlay({ editShapeRequest = null }) {
     const controller = new AbortController();
     osrmAbortRef.current = controller;
     let queue = Promise.resolve();
+    const atStart = extendAt === "start";
 
     const onClick = (e) => {
       const clicked = { lat: e.latlng.lat, lon: e.latlng.lng };
@@ -1247,32 +1540,38 @@ function ShapeEditorOverlay({ editShapeRequest = null }) {
           const current = pointsRef.current;
           // Push current state to undo stack BEFORE appending anything
           setHistory((h) => [...h.slice(-49), current]);
+          setRedoStack([]);
+
+          const addStraight = () =>
+            setPoints((cur) => (atStart ? [clicked, ...cur] : [...cur, clicked]));
 
           if (!snapToRoad || current.length === 0) {
-            // Straight line: just append the point
-            setPoints((cur) => [...cur, clicked]);
+            addStraight();
             return;
           }
 
-          const lastPt = current[current.length - 1];
+          const anchor = atStart ? current[0] : current[current.length - 1];
           setRouting(true);
 
           try {
-            const routedPts = await fetchRoadRoute(
-              lastPt,
-              clicked,
-              controller.signal,
+            const routed = await fetchRoadRouteVia(
+              atStart ? [clicked, anchor] : [anchor, clicked],
+              { signal: controller.signal },
             );
             if (cancelled) return;
-            if (routedPts && routedPts.length > 0) {
-              setPoints((cur) => [...cur, ...routedPts]);
+            if (routed && routed.length > 1) {
+              setPoints((cur) =>
+                atStart
+                  ? [...routed.slice(0, -1), ...cur]
+                  : [...cur, ...routed.slice(1)],
+              );
             } else {
               // Fallback: straight line if routing failed
               if (!osrmWarnedRef.current) {
                 osrmWarnedRef.current = true;
                 showToast(t("edit.shape.osrmFallback"), "warning");
               }
-              setPoints((cur) => [...cur, clicked]);
+              addStraight();
             }
           } catch (err) {
             if (err?.name === "AbortError") return;
@@ -1282,7 +1581,7 @@ function ShapeEditorOverlay({ editShapeRequest = null }) {
               osrmWarnedRef.current = true;
               showToast(t("edit.shape.osrmFallback"), "warning");
             }
-            setPoints((cur) => [...cur, clicked]);
+            addStraight();
           } finally {
             if (!cancelled) setRouting(false);
           }
@@ -1302,7 +1601,55 @@ function ShapeEditorOverlay({ editShapeRequest = null }) {
       map.off("click", onClick);
       map.getContainer().style.cursor = "";
     };
-  }, [activeShapeId, extending, snapToRoad, map]);
+  }, [activeShapeId, extending, extendAt, snapToRoad, map, showToast, t]);
+
+  // Clicking the empty map (outside extend mode) clears the selection.
+  useEffect(() => {
+    if (!activeShapeId || extending) return;
+    const onClick = () => {
+      if (selectionRef.current) setSelection(null);
+    };
+    map.on("click", onClick);
+    return () => map.off("click", onClick);
+  }, [activeShapeId, extending, map]);
+
+  // ── Visible vertex window ───────────────────────────────────────────────
+  // Only vertices inside the (padded) viewport get a marker. When the
+  // visible stretch still holds too many, it is decimated evenly — every
+  // vertex comes back as the user zooms in, so long shapes stay editable
+  // everywhere. Endpoints and the selection are always rendered.
+  const visibleVertices = useMemo(() => {
+    if (!activeShapeId || points.length === 0) return { indices: [], stride: 1 };
+    let bounds;
+    try {
+      bounds = map.getBounds().pad(0.15);
+    } catch {
+      bounds = null;
+    }
+    const inView = [];
+    for (let i = 0; i < points.length; i++) {
+      if (!bounds || bounds.contains([points[i].lat, points[i].lon])) inView.push(i);
+    }
+    const stride =
+      inView.length > MAX_VISIBLE_VERTICES
+        ? Math.ceil(inView.length / MAX_VISIBLE_VERTICES)
+        : 1;
+    const last = points.length - 1;
+    const keep = new Set();
+    inView.forEach((i, k) => {
+      if (k % stride === 0) keep.add(i);
+    });
+    keep.add(0);
+    keep.add(last);
+    if (selection) {
+      for (let i = selection.start; i <= selection.end && i - selection.start < 2000; i++) {
+        keep.add(i);
+      }
+    }
+    return { indices: [...keep].sort((a, b) => a - b), stride };
+    // viewTick is the map-move signal; the bounds are read from the map.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeShapeId, points, selection, map, viewTick]);
 
   // ── Confirmation dialog — portalled to document.body so it renders
   // regardless of whether the Leaflet editor is active.
@@ -1341,6 +1688,8 @@ function ShapeEditorOverlay({ editShapeRequest = null }) {
           shapeId={savedShapeId}
           pointCount={savedPointCount}
           distanceKm={savedDistanceKm}
+          defaultRouteId={savedContext?.routeId || null}
+          defaultDirectionId={savedContext?.directionId ?? null}
           onClose={() => setPostSaveLinkOpen(false)}
           onLinked={() => {
             setPostSaveLinkOpen(false);
@@ -1358,22 +1707,34 @@ function ShapeEditorOverlay({ editShapeRequest = null }) {
   const positions = points.map((p) => [p.lat, p.lon]);
   const ghostPositions = originalPoints.map((p) => [p.lat, p.lon]);
 
-  // Compute midpoints (skip if too many — performance guard)
-  const showMidpoints = points.length < 500;
+  // Midpoints between consecutive visible vertices (only when the visible
+  // stretch is not decimated, otherwise a midpoint would not sit between
+  // real neighbours).
   const midpoints = [];
-  if (showMidpoints) {
-    for (let i = 0; i < points.length - 1; i++) {
-      midpoints.push({
-        index: i,
-        lat: (points[i].lat + points[i + 1].lat) / 2,
-        lon: (points[i].lon + points[i + 1].lon) / 2,
-      });
+  if (visibleVertices.stride === 1 && visibleVertices.indices.length <= MAX_MIDPOINTS) {
+    const set = new Set(visibleVertices.indices);
+    for (const i of visibleVertices.indices) {
+      if (i < points.length - 1 && set.has(i + 1)) {
+        midpoints.push({
+          index: i,
+          lat: (points[i].lat + points[i + 1].lat) / 2,
+          lon: (points[i].lon + points[i + 1].lon) / 2,
+        });
+      }
     }
   }
 
-  // Show simplified vertex markers when there are many points
-  // Only show every Nth vertex + endpoints
-  const vertexStride = points.length > 300 ? Math.ceil(points.length / 150) : 1;
+  const selectionPositions =
+    selection && selection.end > selection.start
+      ? positions.slice(selection.start, selection.end + 1)
+      : null;
+
+  const fitKindByIndex = new Map();
+  if (fit) {
+    for (const r of fit.results) {
+      fitKindByIndex.set(r.index, r.offTrace ? "off" : r.outOfOrder ? "order" : "ok");
+    }
+  }
 
   return (
     <>
@@ -1416,6 +1777,17 @@ function ShapeEditorOverlay({ editShapeRequest = null }) {
         }}
       />
 
+      {/* Selected section highlight */}
+      {selectionPositions && (
+        <Polyline
+          positions={selectionPositions}
+          color={SELECTION_COLOR}
+          weight={8}
+          opacity={0.6}
+          interactive={false}
+        />
+      )}
+
       {/* Simplify live preview: dashed overlay of the simplified geometry
           (the edited line above is dimmed while this is visible) */}
       {simplifyOpen && simplifiedPreview && (
@@ -1429,33 +1801,66 @@ function ShapeEditorOverlay({ editShapeRequest = null }) {
         />
       )}
 
-      {/* Midpoint markers — click to insert a new vertex */}
-      {showMidpoints &&
-        midpoints.map((mp) => (
-          <Marker
-            key={`mid-${mp.index}`}
-            position={[mp.lat, mp.lon]}
-            icon={midpointIcon}
-            eventHandlers={{
-              click: (e) => {
-                L.DomEvent.stopPropagation(e);
-                handleMidpointClick(mp.index);
-              },
-            }}
-          />
-        ))}
+      {/* Numbered badges on the pattern's stops */}
+      {Array.isArray(fitStops) &&
+        fitStops.map((s, i) => {
+          const lat = Number(s.lat ?? s.stop_lat);
+          const lon = Number(s.lon ?? s.stop_lon);
+          if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+          return (
+            <Marker
+              key={`fit-${s.stop_id || i}`}
+              position={[lat, lon]}
+              icon={makeStopBadge(i + 1, fitKindByIndex.get(i) || "ok")}
+              interactive={false}
+              zIndexOffset={500}
+            />
+          );
+        })}
 
-      {/* Draggable vertex markers */}
-      {points.map((p, i) => {
+      {/* Midpoint markers — click to insert a new vertex */}
+      {midpoints.map((mp) => (
+        <Marker
+          key={`mid-${mp.index}`}
+          position={[mp.lat, mp.lon]}
+          icon={midpointIcon}
+          eventHandlers={{
+            click: (e) => {
+              L.DomEvent.stopPropagation(e);
+              handleMidpointClick(mp.index);
+            },
+          }}
+        />
+      ))}
+
+      {/* Draggable vertex markers (visible window) */}
+      {visibleVertices.indices.map((i) => {
+        const p = points[i];
         const isEndpoint = i === 0 || i === points.length - 1;
-        if (!isEndpoint && vertexStride > 1 && i % vertexStride !== 0) return null;
+        const isSelected = selection && i >= selection.start && i <= selection.end;
+        const isExtendTarget =
+          extending && (extendAt === "start" ? i === 0 : i === points.length - 1);
+        const icon = isExtendTarget
+          ? extendTargetIcon
+          : isSelected
+            ? isEndpoint
+              ? selectedEndpointIcon
+              : selectedVertexIcon
+            : isEndpoint
+              ? endpointIcon
+              : vertexIcon;
         return (
           <Marker
             key={`v-${i}`}
             position={[p.lat, p.lon]}
-            icon={isEndpoint ? endpointIcon : vertexIcon}
+            icon={icon}
             draggable
+            zIndexOffset={isSelected ? 1000 : 0}
             eventHandlers={{
+              click: (e) => {
+                L.DomEvent.stopPropagation(e);
+                handleVertexClick(i, e);
+              },
               dragend: (e) => handleVertexDragEnd(i, e),
               contextmenu: (e) => {
                 L.DomEvent.preventDefault(e);
@@ -1477,12 +1882,16 @@ function ShapeEditorOverlay({ editShapeRequest = null }) {
         distanceKm={distanceKm}
         snapToRoad={snapToRoad}
         extending={extending}
+        extendAt={extendAt}
         undoAvailable={history.length > 0}
         redoAvailable={redoStack.length > 0}
         canReverse={points.length >= 2}
         mode={mode}
         linkTripCount={linkTripIds.length}
         sharedTripCount={sharedTripCount}
+        selection={selection}
+        selectionDistanceM={selectionDistanceM}
+        fit={fit}
         simplifyOpen={simplifyOpen}
         simplifyTolerance={simplifyTolerance}
         simplifyAfter={simplifiedPreview ? simplifiedPreview.length : points.length}
@@ -1495,11 +1904,18 @@ function ShapeEditorOverlay({ editShapeRequest = null }) {
         onRedo={handleRedo}
         onReverse={handleReverse}
         onToggleExtend={handleToggleExtend}
+        onExtendAtChange={setExtendAt}
         onToggleSnap={handleToggleSnap}
         onToggleSimplify={handleToggleSimplify}
         onSimplifyToleranceChange={handleSimplifyToleranceChange}
         onSimplifyApply={handleSimplifyApply}
         onSimplifyCancel={handleSimplifyCancel}
+        onSectionReroute={handleSectionReroute}
+        onSectionStraighten={handleSectionStraighten}
+        onSelectionDelete={handleSelectionDelete}
+        onClearSelection={handleClearSelection}
+        onFlyOffTrace={handleFlyOffTrace}
+        onFlyOutOfOrder={handleFlyOutOfOrder}
       />
     </>
   );

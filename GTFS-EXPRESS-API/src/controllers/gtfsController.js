@@ -28,6 +28,9 @@ const {
   getShapes,
   getAllShapes,
   getShapesForRoute,
+  getRoutePatterns,
+  getShapeCoverage,
+  getUnusedShapes,
 } = require("../services/shapesService");
 
 const {
@@ -254,6 +257,9 @@ module.exports = {
   getStatistics,
   getAllShapes,
   getShapesForRoute,
+  getRoutePatterns,
+  getShapeCoverage,
+  getUnusedShapes,
   getUploadStats,
   getStopDetail,
   getRouteDetail,

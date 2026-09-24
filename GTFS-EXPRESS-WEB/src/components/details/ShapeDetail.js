@@ -150,8 +150,13 @@ function ShapeDetail({ shapeId }) {
   }, [shapeId, showToast, t]);
 
   const handleEditOnMap = useCallback(() => {
-    window.dispatchEvent(new CustomEvent("editShape", { detail: { shapeId } }));
-  }, [shapeId]);
+    // The Studio needs the line to load the shape's context (stops, other
+    // shapes): pass the route of the first trip using this shape.
+    const routeId = data?.trips?.find((tr) => tr.route_id)?.route_id || null;
+    window.dispatchEvent(
+      new CustomEvent("editShape", { detail: { shapeId, routeId } }),
+    );
+  }, [shapeId, data]);
 
   // --- Loading skeleton ---
   if (loading) {

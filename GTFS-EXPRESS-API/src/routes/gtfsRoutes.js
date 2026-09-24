@@ -27,6 +27,9 @@ const {
   getStatistics,
   getAllShapes,
   getShapesForRoute,
+  getRoutePatterns,
+  getShapeCoverage,
+  getUnusedShapes,
   getUploadStats,
   getStopDetail,
   getRouteDetail,
@@ -227,6 +230,9 @@ router.get("/average_trip_times", readCache, getAverageTripTimes);
 router.get("/statistics", readCache, getStatistics);
 router.get("/all_shapes", readCache, getAllShapes);
 router.get("/shapes_for_route/:route_id", readCache, getShapesForRoute);
+router.get("/route_patterns/:route_id", readCache, getRoutePatterns);
+router.get("/shape_coverage/:agency_id", readCache, getShapeCoverage);
+router.get("/shapes_unused", readCache, getUnusedShapes);
 router.get("/upload-stats", getUploadStats);
 
 // 🔐 Admin dashboard — gated by X-Admin-Token (ADMIN_TOKEN env var).

@@ -1,6 +1,8 @@
 import React, { useRef, useEffect } from "react";
-import { Box, Typography, Chip } from "@mui/material";
+import { Box, Typography, Chip, IconButton, Tooltip } from "@mui/material";
 import { useTheme, alpha } from "@mui/material/styles";
+import EditIcon from "@mui/icons-material/Edit";
+import WrongLocationIcon from "@mui/icons-material/WrongLocation";
 import { SHAPE_PALETTE } from "../LineMap";
 import { formatShapeLabel } from "../../utils/shapeLabel";
 import { useLanguage } from "../../contexts/LanguageContext";
@@ -10,13 +12,16 @@ function km(m) {
 }
 
 // The list of a line's shapes, rendered as colour-chipped cards with derived
-// human labels. Clicking a card selects the shape; hovering syncs with the
-// map polyline (and vice-versa). A map-originated hover scrolls the card in.
+// human labels. Clicking a card selects the shape, double-clicking (or the
+// pencil) opens it in the editor; hovering syncs with the map polyline (and
+// vice-versa). A map-originated hover scrolls the card in.
 export default function StudioShapeList({
   shapes = [],
   labels,
+  fitByShape,
   selectedShapeId,
   onSelect,
+  onEdit,
   hoveredShapeId,
   onHoverShape,
   hoverSource,
@@ -37,6 +42,7 @@ export default function StudioShapeList({
   return (
     <Box
       ref={containerRef}
+      data-testid="studio-shape-list"
       sx={{
         display: "flex",
         flexDirection: "column",
@@ -52,11 +58,26 @@ export default function StudioShapeList({
         const { primary, secondary } = formatShapeLabel(s.shape_id, desc, t);
         const sel = selectedShapeId === s.shape_id;
         const hov = !sel && hoveredShapeId === s.shape_id;
+        const fit = fitByShape?.get(s.shape_id);
+        const offCount = fit ? fit.offTrace.length : 0;
         return (
           <Box
             key={s.shape_id}
             data-shape-id={s.shape_id}
+            data-testid="studio-shape-card"
+            role="button"
+            tabIndex={0}
             onClick={() => onSelect(s.shape_id)}
+            onDoubleClick={() => onEdit && onEdit(s.shape_id)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                if (onEdit) onEdit(s.shape_id);
+              } else if (e.key === " ") {
+                e.preventDefault();
+                onSelect(s.shape_id);
+              }
+            }}
             onMouseEnter={() => onHoverShape && onHoverShape(s.shape_id)}
             onMouseLeave={() => onHoverShape && onHoverShape(null)}
             sx={{
@@ -64,6 +85,7 @@ export default function StudioShapeList({
               borderRadius: 1.5,
               p: 1,
               pl: 1.25,
+              position: "relative",
               borderLeft: `4px solid ${color}`,
               backgroundColor: sel
                 ? alpha(theme.palette.primary.main, 0.14)
@@ -79,6 +101,9 @@ export default function StudioShapeList({
               "&:hover": {
                 backgroundColor: alpha(theme.palette.primary.main, 0.08),
               },
+              "&:hover .studio-card-edit, &:focus-within .studio-card-edit": {
+                opacity: 1,
+              },
             }}
           >
             <Box
@@ -87,6 +112,7 @@ export default function StudioShapeList({
                 alignItems: "center",
                 justifyContent: "space-between",
                 gap: 1,
+                pr: 3.5,
               }}
             >
               <Typography variant="body2" fontWeight={600} noWrap>
@@ -110,15 +136,55 @@ export default function StudioShapeList({
             >
               {secondary}
             </Typography>
-            <Typography variant="caption" color="text.secondary">
-              {t("shapeStudio.status.points", {
-                count: desc?.pointCount ?? s.point_count,
-              })}
-              {" · "}
-              {km(desc?.distanceM)}
-              {" · "}
-              {t("shapeStudio.status.trips", { count: s.trip_count })}
-            </Typography>
+            <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, flexWrap: "wrap" }}>
+              <Typography variant="caption" color="text.secondary">
+                {t("shapeStudio.status.points", {
+                  count: desc?.pointCount ?? s.point_count,
+                })}
+                {" · "}
+                {km(desc?.distanceM)}
+                {" · "}
+                {t("shapeStudio.status.trips", { count: s.trip_count })}
+                {Array.isArray(s.stops) && s.stops.length > 0 && (
+                  <>
+                    {" · "}
+                    {t("shapeStudio.card.stops", { count: s.stops.length })}
+                  </>
+                )}
+              </Typography>
+              {offCount > 0 && (
+                <Chip
+                  size="small"
+                  color="error"
+                  variant="outlined"
+                  icon={<WrongLocationIcon sx={{ fontSize: 13 }} />}
+                  label={t("shapeStudio.card.offTrace", { count: offCount })}
+                  data-testid="studio-card-offtrace"
+                  sx={{ height: 18, fontSize: 10 }}
+                />
+              )}
+            </Box>
+            <Tooltip title={t("shapeStudio.action.edit")} arrow>
+              <IconButton
+                size="small"
+                className="studio-card-edit"
+                aria-label={t("shapeStudio.action.edit")}
+                data-testid="studio-card-edit"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (onEdit) onEdit(s.shape_id);
+                }}
+                sx={{
+                  position: "absolute",
+                  top: 6,
+                  right: 6,
+                  opacity: sel ? 1 : 0,
+                  transition: "opacity 0.15s ease",
+                }}
+              >
+                <EditIcon sx={{ fontSize: 16 }} />
+              </IconButton>
+            </Tooltip>
           </Box>
         );
       })}

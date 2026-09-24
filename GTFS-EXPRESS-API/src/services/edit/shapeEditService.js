@@ -254,7 +254,7 @@ const getShapeDetail = async (req, res) => {
 
     const trips = db
       .prepare(
-        "SELECT trip_id, trip_headsign, route_id, service_id FROM trips WHERE shape_id = ?",
+        "SELECT trip_id, trip_headsign, route_id, service_id, direction_id FROM trips WHERE shape_id = ?",
       )
       .all(shape_id);
 
@@ -430,7 +430,10 @@ const updateShape = async (req, res) => {
  * entry, so a single undo rolls back both the shape creation and the trip
  * reassignment.
  */
-const MAX_LINK_TRIP_IDS = 500;
+// A single pattern of a busy urban line can carry thousands of trips; the
+// Studio links exactly the trips of the pattern being drawn, so the cap only
+// guards against runaway payloads.
+const MAX_LINK_TRIP_IDS = 5000;
 
 const createShape = async (req, res) => {
   try {
@@ -477,10 +480,9 @@ const createShape = async (req, res) => {
     const tripPriorShapes = new Map();
     if (linkTripIds.length > 0) {
       const missing = [];
+      const priorStmt = db.prepare("SELECT shape_id FROM trips WHERE trip_id = ?");
       for (const tid of linkTripIds) {
-        const row = db
-          .prepare("SELECT shape_id FROM trips WHERE trip_id = ?")
-          .get(tid);
+        const row = priorStmt.get(tid);
         if (!row) {
           missing.push(tid);
         } else {
@@ -621,14 +623,18 @@ const forkShape = async (req, res) => {
     if (!body.new_shape_id || typeof body.new_shape_id !== "string" || !body.new_shape_id.trim())
       return res.status(400).json({ error: "new_shape_id is required (non-blank string)." });
 
-    if (!Array.isArray(body.trip_ids) || body.trip_ids.length === 0)
-      return res.status(400).json({ error: "trip_ids must be a non-empty array." });
+    // trip_ids may be empty: a plain copy of the geometry (the Studio's
+    // "Duplicate" without moving any trip) is a legitimate first step before
+    // editing the copy and linking trips to it.
+    if (body.trip_ids != null && !Array.isArray(body.trip_ids))
+      return res.status(400).json({ error: "trip_ids must be an array." });
+    const tripIds = Array.isArray(body.trip_ids) ? body.trip_ids : [];
 
-    if (body.trip_ids.length > 500)
-      return res.status(400).json({ error: "Too many trip_ids (max 500)." });
+    if (tripIds.length > MAX_LINK_TRIP_IDS)
+      return res.status(400).json({ error: `Too many trip_ids (max ${MAX_LINK_TRIP_IDS}).` });
 
-    if (body.trip_ids.some((tid) => typeof tid !== "string"))
-      return res.status(400).json({ error: "All trip_ids must be strings." });
+    if (tripIds.some((tid) => typeof tid !== "string" || !tid.trim()))
+      return res.status(400).json({ error: "All trip_ids must be non-blank strings." });
 
     // Source shape must exist
     const sourcePoints = db
@@ -649,15 +655,14 @@ const forkShape = async (req, res) => {
     }
 
     // All supplied trip_ids must reference the source shape
-    const invalidTrips = body.trip_ids.filter((tid) => {
-      const trip = db
-        .prepare("SELECT shape_id FROM trips WHERE trip_id = ?")
-        .get(tid);
+    const tripShapeStmt = db.prepare("SELECT shape_id FROM trips WHERE trip_id = ?");
+    const invalidTrips = tripIds.filter((tid) => {
+      const trip = tripShapeStmt.get(tid);
       return !trip || trip.shape_id !== shape_id;
     });
     if (invalidTrips.length > 0) {
       return res.status(400).json({
-        error: `The following trip_ids do not reference shape ${shape_id}: ${invalidTrips.join(", ")}`,
+        error: `The following trip_ids do not reference shape ${shape_id}: ${invalidTrips.slice(0, 10).join(", ")}${invalidTrips.length > 10 ? "…" : ""}`,
       });
     }
 
@@ -670,7 +675,7 @@ const forkShape = async (req, res) => {
         params: [body.new_shape_id],
       },
     ];
-    for (const tid of body.trip_ids) {
+    for (const tid of tripIds) {
       undoOps.push({
         sql: "UPDATE trips SET shape_id = ? WHERE trip_id = ?",
         params: [shape_id, tid],
@@ -682,9 +687,6 @@ const forkShape = async (req, res) => {
        VALUES (?, ?, ?, ?, ?)`,
     );
 
-    // Placeholder string for the trip_ids IN clause (whitelisted: only "?" params)
-    const tripPh = body.trip_ids.map(() => "?").join(",");
-
     // Build redo ops: INSERT forked shape points, then reassign trips
     const shapeForkRedoOps = [];
     for (const pt of sourcePoints) {
@@ -693,7 +695,7 @@ const forkShape = async (req, res) => {
         params: [body.new_shape_id, pt.shape_pt_lat, pt.shape_pt_lon, pt.shape_pt_sequence, pt.shape_dist_traveled],
       });
     }
-    for (const tid of body.trip_ids) {
+    for (const tid of tripIds) {
       shapeForkRedoOps.push({
         sql: "UPDATE trips SET shape_id = ? WHERE trip_id = ?",
         params: [body.new_shape_id, tid],
@@ -707,7 +709,9 @@ const forkShape = async (req, res) => {
         action: "fork",
         description:
           `Forked shape ${shape_id} → ${body.new_shape_id} (${sourcePoints.length} points). ` +
-          `Reassigned ${body.trip_ids.length} trip(s): ${body.trip_ids.join(", ")}`,
+          (tripIds.length > 0
+            ? `Reassigned ${tripIds.length} trip(s): ${tripIds.slice(0, 20).join(", ")}${tripIds.length > 20 ? "…" : ""}`
+            : "No trip reassigned (plain copy)."),
         undoOps,
         redoOps: shapeForkRedoOps,
       });
@@ -723,21 +727,20 @@ const forkShape = async (req, res) => {
         );
       }
 
-      // Reassign trips
-      db.prepare(`UPDATE trips SET shape_id = ? WHERE trip_id IN (${tripPh})`).run(
-        body.new_shape_id, ...body.trip_ids,
-      );
+      // Reassign trips (chunked: SQLite caps bound parameters per statement)
+      const updateTrip = db.prepare("UPDATE trips SET shape_id = ? WHERE trip_id = ?");
+      for (const tid of tripIds) updateTrip.run(body.new_shape_id, tid);
     });
     tx.immediate();
 
     // Sync: new shape points + affected trips
     syncCacheShape(sessionId, db, body.new_shape_id);
-    syncCacheTripShapeId(sessionId, db, body.trip_ids);
+    if (tripIds.length > 0) syncCacheTripShapeId(sessionId, db, tripIds);
 
     await respondWithValidation(res, sessionId, "shape", body.new_shape_id, {
       new_shape_id: body.new_shape_id,
       point_count: sourcePoints.length,
-      reassigned_trips: body.trip_ids.length,
+      reassigned_trips: tripIds.length,
     }, { status: 201 });
   } catch (err) {
     console.error("forkShape error:", err);

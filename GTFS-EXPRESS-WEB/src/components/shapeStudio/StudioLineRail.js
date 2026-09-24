@@ -5,35 +5,32 @@ import {
   ToggleButtonGroup,
   ToggleButton,
   Button,
-  Menu,
-  MenuItem,
-  ListItemIcon,
-  ListItemText,
+  Chip,
   Divider,
   CircularProgress,
   TextField,
   InputAdornment,
   Autocomplete,
+  Tooltip,
+  Collapse,
 } from "@mui/material";
 import { useTheme, alpha } from "@mui/material/styles";
 import AddIcon from "@mui/icons-material/Add";
 import SearchIcon from "@mui/icons-material/Search";
-import GestureIcon from "@mui/icons-material/Gesture";
-import TimelineIcon from "@mui/icons-material/Timeline";
-import AltRouteIcon from "@mui/icons-material/AltRoute";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+import ExpandLessIcon from "@mui/icons-material/ExpandLess";
+import LinkOffIcon from "@mui/icons-material/LinkOff";
 import { useLanguage } from "../../contexts/LanguageContext";
 import StudioShapeList from "./StudioShapeList";
 import StudioStopList from "./StudioStopList";
 
-function directionWord(directionId, t) {
-  const d = directionId != null ? String(directionId) : "0";
-  return d === "1" ? t("shapeStudio.label.inbound") : t("shapeStudio.label.outbound");
-}
-
 // Left rail: the persistent two-level selector (LINES → the selected line's
-// tracés/arrêts) + the "Tracés | Arrêts" segment + the "Nouveau tracé" menu.
+// shapes/stops) + the "Shapes | Stops" segment + the "New shape" button.
 export default function StudioLineRail({
   routes = [],
+  coverage = null, // { [route_id]: { trips, missing, shapes } }
+  filterMissing = false,
+  onFilterMissingChange,
   selectedRouteId,
   onSelectRoute,
   search = "",
@@ -43,12 +40,13 @@ export default function StudioLineRail({
   onAgencyChange,
   routeShapes = [],
   shapeLabels,
+  fitByShape,
   selectedShapeId,
   onSelectShape,
+  onEditShape,
   hoveredShapeId,
   onHoverShape,
   hoverSource,
-  routeDetail,
   railMode,
   onRailModeChange,
   onNewShape,
@@ -57,27 +55,35 @@ export default function StudioLineRail({
   onSelectStop,
   onAddStop,
   loadingRoute,
+  unusedShapes = [],
+  unusedTruncated = false,
+  selectedUnusedId,
+  onSelectUnused,
 }) {
   const { t } = useLanguage();
   const theme = useTheme();
-  const [newAnchor, setNewAnchor] = useState(null);
+  const [unusedOpen, setUnusedOpen] = useState(true);
+
+  const anyMissing = useMemo(
+    () => Boolean(coverage) && routes.some((r) => coverage[r.route_id]?.missing > 0),
+    [coverage, routes],
+  );
 
   const filteredRoutes = useMemo(() => {
     const needle = search.trim().toLowerCase();
-    if (!needle) return routes;
-    return routes.filter((r) =>
-      [r.route_short_name, r.route_long_name, r.route_id]
-        .filter(Boolean)
-        .some((v) => String(v).toLowerCase().includes(needle)),
-    );
-  }, [routes, search]);
-
-  const directions = routeDetail?.directions || [];
-
-  const handleNewShape = (payload) => {
-    setNewAnchor(null);
-    onNewShape(payload);
-  };
+    let list = routes;
+    if (needle) {
+      list = list.filter((r) =>
+        [r.route_short_name, r.route_long_name, r.route_id]
+          .filter(Boolean)
+          .some((v) => String(v).toLowerCase().includes(needle)),
+      );
+    }
+    if (filterMissing && coverage) {
+      list = list.filter((r) => coverage[r.route_id]?.missing > 0);
+    }
+    return list;
+  }, [routes, search, filterMissing, coverage]);
 
   return (
     <Box
@@ -91,7 +97,7 @@ export default function StudioLineRail({
         backgroundColor: th.palette.background.paper,
       })}
     >
-      {/* ── Header: unified search (+ agency filter) ── */}
+      {/* ── Header: line search (+ agency filter) ── */}
       <Box
         sx={(th) => ({
           p: 1,
@@ -107,6 +113,7 @@ export default function StudioLineRail({
           value={search}
           onChange={(e) => onSearchChange && onSearchChange(e.target.value)}
           placeholder={t("shapeStudio.search.placeholder")}
+          inputProps={{ "data-testid": "studio-search" }}
           InputProps={{
             startAdornment: (
               <InputAdornment position="start">
@@ -135,12 +142,34 @@ export default function StudioLineRail({
       </Box>
 
       {/* ── LINES list ── */}
-      <Typography
-        variant="overline"
-        sx={{ px: 1.5, pt: 1, color: "text.secondary", fontWeight: 700 }}
+      <Box
+        sx={{
+          px: 1.5,
+          pt: 1,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 1,
+        }}
       >
-        {t("shapeStudio.rail.linesHeading")}
-      </Typography>
+        <Typography
+          variant="overline"
+          sx={{ color: "text.secondary", fontWeight: 700 }}
+        >
+          {t("shapeStudio.rail.linesHeading")}
+        </Typography>
+        {anyMissing && (
+          <Chip
+            size="small"
+            color={filterMissing ? "error" : "default"}
+            variant={filterMissing ? "filled" : "outlined"}
+            label={t("shapeStudio.rail.filterMissing")}
+            onClick={() => onFilterMissingChange && onFilterMissingChange(!filterMissing)}
+            data-testid="studio-filter-missing"
+            sx={{ height: 20, fontSize: 10 }}
+          />
+        )}
+      </Box>
       <Box
         sx={{
           maxHeight: selectedRouteId ? "38%" : "100%",
@@ -160,10 +189,12 @@ export default function StudioLineRail({
           </Typography>
         )}
         {filteredRoutes.map((r) => {
-          const sel = r.route_id === selectedRouteId;
+          const sel = r.route_id === selectedRouteId && !selectedUnusedId;
+          const cov = coverage ? coverage[r.route_id] : null;
           return (
             <Box
               key={r.route_id}
+              data-testid={`studio-line-${r.route_id}`}
               onClick={() => onSelectRoute(r.route_id)}
               sx={{
                 display: "flex",
@@ -191,7 +222,7 @@ export default function StudioLineRail({
                   border: `1px solid ${theme.palette.divider}`,
                 }}
               />
-              <Box sx={{ minWidth: 0 }}>
+              <Box sx={{ minWidth: 0, flex: 1 }}>
                 <Typography variant="body2" fontWeight={600} noWrap>
                   {r.route_short_name || r.route_id}
                 </Typography>
@@ -201,12 +232,102 @@ export default function StudioLineRail({
                   </Typography>
                 )}
               </Box>
+              {cov && cov.missing > 0 ? (
+                <Tooltip title={t("shapeStudio.rail.missingBadge", { count: cov.missing })} arrow>
+                  <Chip
+                    size="small"
+                    color="error"
+                    label={cov.missing}
+                    data-testid="studio-line-missing"
+                    sx={{ height: 18, fontSize: 10, fontWeight: 700, minWidth: 24 }}
+                  />
+                </Tooltip>
+              ) : cov && cov.shapes > 0 ? (
+                <Typography variant="caption" color="text.secondary" sx={{ fontSize: 10, flexShrink: 0 }}>
+                  {cov.shapes === 1
+                    ? t("shapeStudio.rail.shapeCountOne")
+                    : t("shapeStudio.rail.shapeCount", { count: cov.shapes })}
+                </Typography>
+              ) : null}
             </Box>
           );
         })}
+
+        {/* ── Unassigned shapes ── */}
+        {unusedShapes.length > 0 && (
+          <Box sx={{ mt: 1 }} data-testid="studio-unused-shapes">
+            <Box
+              onClick={() => setUnusedOpen((o) => !o)}
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                gap: 0.5,
+                px: 0.5,
+                cursor: "pointer",
+                color: "text.secondary",
+              }}
+            >
+              <LinkOffIcon sx={{ fontSize: 14 }} />
+              <Typography variant="overline" sx={{ fontWeight: 700, flex: 1 }}>
+                {t("shapeStudio.rail.unusedHeading")} ({unusedShapes.length})
+              </Typography>
+              {unusedOpen ? (
+                <ExpandLessIcon sx={{ fontSize: 16 }} />
+              ) : (
+                <ExpandMoreIcon sx={{ fontSize: 16 }} />
+              )}
+            </Box>
+            <Collapse in={unusedOpen}>
+              <Typography variant="caption" color="text.secondary" sx={{ px: 0.5, display: "block", mb: 0.5 }}>
+                {t("shapeStudio.rail.unusedHint")}
+              </Typography>
+              {unusedShapes.map((u) => {
+                const sel = u.shape_id === selectedUnusedId;
+                return (
+                  <Box
+                    key={u.shape_id}
+                    data-testid={`studio-unused-${u.shape_id}`}
+                    onClick={() => onSelectUnused && onSelectUnused(u.shape_id)}
+                    sx={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 1,
+                      cursor: "pointer",
+                      borderRadius: 1.5,
+                      px: 1,
+                      py: 0.5,
+                      backgroundColor: sel
+                        ? alpha(theme.palette.primary.main, 0.14)
+                        : "transparent",
+                      "&:hover": {
+                        backgroundColor: alpha(theme.palette.primary.main, 0.08),
+                      },
+                    }}
+                  >
+                    <Typography
+                      variant="body2"
+                      noWrap
+                      sx={{ fontFamily: "monospace", fontSize: 12, flex: 1 }}
+                    >
+                      {u.shape_id}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" sx={{ fontSize: 10 }}>
+                      {t("shapeStudio.status.points", { count: u.point_count })}
+                    </Typography>
+                  </Box>
+                );
+              })}
+              {unusedTruncated && (
+                <Typography variant="caption" color="text.secondary" sx={{ px: 1 }}>
+                  {t("shapeStudio.rail.unusedTruncated", { count: unusedShapes.length })}
+                </Typography>
+              )}
+            </Collapse>
+          </Box>
+        )}
       </Box>
 
-      {/* ── Selected line: Tracés | Arrêts ── */}
+      {/* ── Selected line: Shapes | Stops ── */}
       {selectedRouteId && (
         <>
           <Divider />
@@ -218,10 +339,10 @@ export default function StudioLineRail({
               onChange={(e, val) => val && onRailModeChange(val)}
               fullWidth
             >
-              <ToggleButton value="shapes">
+              <ToggleButton value="shapes" data-testid="studio-mode-shapes">
                 {t("shapeStudio.rail.tracesMode")}
               </ToggleButton>
-              <ToggleButton value="stops">
+              <ToggleButton value="stops" data-testid="studio-mode-stops">
                 {t("shapeStudio.rail.arretsMode")}
               </ToggleButton>
             </ToggleButtonGroup>
@@ -245,8 +366,10 @@ export default function StudioLineRail({
                 <StudioShapeList
                   shapes={routeShapes}
                   labels={shapeLabels}
-                  selectedShapeId={selectedShapeId}
+                  fitByShape={fitByShape}
+                  selectedShapeId={selectedUnusedId ? null : selectedShapeId}
                   onSelect={onSelectShape}
+                  onEdit={onEditShape}
                   hoveredShapeId={hoveredShapeId}
                   onHoverShape={onHoverShape}
                   hoverSource={hoverSource}
@@ -257,53 +380,18 @@ export default function StudioLineRail({
                   fullWidth
                   variant="contained"
                   startIcon={<AddIcon />}
-                  onClick={(e) => setNewAnchor(e.currentTarget)}
+                  onClick={onNewShape}
+                  data-testid="studio-new-shape"
                 >
                   {t("shapeStudio.rail.newShape")}
                 </Button>
-                <Menu
-                  anchorEl={newAnchor}
-                  open={Boolean(newAnchor)}
-                  onClose={() => setNewAnchor(null)}
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ display: "block", textAlign: "center", mt: 0.5, fontSize: 10 }}
                 >
-                  <MenuItem onClick={() => handleNewShape({ mode: "draw" })}>
-                    <ListItemIcon>
-                      <GestureIcon fontSize="small" />
-                    </ListItemIcon>
-                    <ListItemText primary={t("shapeStudio.create.draw")} />
-                  </MenuItem>
-                  {directions.length > 0 && <Divider />}
-                  {directions.map((d) => (
-                    <MenuItem
-                      key={`straight-${d.direction_id}`}
-                      onClick={() =>
-                        handleNewShape({ mode: "straight", direction: d })
-                      }
-                    >
-                      <ListItemIcon>
-                        <TimelineIcon fontSize="small" />
-                      </ListItemIcon>
-                      <ListItemText
-                        primary={`${t("shapeStudio.create.straight")} — ${directionWord(d.direction_id, t)}`}
-                      />
-                    </MenuItem>
-                  ))}
-                  {directions.map((d) => (
-                    <MenuItem
-                      key={`auto-${d.direction_id}`}
-                      onClick={() =>
-                        handleNewShape({ mode: "auto", direction: d })
-                      }
-                    >
-                      <ListItemIcon>
-                        <AltRouteIcon fontSize="small" />
-                      </ListItemIcon>
-                      <ListItemText
-                        primary={`${t("shapeStudio.create.autoGen")} — ${directionWord(d.direction_id, t)}`}
-                      />
-                    </MenuItem>
-                  ))}
-                </Menu>
+                  {t("shapeStudio.action.editHint")}
+                </Typography>
               </Box>
             </Box>
           ) : (

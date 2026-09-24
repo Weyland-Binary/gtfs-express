@@ -1199,8 +1199,15 @@ function GTFSApp() {
       setSelectedMainTab(3);
     };
     const handleCreateShape = (e) => {
-      const { shapeId, initialPoints, linkTripIds, routeId, agencyId } =
-        e.detail || {};
+      const {
+        shapeId,
+        initialPoints,
+        linkTripIds,
+        routeId,
+        agencyId,
+        fitStops,
+        directionId,
+      } = e.detail || {};
       if (!shapeId) return;
       setStudioTarget({
         agencyId: agencyId || selectedAgencyRef.current,
@@ -1209,6 +1216,8 @@ function GTFSApp() {
           shapeId,
           initialPoints: initialPoints || [],
           linkTripIds: linkTripIds || [],
+          fitStops: fitStops || null,
+          directionId: directionId ?? null,
         },
         token: ++studioTargetTokenRef.current,
       });

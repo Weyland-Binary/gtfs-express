@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import {
   Dialog,
   DialogTitle,
@@ -24,10 +24,21 @@ import API_BASE_URL from "../../config";
  * Dialog for forking a shared shape: duplicate it under a new shape_id
  * and reassign selected trips to the new copy.
  */
-function ShapeForkDialog({ open, shapeId, trips = [], onClose, onForked }) {
+function ShapeForkDialog({
+  open,
+  shapeId,
+  trips = [],
+  loadingTrips = false,
+  onClose,
+  onForked,
+}) {
   const { recordEdit } = useEditMode();
   const { t } = useLanguage();
   const [newShapeId, setNewShapeId] = useState("");
+  // Pre-fill a sensible id on open so a plain copy is one click away.
+  useEffect(() => {
+    if (open) setNewShapeId(shapeId ? `${shapeId}_v2` : "");
+  }, [open, shapeId]);
   const [selected, setSelected] = useState(new Set());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -52,9 +63,10 @@ function ShapeForkDialog({ open, shapeId, trips = [], onClose, onForked }) {
   const newCount = selected.size;
   const keepCount = trips.length - newCount;
 
+  // No trip selected = plain copy of the geometry (allowed).
   const canSave = useMemo(
-    () => newShapeId.trim().length > 0 && selected.size > 0 && !saving,
-    [newShapeId, selected, saving],
+    () => newShapeId.trim().length > 0 && !saving && !loadingTrips,
+    [newShapeId, saving, loadingTrips],
   );
 
   const handleSave = async () => {
@@ -79,10 +91,12 @@ function ShapeForkDialog({ open, shapeId, trips = [], onClose, onForked }) {
         return;
       }
       recordEdit(
-        t("edit.shape.forkedToast", {
-          id: newShapeId.trim(),
-          count: selected.size,
-        }),
+        selected.size > 0
+          ? t("edit.shape.forkedToast", {
+              id: newShapeId.trim(),
+              count: selected.size,
+            })
+          : t("edit.shape.forkCopiedToast", { id: newShapeId.trim() }),
         body.validation,
         { entity: "shape", entityId: newShapeId.trim() },
       );
@@ -127,9 +141,17 @@ function ShapeForkDialog({ open, shapeId, trips = [], onClose, onForked }) {
           autoFocus
         />
 
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
           {t("edit.shape.forkSelectTrips")}
         </Typography>
+        <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1 }}>
+          {t("edit.shape.forkNoTripsHint")}
+        </Typography>
+        {loadingTrips && (
+          <Box sx={{ display: "flex", justifyContent: "center", py: 2 }}>
+            <CircularProgress size={20} />
+          </Box>
+        )}
 
         <Box sx={{ mb: 1 }}>
           <FormControlLabel
@@ -175,13 +197,17 @@ function ShapeForkDialog({ open, shapeId, trips = [], onClose, onForked }) {
                   >
                     {tr.trip_id}
                   </Typography>
-                  {tr.trip_headsign && (
+                  {(tr.trip_headsign || tr.direction_id != null) && (
                     <Typography
                       variant="body2"
                       color="text.secondary"
                       sx={{ fontSize: 12 }}
+                      noWrap
                     >
-                      {tr.trip_headsign}
+                      {tr.direction_id != null && tr.direction_id !== ""
+                        ? `${String(tr.direction_id) === "1" ? "←" : "→"} `
+                        : ""}
+                      {tr.trip_headsign || ""}
                     </Typography>
                   )}
                 </Box>
@@ -207,9 +233,12 @@ function ShapeForkDialog({ open, shapeId, trips = [], onClose, onForked }) {
           onClick={handleSave}
           variant="contained"
           disabled={!canSave}
+          data-testid="fork-confirm"
           startIcon={saving ? <CircularProgress size={16} /> : <CallSplitIcon />}
         >
-          {t("edit.shape.forkTitle")}
+          {selected.size > 0
+            ? t("edit.shape.forkTitle")
+            : t("shapeStudio.action.duplicate")}
         </Button>
       </DialogActions>
     </Dialog>

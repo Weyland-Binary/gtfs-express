@@ -139,6 +139,8 @@ function RouteDetail({ routeId }) {
           routeId: route.route_id,
           agencyId: route.agency_id,
           directionId,
+          // The Studio editor checks the geometry against these stops.
+          fitStops: direction?.stops_ordered || null,
         },
       }),
     );

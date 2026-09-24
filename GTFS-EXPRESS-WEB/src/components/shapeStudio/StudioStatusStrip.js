@@ -11,7 +11,10 @@ import { alpha } from "@mui/material/styles";
 import EditIcon from "@mui/icons-material/Edit";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
+import LinkIcon from "@mui/icons-material/Link";
 import WarningAmberIcon from "@mui/icons-material/WarningAmber";
+import WrongLocationIcon from "@mui/icons-material/WrongLocation";
+import CheckCircleOutlineIcon from "@mui/icons-material/CheckCircleOutline";
 import { useLanguage } from "../../contexts/LanguageContext";
 
 function formatKm(distanceM) {
@@ -22,17 +25,21 @@ function formatKm(distanceM) {
 // Glass status strip floating over the bottom of the map. Shows the selected
 // shape's summary plus its object-first contextual actions, or a prompt.
 export default function StudioStatusStrip({
-  selectedShape, // { shape_id, label, pointCount, distanceM, tripCount, isShared }
+  selectedShape, // { shape_id, label, pointCount, distanceM, tripCount, isShared, fit, unused }
   editingActive,
-  distStale,
   onEdit,
   onDuplicate,
+  onLink,
   onDelete,
+  onFlyOffTrace,
 }) {
   const { t } = useLanguage();
+  const fit = selectedShape?.fit || null;
+  const offCount = fit ? fit.offTrace.length : 0;
 
   return (
     <Box
+      data-testid="studio-status-strip"
       sx={(theme) => ({
         position: "absolute",
         bottom: 16,
@@ -82,13 +89,36 @@ export default function StudioStatusStrip({
                 })}
               />
             )}
-          {distStale && (
+          {selectedShape.unused && (
             <Chip
               size="small"
-              color="warning"
-              icon={<WarningAmberIcon sx={{ fontSize: 16 }} />}
-              label={t("shapeStudio.warn.distStale")}
+              color="default"
+              variant="outlined"
+              label={t("shapeStudio.card.unused")}
             />
+          )}
+          {fit && offCount > 0 && (
+            <Tooltip title={t("edit.shape.fit.offTraceTooltip", { m: 100 })} arrow>
+              <Chip
+                size="small"
+                color="error"
+                icon={<WrongLocationIcon sx={{ fontSize: 16 }} />}
+                label={t("shapeStudio.card.offTrace", { count: offCount })}
+                onClick={onFlyOffTrace}
+                data-testid="studio-strip-offtrace"
+              />
+            </Tooltip>
+          )}
+          {fit && offCount === 0 && fit.results.length > 0 && !editingActive && (
+            <Tooltip title={t("edit.shape.fit.okTooltip", { m: 100 })} arrow>
+              <Chip
+                size="small"
+                color="success"
+                variant="outlined"
+                icon={<CheckCircleOutlineIcon sx={{ fontSize: 16 }} />}
+                label={t("edit.shape.fit.ok", { count: fit.results.length })}
+              />
+            </Tooltip>
           )}
           <Box sx={{ display: "flex", gap: 0.5, ml: 1 }}>
             <Button
@@ -97,20 +127,47 @@ export default function StudioStatusStrip({
               startIcon={<EditIcon />}
               onClick={onEdit}
               disabled={editingActive}
+              data-testid="studio-edit"
             >
               {t("shapeStudio.action.edit")}
             </Button>
-            <Button
-              size="small"
-              variant="outlined"
-              startIcon={<ContentCopyIcon />}
-              onClick={onDuplicate}
-            >
-              {t("shapeStudio.action.duplicate")}
-            </Button>
+            <Tooltip title={t("shapeStudio.action.link")}>
+              <span>
+                <IconButton
+                  size="small"
+                  color="primary"
+                  onClick={onLink}
+                  disabled={editingActive}
+                  aria-label={t("shapeStudio.action.link")}
+                  data-testid="studio-link"
+                >
+                  <LinkIcon fontSize="small" />
+                </IconButton>
+              </span>
+            </Tooltip>
+            <Tooltip title={t("shapeStudio.action.duplicate")}>
+              <span>
+                <IconButton
+                  size="small"
+                  onClick={onDuplicate}
+                  disabled={editingActive}
+                  aria-label={t("shapeStudio.action.duplicate")}
+                  data-testid="studio-duplicate"
+                >
+                  <ContentCopyIcon fontSize="small" />
+                </IconButton>
+              </span>
+            </Tooltip>
             <Tooltip title={t("shapeStudio.action.delete")}>
               <span>
-                <IconButton size="small" color="error" onClick={onDelete}>
+                <IconButton
+                  size="small"
+                  color="error"
+                  onClick={onDelete}
+                  disabled={editingActive}
+                  aria-label={t("shapeStudio.action.delete")}
+                  data-testid="studio-delete"
+                >
                   <DeleteOutlineIcon fontSize="small" />
                 </IconButton>
               </span>

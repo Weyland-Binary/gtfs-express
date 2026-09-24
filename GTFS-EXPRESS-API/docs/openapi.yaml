@@ -426,6 +426,60 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+  /gtfs/route_patterns/{route_id}:
+    get:
+      tags:
+        - Read
+      summary: Stop patterns of a route (ordered stops, trips following each pattern, shapes in use).
+      parameters:
+        - name: route_id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/shape_coverage/{agency_id}:
+    get:
+      tags:
+        - Read
+      summary: Per-route trip counts, trips without shape and distinct shapes for an agency.
+      parameters:
+        - name: agency_id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /gtfs/shapes_unused:
+    get:
+      tags:
+        - Read
+      summary: Shapes no trip references (up to 200, with their points).
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /gtfs/upload-stats:
     get:
       tags:

@@ -4,6 +4,7 @@
  * Post Chantier 2: handlers query SQLite directly.
  */
 
+const crypto = require("crypto");
 const { validateSessionId, validateAgencyIdParam } = require("./sessionManager");
 const { ensureDbHandle } = require("./db/connection");
 const { matchesDirectionId } = require("./scheduleService");
@@ -276,10 +277,24 @@ const getShapesForRoute = async (req, res) => {
       });
     }
 
+    // Representative stop sequence per shape: the stops of the trip with the
+    // most stop_times among the trips using it. Lets the Studio show the
+    // shape's stops in order and check how well the polyline fits them.
+    const longestTripStmt = db.prepare(
+      `SELECT st.trip_id, COUNT(*) AS n
+         FROM stop_times st
+        WHERE st.trip_id IN (SELECT trip_id FROM trips WHERE route_id = ? AND shape_id = ?)
+        GROUP BY st.trip_id
+        ORDER BY n DESC
+        LIMIT 1`,
+    );
+
     const result = Object.keys(shapesMap).map((shape_id) => {
       const sorted = shapesMap[shape_id].sort((a, b) => a.seq - b.seq);
       const tripsForShape = shapeTrips[shape_id] || [];
       const dirs = [...new Set(tripsForShape.map((t) => t.direction_id))];
+      const longest = longestTripStmt.get(route_id, shape_id);
+      const stops = longest ? orderedStopsForTrip(db, longest.trip_id) : [];
       return {
         shape_id,
         points: sorted.map((p) => [p.lat, p.lon]),
@@ -287,6 +302,7 @@ const getShapesForRoute = async (req, res) => {
         trip_count: tripsForShape.length,
         directions: dirs,
         trips: tripsForShape.slice(0, 20),
+        stops,
       };
     });
 
@@ -297,4 +313,248 @@ const getShapesForRoute = async (req, res) => {
   }
 };
 
-module.exports = { getShapes, getAllShapes, getShapesForRoute };
+// Ordered stops (with coordinates) of one trip.
+const orderedStopsForTrip = (db, tripId) =>
+  db
+    .prepare(
+      `SELECT s.stop_id, s.stop_name, s.stop_lat, s.stop_lon
+         FROM stop_times st
+         JOIN stops s ON s.stop_id = st.stop_id
+        WHERE st.trip_id = ?
+        ORDER BY CAST(st.stop_sequence AS INTEGER)`,
+    )
+    .all(tripId)
+    .map((s) => ({
+      stop_id: s.stop_id,
+      stop_name: s.stop_name || "",
+      lat: parseFloat(s.stop_lat),
+      lon: parseFloat(s.stop_lon),
+    }))
+    .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lon));
+
+// ── Stop patterns of a route ────────────────────────────────────────────────
+//
+// A "pattern" is the ordered list of stops a trip serves. Operators draw one
+// shape per pattern (not per direction: a short-turn variant needs its own
+// polyline), so the Studio proposes shapes pattern by pattern and links
+// exactly the trips that follow it.
+const getRoutePatterns = async (req, res) => {
+  try {
+    const { route_id } = req.params;
+    const db = requireReadDb(req, res);
+    if (!db) return;
+
+    const trips = db
+      .prepare(
+        `SELECT trip_id, direction_id, COALESCE(trip_headsign, '') AS trip_headsign, shape_id
+           FROM trips WHERE route_id = ?`,
+      )
+      .all(route_id);
+    if (trips.length === 0) return res.json({ route_id, patterns: [] });
+
+    // One pass over the route's stop_times, grouped client-side by trip.
+    const rows = db
+      .prepare(
+        `SELECT st.trip_id, st.stop_id
+           FROM stop_times st
+          WHERE st.trip_id IN (SELECT trip_id FROM trips WHERE route_id = ?)
+          ORDER BY st.trip_id, CAST(st.stop_sequence AS INTEGER)`,
+      )
+      .all(route_id);
+    const stopsByTrip = new Map();
+    for (const r of rows) {
+      let arr = stopsByTrip.get(r.trip_id);
+      if (!arr) {
+        arr = [];
+        stopsByTrip.set(r.trip_id, arr);
+      }
+      arr.push(r.stop_id);
+    }
+
+    const patterns = new Map();
+    for (const trip of trips) {
+      const stopIds = stopsByTrip.get(trip.trip_id) || [];
+      if (stopIds.length === 0) continue;
+      const dirKey = trip.direction_id != null ? String(trip.direction_id) : "";
+      const key = `${dirKey}|${stopIds.join("\u0001")}`;
+      let p = patterns.get(key);
+      if (!p) {
+        p = {
+          key,
+          direction_id: trip.direction_id,
+          stop_ids: stopIds,
+          trip_ids: [],
+          trip_ids_without_shape: [],
+          headsigns: new Map(),
+          shapes: new Map(),
+          trips_without_shape: 0,
+        };
+        patterns.set(key, p);
+      }
+      p.trip_ids.push(trip.trip_id);
+      if (trip.trip_headsign) {
+        p.headsigns.set(trip.trip_headsign, (p.headsigns.get(trip.trip_headsign) || 0) + 1);
+      }
+      if (trip.shape_id) {
+        p.shapes.set(trip.shape_id, (p.shapes.get(trip.shape_id) || 0) + 1);
+      } else {
+        p.trips_without_shape += 1;
+        p.trip_ids_without_shape.push(trip.trip_id);
+      }
+    }
+
+    // Stop coordinates for every stop referenced by a pattern.
+    const allStopIds = [...new Set([...patterns.values()].flatMap((p) => p.stop_ids))];
+    const stopInfo = new Map();
+    const CHUNK = 500;
+    for (let i = 0; i < allStopIds.length; i += CHUNK) {
+      const chunk = allStopIds.slice(i, i + CHUNK);
+      const ph = chunk.map(() => "?").join(",");
+      for (const s of db
+        .prepare(`SELECT stop_id, stop_name, stop_lat, stop_lon FROM stops WHERE stop_id IN (${ph})`)
+        .all(...chunk)) {
+        stopInfo.set(s.stop_id, s);
+      }
+    }
+
+    const dominant = (m) => {
+      let best = null;
+      let n = 0;
+      for (const [h, c] of m) if (c > n) [best, n] = [h, c];
+      return best;
+    };
+
+    const out = [...patterns.values()]
+      .map((p) => ({
+        pattern_id: crypto.createHash("sha1").update(p.key).digest("hex").slice(0, 12),
+        direction_id: p.direction_id,
+        headsign: dominant(p.headsigns),
+        stop_count: p.stop_ids.length,
+        trip_count: p.trip_ids.length,
+        trip_ids: p.trip_ids,
+        trip_ids_without_shape: p.trip_ids_without_shape,
+        trips_without_shape: p.trips_without_shape,
+        shapes: [...p.shapes.entries()]
+          .map(([shape_id, trip_count]) => ({ shape_id, trip_count }))
+          .sort((a, b) => b.trip_count - a.trip_count),
+        stops: p.stop_ids.map((id) => {
+          const s = stopInfo.get(id);
+          return {
+            stop_id: id,
+            stop_name: s?.stop_name || "",
+            lat: s ? parseFloat(s.stop_lat) : NaN,
+            lon: s ? parseFloat(s.stop_lon) : NaN,
+          };
+        }),
+      }))
+      .sort((a, b) => {
+        const da = a.direction_id == null ? "" : String(a.direction_id);
+        const db2 = b.direction_id == null ? "" : String(b.direction_id);
+        if (da !== db2) return da < db2 ? -1 : 1;
+        return b.trip_count - a.trip_count;
+      });
+
+    res.json({ route_id, patterns: out });
+  } catch (err) {
+    console.error("getRoutePatterns error:", err.message);
+    res.status(500).json({ error: "Error fetching route patterns." });
+  }
+};
+
+// ── Shape coverage per route of an agency ───────────────────────────────────
+// { routes: { [route_id]: { trips, missing, shapes } } } — "missing" counts
+// trips without shape_id. Drives the Studio's "N trips without shape" badges.
+const getShapeCoverage = async (req, res) => {
+  try {
+    const db = requireReadDb(req, res);
+    if (!db) return;
+    let { agency_id } = req.params;
+    if (agency_id === "default_agency_id" || agency_id === "") agency_id = null;
+
+    const rows = db
+      .prepare(
+        `SELECT r.route_id, r.agency_id,
+                COUNT(t.trip_id) AS trips,
+                SUM(CASE WHEN t.shape_id IS NULL OR t.shape_id = '' THEN 1 ELSE 0 END) AS missing,
+                COUNT(DISTINCT CASE WHEN t.shape_id IS NULL OR t.shape_id = '' THEN NULL ELSE t.shape_id END) AS shapes
+           FROM routes r
+           LEFT JOIN trips t ON t.route_id = r.route_id
+          GROUP BY r.route_id`,
+      )
+      .all();
+
+    // Same agency semantics as GET /routes/:agency_id.
+    const agencyCount = db.prepare("SELECT COUNT(*) AS n FROM agency").get();
+    const singleAgency = agencyCount && agencyCount.n === 1;
+    const noAgency = (r) => !r.agency_id || String(r.agency_id).trim() === "";
+    let filtered;
+    if (agency_id) {
+      filtered = rows.filter((r) => r.agency_id === agency_id);
+      if (filtered.length === 0 && singleAgency) filtered = rows.filter(noAgency);
+    } else {
+      filtered = rows.filter(noAgency);
+    }
+
+    const routes = {};
+    for (const r of filtered) {
+      routes[r.route_id] = {
+        trips: r.trips || 0,
+        missing: r.missing || 0,
+        shapes: r.shapes || 0,
+      };
+    }
+    res.json({ routes });
+  } catch (err) {
+    console.error("getShapeCoverage error:", err.message);
+    res.status(500).json({ error: "Error fetching shape coverage." });
+  }
+};
+
+// ── Shapes no trip references ───────────────────────────────────────────────
+// Orphans appear after a fork, a trip deletion or a shape drawn without
+// trips. The Studio lists them so they can be linked or deleted (the
+// validator reports them as unused_shape).
+const UNUSED_SHAPES_LIMIT = 200;
+
+const getUnusedShapes = async (req, res) => {
+  try {
+    const db = requireReadDb(req, res);
+    if (!db) return;
+    const ids = db
+      .prepare(
+        `SELECT s.shape_id, COUNT(*) AS point_count
+           FROM shapes s
+          WHERE NOT EXISTS (SELECT 1 FROM trips t WHERE t.shape_id = s.shape_id)
+          GROUP BY s.shape_id
+          ORDER BY s.shape_id
+          LIMIT ?`,
+      )
+      .all(UNUSED_SHAPES_LIMIT + 1);
+    const truncated = ids.length > UNUSED_SHAPES_LIMIT;
+    const page = ids.slice(0, UNUSED_SHAPES_LIMIT);
+    const pointsStmt = db.prepare(
+      "SELECT shape_pt_lat, shape_pt_lon FROM shapes WHERE shape_id = ? ORDER BY CAST(shape_pt_sequence AS INTEGER)",
+    );
+    const shapes = page.map((row) => ({
+      shape_id: row.shape_id,
+      point_count: row.point_count,
+      points: pointsStmt
+        .all(row.shape_id)
+        .map((p) => [parseFloat(p.shape_pt_lat), parseFloat(p.shape_pt_lon)])
+        .filter(([a, b]) => Number.isFinite(a) && Number.isFinite(b)),
+    }));
+    res.json({ shapes, truncated });
+  } catch (err) {
+    console.error("getUnusedShapes error:", err.message);
+    res.status(500).json({ error: "Error fetching unused shapes." });
+  }
+};
+
+module.exports = {
+  getShapes,
+  getAllShapes,
+  getShapesForRoute,
+  getRoutePatterns,
+  getShapeCoverage,
+  getUnusedShapes,
+};

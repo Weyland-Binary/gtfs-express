@@ -8,7 +8,6 @@ import React, {
 import ReactDOMServer from "react-dom/server";
 import {
   MapContainer,
-  TileLayer,
   Polyline,
   Marker,
   CircleMarker,
@@ -54,6 +53,10 @@ import LocationMarker from "./LocationMarker";
 import StopFloatingCard from "./StopFloatingCard";
 import EditStopDialog from "./edit/EditStopDialog";
 import ShapeEditorOverlay from "./edit/ShapeEditorOverlay";
+import BasemapControl, {
+  BasemapTileLayer,
+  useBasemap,
+} from "./map/BasemapControl";
 import { useDetailPanel } from "../contexts/DetailPanelContext";
 import { useEditMode } from "../contexts/EditModeContext";
 import { useLanguage } from "../contexts/LanguageContext";
@@ -436,8 +439,16 @@ function LineMap({
   // polyline; onShapeHover reports map-side hover back to the rail.
   hoveredShapeId = null,
   onShapeHover = null,
+  // Studio: double-clicking a polyline opens it in the editor.
+  onShapeDoubleClick = null,
   // A monotonic counter the parent bumps to arm "place a stop on the map" mode.
   placeStopSignal = 0,
+  // Ordered stops the shape being edited should serve (Shape Studio) —
+  // drives the editor's numbered badges and fit feedback.
+  editorStops = null,
+  // Extra polylines rendered read-only under the route's shapes (e.g. an
+  // unassigned shape previewed from the Studio rail).
+  extraShapes = null,
 }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
@@ -456,6 +467,7 @@ function LineMap({
   const [fabMenuAnchor, setFabMenuAnchor] = useState(null);
   const [helpAnchor, setHelpAnchor] = useState(null);
   const [highlightedStop, setHighlightedStop] = useState(null);
+  const [basemap, setBasemap] = useBasemap();
 
   // Short-lived ring marker around a stop the user just picked in the
   // carto autocomplete search. Fades out after ~2.5s.
@@ -758,16 +770,8 @@ function LineMap({
         }}
         attributionControl
       >
-        {/* Base map layer with dark/light mode support */}
-        <TileLayer
-          key={isDark ? "dark" : "light"}
-          url={
-            isDark
-              ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-              : "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
-          }
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
-        />
+        {/* Base map: theme-following CARTO tiles, OpenStreetMap or satellite */}
+        <BasemapTileLayer basemap={basemap} isDark={isDark} />
 
         {/* Recompute size once when embedded in a freshly shown tab (Studio) */}
         {chrome === "studio" && <InvalidateSizeOnMount />}
@@ -858,7 +862,7 @@ function LineMap({
         {/* Layers control for switching between overlays and base layers */}
         <LayersControl position="topright">
           {/* 1. Line Polyline (route shape) - Overlay */}
-          <LayersControl.Overlay checked name="Line shape">
+          <LayersControl.Overlay checked name={t("map.layer.lineShape")}>
             <LayerGroup>
               {/* ── When a shape is focused: show ONLY that shape ── */}
               {editingShapeId ? null : focusedShapeId != null ? (
@@ -965,6 +969,12 @@ function LineMap({
                               if (onShapeClick) onShapeClick(shapeId);
                               else openPanel("shape", shapeId);
                             },
+                            dblclick: (e) => {
+                              if (!onShapeDoubleClick) return;
+                              L.DomEvent.stopPropagation(e);
+                              e.originalEvent?.preventDefault?.();
+                              onShapeDoubleClick(shapeId);
+                            },
                             mouseover: () =>
                               onShapeHover && onShapeHover(shapeId),
                             mouseout: () => onShapeHover && onShapeHover(null),
@@ -1008,6 +1018,26 @@ function LineMap({
                       </React.Fragment>
                     );
                   })}
+                  {/* Extra read-only polylines (e.g. an unassigned shape
+                      previewed from the Studio rail) */}
+                  {Array.isArray(extraShapes) &&
+                    extraShapes.map((extra) => (
+                      <Polyline
+                        key={`extra-${extra.shape_id}`}
+                        positions={extra.points}
+                        color={extra.color || "#607d8b"}
+                        weight={extra.selected ? 6 : 3}
+                        opacity={extra.selected ? 0.95 : 0.6}
+                        dashArray={extra.selected ? null : "4 6"}
+                        eventHandlers={{
+                          click: (e) => {
+                            L.DomEvent.stopPropagation(e);
+                            if (onShapeClick) onShapeClick(extra.shape_id);
+                          },
+                        }}
+                        pathOptions={{ className: "shape-clickable" }}
+                      />
+                    ))}
                   {/* Shapes from other directions — shown dimmed */}
                   {otherDirShapes.map(([shapeId, points], index) => {
                     if (editingShapeId === shapeId) return null;
@@ -1071,7 +1101,7 @@ function LineMap({
           </LayersControl.Overlay>
 
           {/* 2. Parent Station Stops - Overlay (shown alongside individual stops) */}
-          <LayersControl.Overlay name="Parent Station">
+          <LayersControl.Overlay name={t("map.layer.parentStations")}>
             <LayerGroup>
               {stops
                 .filter((stop) => stop.parent_station)
@@ -1101,7 +1131,7 @@ function LineMap({
           </LayersControl.Overlay>
 
           {/* 3. Individual stops (base layer) */}
-          <LayersControl.BaseLayer checked name="Individual stops">
+          <LayersControl.BaseLayer checked name={t("map.layer.stops")}>
             <LayerGroup>
               {stops.map((rawStop, index) => {
                 const stop = applyOverride(rawStop);
@@ -1129,7 +1159,7 @@ function LineMap({
           </LayersControl.BaseLayer>
 
           {/* 4. Clustered stops */}
-          <LayersControl.BaseLayer name="Clustered stops">
+          <LayersControl.BaseLayer name={t("map.layer.clusteredStops")}>
             <MarkerClusterGroup>
               {stops.map((rawStop, index) => {
                 const stop = applyOverride(rawStop);
@@ -1160,9 +1190,13 @@ function LineMap({
         {/* Shape editor overlay (inside MapContainer for useMap access).
             Never in the read-only Schedules & Map chrome — editing is in Studio. */}
         {editing && !readOnly && (
-          <ShapeEditorOverlay editShapeRequest={editShapeRequest} />
+          <ShapeEditorOverlay
+            editShapeRequest={editShapeRequest}
+            fitStops={editorStops}
+          />
         )}
       </MapContainer>
+      <BasemapControl basemap={basemap} onChange={setBasemap} />
       <StopFloatingCard
         stop={stopDragging ? null : hoveredStop}
         isDark={isDark}

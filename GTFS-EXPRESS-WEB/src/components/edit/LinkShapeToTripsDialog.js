@@ -62,6 +62,9 @@ function LinkShapeToTripsDialog({
   pointCount,
   distanceKm,
   onLinked,
+  // Pre-applied filters (the Studio opens the dialog from a line context).
+  defaultRouteId = null,
+  defaultDirectionId = null,
 }) {
   const theme = useTheme();
   const { t } = useLanguage();
@@ -104,8 +107,16 @@ function LinkShapeToTripsDialog({
     setTooLarge(false);
     setTrips([]);
     setSelectedIds(new Set());
-    setRouteFilter(null);
-    setDirectionFilter("all");
+    setRouteFilter(
+      defaultRouteId != null && defaultRouteId !== ""
+        ? { route_id: defaultRouteId, label: String(defaultRouteId) }
+        : null,
+    );
+    setDirectionFilter(
+      defaultDirectionId != null && defaultDirectionId !== ""
+        ? String(defaultDirectionId)
+        : "all",
+    );
     setSearchInput("");
     setSearchDebounced("");
 
@@ -144,7 +155,7 @@ function LinkShapeToTripsDialog({
       cancelled = true;
       controller.abort();
     };
-  }, [open]);
+  }, [open, defaultRouteId, defaultDirectionId]);
 
   // ── Search debounce (150ms) ───────────────────────────────────────────
   useEffect(() => {
@@ -442,7 +453,7 @@ function LinkShapeToTripsDialog({
             }}
             aria-label={t("linkShapeToTrips.filterDirection")}
           >
-            <ToggleButton value="all">All</ToggleButton>
+            <ToggleButton value="all">{t("linkShapeToTrips.all")}</ToggleButton>
             <ToggleButton value="0">0</ToggleButton>
             <ToggleButton value="1">1</ToggleButton>
           </ToggleButtonGroup>
