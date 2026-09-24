@@ -318,6 +318,11 @@ const ScheduleGrid = ({
   stopFilter = "",
   wheelchairAccessibleTrips = 0,
   totalTrips = 0,
+  // Identity of the dataset being displayed (route|direction|date). Pagination
+  // resets only when THIS changes, never on the silent refetch that follows
+  // every edit — otherwise editing a cell on page 3 threw the user back to
+  // page 1 with the default page size.
+  datasetKey = "",
 }) => {
   const [openSnackbar, setOpenSnackbar] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState("");
@@ -476,10 +481,10 @@ const ScheduleGrid = ({
   useEffect(() => {
     setTripPage(0);
     setTripPageSize(TRIP_PAGE_DEFAULT_SIZE);
-    // The dep is the array reference: a fresh fetch returns a new array
-    // even when the row count happens to be identical, which is what we
-    // want here.
-  }, [stopTimes]);
+    // Keyed on the dataset identity (route|direction|date), NOT on the
+    // stopTimes array reference: the post-edit silent refetch produces a new
+    // array for the same dataset and must keep the user's page and size.
+  }, [datasetKey]);
 
   const lineColor = selectedRouteDetails.route_color
     ? `#${selectedRouteDetails.route_color}`

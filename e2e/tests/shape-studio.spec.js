@@ -30,7 +30,6 @@ test("studio tab appears with edit mode and renders the workspace", async () => 
   await expect(page.getByTestId("tab-shape-studio")).toHaveCount(0);
 
   await page.getByTestId("edit-mode-enter").click();
-  await page.getByTestId("edit-mode-enter-confirm").click();
   await expect(page.getByTestId("edit-undo")).toBeVisible({ timeout: 30_000 });
 
   await page.getByTestId("tab-shape-studio").click();

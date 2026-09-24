@@ -104,11 +104,15 @@ function ValidationErrorsPage({
   }, [groupedErrors]);
 
   // Unfiltered counts (always stable — do not depend on filters)
+  // Weighted like utils/validationSummary.js: an aggregate "N more not
+  // sampled" marker counts for N occurrences, not 1, so these numbers agree
+  // with the header badge, the dashboard and the repair-progress baseline.
   const severityCounts = useMemo(() => {
     const counts = { error: 0, warning: 0, info: 0 };
     activeFindings.forEach((f) => {
       const s = f.severity || "error";
-      if (counts[s] !== undefined) counts[s]++;
+      const w = f.aggregate ? Math.max(0, Number(f.aggregateCount) || 0) : 1;
+      if (counts[s] !== undefined) counts[s] += w;
     });
     return counts;
   }, [activeFindings]);

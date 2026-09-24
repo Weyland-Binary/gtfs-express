@@ -71,9 +71,9 @@ test("validation surfaces are reachable", async () => {
 });
 
 test("edit mode can be entered", async () => {
+  // A single click enters edit mode (no confirmation dialog: every change is
+  // undoable). With the beta gate disabled the backend flips straight away.
   await page.getByTestId("edit-mode-enter").click();
-  // Entering shows a confirmation dialog before flipping the backend flag.
-  await page.getByTestId("edit-mode-enter-confirm").click();
   await expect(page.getByTestId("edit-undo")).toBeVisible({
     timeout: 30_000,
   });

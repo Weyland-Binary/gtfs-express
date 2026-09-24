@@ -31,6 +31,7 @@ import { useLanguage } from "../../contexts/LanguageContext";
 import { useDestructiveGuard } from "../../contexts/DestructiveGuardContext";
 import { useEditMode } from "../../contexts/EditModeContext";
 import { useDetailPanel } from "../../contexts/DetailPanelContext";
+import { summarizeReport } from "../../utils/validationSummary";
 
 const StyledTabs = styled(Tabs)(({ theme }) => ({
   "& .MuiTabs-indicator": {
@@ -109,19 +110,12 @@ function Header({
   const isHoverActive = agenciesLoaded && logoHovered;
 
   const reportBadge = useMemo(() => {
-    if (!validationReport?.errors) return null;
-    let errors = 0,
-      warnings = 0,
-      infos = 0;
-    Object.values(validationReport.errors).forEach((arr) => {
-      arr.forEach((e) => {
-        const sev = e.severity || "error";
-        if (sev === "error") errors++;
-        else if (sev === "warning") warnings++;
-        else infos++;
-      });
-    });
-    const total = errors + warnings + infos;
+    // Shared weighted tally — excludes findings already fixed at import and
+    // counts aggregate tail markers for the occurrences they stand for, so
+    // the badge matches the validation page and the dashboard.
+    const summary = summarizeReport(validationReport);
+    if (!summary.validated) return null;
+    const { errors, warnings, infos, total } = summary;
     if (total === 0) return null;
     // Pick the highest severity color for the badge
     const color = errors > 0 ? "error" : warnings > 0 ? "warning" : "info";

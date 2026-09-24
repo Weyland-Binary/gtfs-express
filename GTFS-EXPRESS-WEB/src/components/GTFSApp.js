@@ -54,6 +54,7 @@ import {
 } from "../utils/sessionManager";
 import { sortRoutesByPublisherOrder } from "../utils/routeSort";
 import { classifyFetchError } from "../utils/scheduleErrors";
+import { summarizeReport } from "../utils/validationSummary";
 import { useLanguage } from "../contexts/LanguageContext";
 import { useEditMode } from "../contexts/EditModeContext";
 import { useDetailPanel } from "../contexts/DetailPanelContext";
@@ -327,7 +328,8 @@ function GTFSApp() {
         ? importAdjustments
         : null;
 
-    if (!validationReport || !validationReport.errors) {
+    const summary = summarizeReport(validationReport);
+    if (!summary.validated) {
       if (!feed && !adjustments) return null;
       return {
         ...(feed ? { feed } : {}),
@@ -335,33 +337,14 @@ function GTFSApp() {
         tab,
       };
     }
-    const counts = validationReport.counts || {};
-    const tally = new Map();
-    for (const findings of Object.values(validationReport.errors)) {
-      if (!Array.isArray(findings)) continue;
-      for (const f of findings) {
-        if (!f || !f.ruleCode) continue;
-        // Import-resolved findings (duplicates dropped by the tolerant
-        // loader) are not outstanding work — keep them out of the model's
-        // "top findings" so it never drafts repairs for absent rows.
-        if (f.resolvedByImport) continue;
-        const key = `${f.ruleCode}::${f.severity || "error"}`;
-        tally.set(key, (tally.get(key) || 0) + 1);
-      }
-    }
-    const topRules = Array.from(tally.entries())
-      .map(([key, count]) => {
-        const [code, severity] = key.split("::");
-        return { code, severity, count };
-      })
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 5);
+    // Import-resolved findings are excluded by summarizeReport, so the model
+    // never drafts repairs for rows the tolerant loader already dropped.
     return {
       validation: {
-        errors: counts.errors || 0,
-        warnings: counts.warnings || 0,
-        infos: counts.infos || 0,
-        topRules,
+        errors: summary.errors,
+        warnings: summary.warnings,
+        infos: summary.infos,
+        topRules: summary.byRule.slice(0, 5),
       },
       feed,
       ...(adjustments ? { importAdjustments: adjustments } : {}),
@@ -412,7 +395,12 @@ function GTFSApp() {
     setTimeout(() => setUploadSuccess(false), 3000);
     setFeedEpoch((e) => e + 1);
     setValidationReport(validationReport);
-    setValidationBaseline(validationReport?.counts || null);
+    // Baseline for the repair-progress banner — same weighted tally as every
+    // other screen (see utils/validationSummary.js), not the engine's raw
+    // counts, otherwise "X of Y fixed" drifts from what the page shows.
+    setValidationBaseline(
+      validationReport?.errors ? summarizeReport(validationReport) : null,
+    );
     // Structural rejections (corrupt rows, REQUIRED_FIELDS_MISSING) have no
     // backend session — the full-screen report with "re-upload" is all we
     // can offer. Everything else, INCLUDING a feed with canonical errors,
@@ -486,7 +474,7 @@ function GTFSApp() {
       // the baseline report to the user so there's no surprise at export time.
       if (result.validationReport) {
         setValidationReport(result.validationReport);
-        setValidationBaseline(result.validationReport.counts || null);
+        setValidationBaseline(summarizeReport(result.validationReport));
       }
       await fetchAgencies();
       // SQL-first: pull row counts for the new session so SQL Console chips
@@ -1733,6 +1721,7 @@ function GTFSApp() {
                                             stopsAndTimes.has_normal_times
                                           }
                                           stopFilter={stopFilter}
+                                          datasetKey={`${selectedRoute}|${selectedDirection}|${selectedDate}`}
                                           wheelchairAccessibleTrips={
                                             stopsAndTimes.wheelchair_accessible_trips
                                           }

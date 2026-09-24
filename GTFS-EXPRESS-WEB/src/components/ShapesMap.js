@@ -231,7 +231,7 @@ const ShapesMap = ({ height = "360px", agencyId = null }) => {
         center={[0, 0]}
         zoom={2}
         style={{ height: "100%", width: "100%" }}
-        attributionControl={false}
+        attributionControl
         preferCanvas={true}
       >
         <TileLayer
@@ -241,7 +241,7 @@ const ShapesMap = ({ height = "360px", agencyId = null }) => {
               ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
               : "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
           }
-          attribution='&copy; <a href="https://carto.com/attributions">CARTO</a>'
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
         />
         <FitBounds shapes={shapes} stops={stops} />
         <ZoomTracker onZoom={setZoom} />

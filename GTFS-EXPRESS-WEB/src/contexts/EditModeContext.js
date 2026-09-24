@@ -6,7 +6,8 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { Snackbar, Alert, Slide } from "@mui/material";
+import { Snackbar, Alert, Slide, Button, IconButton } from "@mui/material";
+import CloseIcon from "@mui/icons-material/Close";
 import API_BASE_URL from "../config";
 import { fetchWithSession, getSessionId } from "../utils/sessionManager";
 import {
@@ -61,6 +62,13 @@ export function EditModeProvider({ children }) {
   const [counts, setCounts] = useState(null);
   const [pendingEdits, setPendingEdits] = useState(0);
   const [undoneEdits, setUndoneEdits] = useState(0);
+  // Number of data changes (edits, undos, redos, jumps) since the last
+  // explicit save (.gtfsproj) or GTFS export. Drives the unsaved-changes
+  // guard. Deliberately separate from `pendingEdits`, which is the undo
+  // depth and never decreases on save — using it made the "Discard
+  // changes?" dialog and the browser leave-page prompt fire forever after
+  // a successful save.
+  const [unsavedChanges, setUnsavedChanges] = useState(0);
   const [dataVersion, setDataVersion] = useState(0);
   const [stopOverrides, setStopOverrides] = useState({});
   const [error, setError] = useState(null);
@@ -96,8 +104,10 @@ export function EditModeProvider({ children }) {
   const editsSinceSnapshotRef = useRef(0);
   const autoSaveInFlightRef = useRef(false);
 
-  const showToast = useCallback((message, severity = "success") => {
-    setToast({ message, severity, key: Date.now() });
+  // `action` (optional): { label, onClick } rendered as a button inside the
+  // snackbar — used for the inline "Undo" on every successful edit.
+  const showToast = useCallback((message, severity = "success", action = null) => {
+    setToast({ message, severity, action, key: Date.now() });
   }, []);
 
   const closeToast = useCallback(() => setToast(null), []);
@@ -171,8 +181,9 @@ export function EditModeProvider({ children }) {
       setEditing(true);
       setCounts(body.counts || null);
       setPendingEdits(0);
+      setUnsavedChanges(0);
       setBetaTester(body.betaTester || null);
-      showToast("Edit mode activated", "success");
+      showToast(t("edit.toast.activated"), "success");
       return { ok: true, betaTester: body.betaTester || null };
     } catch (err) {
       console.error("enterEditMode:", err);
@@ -186,7 +197,7 @@ export function EditModeProvider({ children }) {
     } finally {
       setEntering(false);
     }
-  }, [showToast]);
+  }, [showToast, t]);
 
   // Atomic reset of all edit state on the frontend.
   // Used after an upload (backend already cleaned up) or as a safety net
@@ -201,6 +212,7 @@ export function EditModeProvider({ children }) {
     setEditing(false);
     setPendingEdits(0);
     setUndoneEdits(0);
+    setUnsavedChanges(0);
     setStopOverrides({});
     setProjectMeta(null);
     setLastAutoSaveAt(null);
@@ -236,8 +248,8 @@ export function EditModeProvider({ children }) {
     // The next `refreshStatus` (or any backend request)
     // will resynchronise anyway.
     resetEditStateLocal();
-    if (backendOk) showToast("Edit mode closed", "info");
-  }, [showToast, resetEditStateLocal]);
+    if (backendOk) showToast(t("edit.toast.closed"), "info");
+  }, [showToast, resetEditStateLocal, t]);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -290,15 +302,28 @@ export function EditModeProvider({ children }) {
     [],
   );
 
-  const undoLast = useCallback(async () => {
+  // `expectedEntryId` (optional): only undo if that log entry is still the
+  // latest one. Inline "Undo" buttons (toasts, AI repair chip) pass the id
+  // of the change they belong to, so a click never reverts a *later* edit.
+  const undoLast = useCallback(async (expectedEntryId = null) => {
     if (undoing) return false; // prevent concurrent undo calls
     setUndoing(true);
     setError(null);
     try {
       const res = await fetchWithSession(`${API_BASE_URL}/edit/undo`, {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(
+          Number.isFinite(Number(expectedEntryId)) && expectedEntryId !== null
+            ? { expectedEntryId: Number(expectedEntryId) }
+            : {},
+        ),
       });
       const body = await res.json();
+      if (res.status === 409 && body.error === "UNDO_TARGET_NOT_LATEST") {
+        showToast(t("edit.toast.undoNotLatest"), "warning");
+        return false;
+      }
       if (!res.ok) {
         setError(body.error || "Nothing to undo.");
         showToast(body.error || "Nothing to undo.", "warning");
@@ -306,6 +331,7 @@ export function EditModeProvider({ children }) {
       }
       setPendingEdits((n) => Math.max(0, n - 1));
       setUndoneEdits((n) => n + 1);
+      setUnsavedChanges((n) => n + 1);
       setDataVersion((v) => v + 1);
       // Sprint 9 — undo invalidates the prior incremental-validation result
       // (it pertained to a now-reverted state). Wipe it so badges/sidebars
@@ -336,8 +362,8 @@ export function EditModeProvider({ children }) {
       }
       // For non-stop undos, we do NOT clear stop overrides.
       // They remain valid because they reflect edits on a different entity.
-      const label = undone?.description || "Change reverted";
-      showToast(`Undone: ${label}`, "info");
+      const label = undone?.description || t("edit.toast.changeReverted");
+      showToast(t("edit.toast.undone", { label }), "info");
       scheduleCountsRefresh();
       return true;
     } catch (err) {
@@ -348,7 +374,7 @@ export function EditModeProvider({ children }) {
     } finally {
       setUndoing(false);
     }
-  }, [showToast, undoing, scheduleCountsRefresh]);
+  }, [showToast, undoing, scheduleCountsRefresh, t]);
 
   const redoLast = useCallback(async () => {
     if (redoing) return false;
@@ -366,13 +392,14 @@ export function EditModeProvider({ children }) {
       }
       setPendingEdits((n) => n + 1);
       setUndoneEdits((n) => Math.max(0, n - 1));
+      setUnsavedChanges((n) => n + 1);
       setDataVersion((v) => v + 1);
       // Mirror the undo path: drop stale per-edit validation badge.
       setLastValidationResult(null);
       // After redo, overrides may diverge from DB — clear to let refetch drive
       setStopOverrides({});
-      const label = body.redone?.description || "Change re-applied";
-      showToast(`Redone: ${label}`, "info");
+      const label = body.redone?.description || t("edit.toast.changeReapplied");
+      showToast(t("edit.toast.redone", { label }), "info");
       scheduleCountsRefresh();
       return true;
     } catch (err) {
@@ -383,7 +410,7 @@ export function EditModeProvider({ children }) {
     } finally {
       setRedoing(false);
     }
-  }, [showToast, redoing, scheduleCountsRefresh]);
+  }, [showToast, redoing, scheduleCountsRefresh, t]);
 
   const jumpToHistory = useCallback(
     async (targetId) => {
@@ -402,11 +429,12 @@ export function EditModeProvider({ children }) {
         }
         setPendingEdits(body.pending_edits ?? 0);
         setUndoneEdits(body.undone_edits ?? 0);
+        setUnsavedChanges((n) => n + 1);
         setDataVersion((v) => v + 1);
         setStopOverrides({});
         // History jump invalidates any per-edit validation badge.
         setLastValidationResult(null);
-        showToast(`Jumped to edit #${targetId}`, "info");
+        showToast(t("edit.toast.jumped", { id: targetId }), "info");
         scheduleCountsRefresh();
         return true;
       } catch (err) {
@@ -416,7 +444,7 @@ export function EditModeProvider({ children }) {
         return false;
       }
     },
-    [showToast, scheduleCountsRefresh],
+    [showToast, scheduleCountsRefresh, t],
   );
 
   // NeTEx France export — same download dance as exportGTFS against the
@@ -443,7 +471,7 @@ export function EditModeProvider({ children }) {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      showToast("NeTEx exported successfully", "success");
+      showToast(t("edit.toast.netexExported"), "success");
       return true;
     } catch (err) {
       console.error("exportNetex:", err);
@@ -451,7 +479,7 @@ export function EditModeProvider({ children }) {
       showToast(err.message || "Network error", "error");
       return false;
     }
-  }, [showToast]);
+  }, [showToast, t]);
 
   const exportGTFS = useCallback(async () => {
     setError(null);
@@ -473,7 +501,10 @@ export function EditModeProvider({ children }) {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      showToast("GTFS exported successfully", "success");
+      // The exported ZIP is a durable copy of the work: nothing is unsaved
+      // any more from the user's point of view.
+      setUnsavedChanges(0);
+      showToast(t("edit.toast.exported"), "success");
       return true;
     } catch (err) {
       console.error("exportGTFS:", err);
@@ -481,13 +512,14 @@ export function EditModeProvider({ children }) {
       showToast(err.message || "Network error", "error");
       return false;
     }
-  }, [showToast]);
+  }, [showToast, t]);
 
   const recordEdit = useCallback(
     (message, validationBlock = null, opts = {}) => {
       setPendingEdits((n) => n + 1);
       // Any new mutation wipes the redo stack server-side → mirror locally
       setUndoneEdits(0);
+      setUnsavedChanges((n) => n + 1);
       setDataVersion((v) => v + 1);
       // Bump auto-save counter (useAutoSaveProject effect polls this ref).
       editsSinceSnapshotRef.current += 1;
@@ -520,20 +552,25 @@ export function EditModeProvider({ children }) {
           ? validationBlock.items.length
           : 0;
 
+      // Every successful mutation offers an inline Undo — the cheapest way
+      // to recover from a mis-click without hunting for the header button.
+      const undoAction = opts.noUndoAction
+        ? null
+        : { label: t("app.undo"), onClick: () => undoLast() };
       if (findingCount > 0) {
         const suffix = t("validation.inline.foundIssues", {
           count: findingCount,
         });
         const composed = message ? `${message} — ${suffix}` : suffix;
-        showToast(composed, "warning");
+        showToast(composed, "warning", undoAction);
       } else if (message) {
-        showToast(message, "success");
+        showToast(message, "success", undoAction);
       }
       // Keep the per-table row counts in sync with the mutation that was
       // just recorded (debounced — see scheduleCountsRefresh).
       scheduleCountsRefresh();
     },
-    [showToast, t, scheduleCountsRefresh],
+    [showToast, t, scheduleCountsRefresh, undoLast],
   );
 
   // Public clearer (used by undo/redo/jump and dialog-close handlers that
@@ -567,8 +604,9 @@ export function EditModeProvider({ children }) {
         return false;
       }
       editsSinceSnapshotRef.current = 0;
+      setUnsavedChanges(0);
       setLastAutoSaveAt(Date.now());
-      showToast(`Project saved: ${result.filename}`, "success");
+      showToast(t("project.savedToast", { filename: result.filename }), "success");
       // Refresh metadata (updated_at changed on the DB side)
       refreshProjectMeta();
       return true;
@@ -579,7 +617,7 @@ export function EditModeProvider({ children }) {
     } finally {
       setSavingProject(false);
     }
-  }, [savingProject, showToast, refreshProjectMeta]);
+  }, [savingProject, showToast, refreshProjectMeta, t]);
 
   /**
    * Opens a .gtfsproj file. Reads `localStorage.gtfs_beta_code` to
@@ -632,12 +670,13 @@ export function EditModeProvider({ children }) {
         setCounts(result.counts || null);
         setPendingEdits(result.pending_edits || 0);
         setUndoneEdits(0);
+        setUnsavedChanges(0);
         setStopOverrides({});
         setProjectMeta(result.meta || null);
         setBetaTester(result.betaTester || null);
         setDataVersion((v) => v + 1);
         editsSinceSnapshotRef.current = 0;
-        showToast("Project opened", "success");
+        showToast(t("project.openedToast"), "success");
         return { ok: true, betaTester: result.betaTester || null };
       } catch (err) {
         console.error("openProject:", err);
@@ -648,7 +687,7 @@ export function EditModeProvider({ children }) {
         setOpeningProject(false);
       }
     },
-    [openingProject, showToast],
+    [openingProject, showToast, t],
   );
 
   // Auto-save: capture a snapshot when (a) the page becomes hidden (tab
@@ -737,6 +776,10 @@ export function EditModeProvider({ children }) {
         document.activeElement?.isContentEditable;
       if (isEditable) return;
       if (!editing) return;
+      // The shape editor owns Ctrl+Z / Ctrl+Shift+Z while a shape is open
+      // (local vertex history). Without this guard a single keypress would
+      // undo a vertex AND the last saved edit on the server.
+      if (window.__gtfsShapeEditorActive) return;
       const isZ = e.key === "z" || e.key === "Z";
       const isY = e.key === "y" || e.key === "Y";
       if ((e.ctrlKey || e.metaKey) && isZ && !e.shiftKey) {
@@ -768,6 +811,7 @@ export function EditModeProvider({ children }) {
         counts,
         pendingEdits,
         undoneEdits,
+        unsavedChanges,
         dataVersion,
         stopOverrides,
         undoing,
@@ -808,7 +852,7 @@ export function EditModeProvider({ children }) {
       <Snackbar
         key={toast?.key}
         open={Boolean(toast)}
-        autoHideDuration={3500}
+        autoHideDuration={toast?.action ? 6000 : 3500}
         onClose={closeToast}
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
         TransitionComponent={SlideUp}
@@ -818,10 +862,36 @@ export function EditModeProvider({ children }) {
             onClose={closeToast}
             severity={toast.severity}
             variant="filled"
+            action={
+              toast.action ? (
+                <>
+                  <Button
+                    color="inherit"
+                    size="small"
+                    onClick={() => {
+                      closeToast();
+                      toast.action.onClick();
+                    }}
+                    sx={{ fontWeight: 700, textTransform: "none" }}
+                  >
+                    {toast.action.label}
+                  </Button>
+                  <IconButton
+                    size="small"
+                    color="inherit"
+                    aria-label={t("app.cancel")}
+                    onClick={closeToast}
+                  >
+                    <CloseIcon fontSize="inherit" />
+                  </IconButton>
+                </>
+              ) : undefined
+            }
             sx={{
               minWidth: 280,
               boxShadow: "0 8px 24px rgba(0,0,0,0.18)",
               fontWeight: 600,
+              alignItems: "center",
             }}
           >
             {toast.message}

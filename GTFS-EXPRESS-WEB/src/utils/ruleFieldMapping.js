@@ -88,9 +88,20 @@ export const RULE_FIELD_MAPPING = {
   // occurrence row itself (RuleOccurrenceTable merges occurrence.field).
   missing_required_field: { entityType: null, fields: [] },
 
-  // foreign_key_violation for trips → route_id is wrong
-  foreign_key_violation: { entityType: "trip", fields: ["route_id"] },
+  // foreign_key_violation fires on any table (trips.route_id, trips.service_id,
+  // stop_times.stop_id, …): the occurrence's own entityType + field decide.
+  foreign_key_violation: { entityType: null, fields: [] },
 };
+
+/**
+ * Generic fallback for rules without an explicit mapping: as long as the
+ * normaliser identified the entity (entityType + entityId) and, ideally, the
+ * offending field, the Fix button can open the right dialog. The backend
+ * derives entityType/entityId from the MobilityData engine's own fields
+ * (stopId, tripId, routeId, csvRowNumber…), so this covers most row-level
+ * findings instead of the 20-odd codes listed above.
+ */
+const GENERIC_FIX = Object.freeze({ entityType: null, fields: [] });
 
 /**
  * Returns the fix metadata for a given rule code, or null when no fix is
@@ -102,5 +113,11 @@ export const RULE_FIELD_MAPPING = {
  * @param {string} ruleCode
  * @returns {{ entityType: string|null, fields: string[] } | null}
  */
-export const getFixMetaForRule = (ruleCode) =>
-  RULE_FIELD_MAPPING[ruleCode] || null;
+export const getFixMetaForRule = (ruleCode, occurrence = null) => {
+  const explicit = RULE_FIELD_MAPPING[ruleCode];
+  if (explicit) return explicit;
+  if (occurrence && occurrence.entityType && occurrence.entityId) {
+    return GENERIC_FIX;
+  }
+  return null;
+};

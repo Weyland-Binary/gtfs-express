@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useMemo } from "react";
+import CircularProgress from "@mui/material/CircularProgress";
 import {
   Box,
   Paper,
@@ -31,6 +32,8 @@ import { useEditMode } from "../contexts/EditModeContext";
 import { useLanguage } from "../contexts/LanguageContext";
 import API_BASE_URL from "../config";
 import { getRuleTitle } from "./validation/ruleCatalog";
+import { summarizeReport, topRules } from "../utils/validationSummary";
+import HelpOutlineIcon from "@mui/icons-material/HelpOutline";
 
 /* ────────── animations ────────── */
 const fadeUp = keyframes`
@@ -446,6 +449,132 @@ const ConformanceInfoCard = ({
   );
 };
 
+/* ────────── "not validated yet" card ────────── */
+// Shown when there is no report for the loaded feed (project opened from a
+// .gtfsproj, snapshot restored, page reloaded). Runs the canonical validator
+// on demand and broadcasts the fresh report to the whole app.
+const NotValidatedCard = ({
+  animationDelay,
+  isDark,
+  surface,
+  textPrimary,
+  textSecondary,
+}) => {
+  const theme = useTheme();
+  const brand = theme.palette.brand;
+  const { t } = useLanguage();
+  const { showToast } = useEditMode();
+  const [running, setRunning] = useState(false);
+  const accent = theme.palette.warning.main;
+
+  const validateNow = async () => {
+    setRunning(true);
+    try {
+      const res = await fetchWithSession(`${API_BASE_URL}/edit/validate`, {
+        method: "POST",
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showToast(body.error || t("home.validateFailed"), "error");
+        return;
+      }
+      window.dispatchEvent(
+        new CustomEvent("gtfs:validation-refreshed", {
+          detail: { report: body },
+        }),
+      );
+    } catch (err) {
+      showToast(err.message || t("home.validateFailed"), "error");
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return (
+    <Paper
+      elevation={0}
+      data-testid="dashboard-not-validated"
+      sx={{
+        gridColumn: { xs: "1", md: "span 2" },
+        borderRadius: "14px",
+        border: `1px solid ${alpha(accent, isDark ? 0.3 : 0.2)}`,
+        borderLeft: `3px solid ${accent}`,
+        backgroundColor: surface,
+        p: 2,
+        display: "flex",
+        flexDirection: { xs: "column", sm: "row" },
+        alignItems: { xs: "stretch", sm: "center" },
+        gap: 2,
+        animation: `${fadeUp} 0.45s ease-out ${animationDelay}s both`,
+      }}
+    >
+      <Box sx={{ display: "flex", alignItems: "flex-start", gap: 2, flex: 1 }}>
+        <Box
+          sx={{
+            width: 44,
+            height: 44,
+            borderRadius: "12px",
+            backgroundColor: alpha(accent, isDark ? 0.24 : 0.14),
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0,
+          }}
+        >
+          <HelpOutlineIcon sx={{ fontSize: 24, color: accent }} />
+        </Box>
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Typography
+            sx={{
+              color: textPrimary,
+              fontSize: "1rem",
+              fontWeight: 700,
+              letterSpacing: "-0.01em",
+              lineHeight: 1.3,
+              mb: 0.5,
+            }}
+          >
+            {t("home.notValidatedTitle")}
+          </Typography>
+          <Typography
+            sx={{ color: textSecondary, fontSize: "0.82rem", lineHeight: 1.5 }}
+          >
+            {t("home.notValidatedBody")}
+          </Typography>
+        </Box>
+      </Box>
+      <Button
+        variant="contained"
+        onClick={validateNow}
+        disabled={running}
+        disableElevation
+        startIcon={
+          running ? (
+            <CircularProgress size={14} color="inherit" />
+          ) : (
+            <VerifiedIcon sx={{ fontSize: 16 }} />
+          )
+        }
+        sx={{
+          backgroundColor: brand.success,
+          color: "#ffffff",
+          fontWeight: 700,
+          fontSize: "0.8rem",
+          borderRadius: "10px",
+          textTransform: "none",
+          py: 0.9,
+          px: 2,
+          whiteSpace: "nowrap",
+          boxShadow: "none",
+          "&:hover": { backgroundColor: alpha(brand.success, 0.88) },
+        }}
+      >
+        {running ? t("home.validating") : t("home.validateNow")}
+      </Button>
+    </Paper>
+  );
+};
+
 /* ────────── main component ────────── */
 
 function HomeDashboard({
@@ -489,39 +618,22 @@ function HomeDashboard({
     };
   }, [dataVersion]);
 
-  const { errorCount, warningCount, topErrors, topWarnings } = useMemo(() => {
-    if (!validationReport?.errors) {
-      return { errorCount: 0, warningCount: 0, topErrors: [], topWarnings: [] };
-    }
-    let eCount = 0;
-    let wCount = 0;
-    const errorsMap = {};
-    const warningsMap = {};
-    Object.entries(validationReport.errors).forEach(([ruleCode, findings]) => {
-      if (!Array.isArray(findings)) return;
-      findings.forEach((f) => {
-        const sev = f.severity || "error";
-        if (sev === "warning") {
-          wCount++;
-          warningsMap[ruleCode] = (warningsMap[ruleCode] || 0) + 1;
-        } else if (sev === "error") {
-          eCount++;
-          errorsMap[ruleCode] = (errorsMap[ruleCode] || 0) + 1;
-        }
-      });
-    });
-    const top = (map) =>
-      Object.entries(map)
-        .map(([ruleCode, count]) => ({ ruleCode, count }))
-        .sort((a, b) => b.count - a.count)
-        .slice(0, 4);
-    return {
-      errorCount: eCount,
-      warningCount: wCount,
-      topErrors: top(errorsMap),
-      topWarnings: top(warningsMap),
-    };
-  }, [validationReport]);
+  // Shared, weighted tally (see utils/validationSummary.js). The report is
+  // keyed by file name, each finding carries its own ruleCode — the previous
+  // local tally treated the file name as the rule, so the "top rules" chips
+  // showed "stops.txt".
+  const { errorCount, warningCount, topErrors, topWarnings, isValidated } =
+    useMemo(() => {
+      const summary = summarizeReport(validationReport);
+      const asChip = (r) => ({ ruleCode: r.code, count: r.count });
+      return {
+        isValidated: summary.validated,
+        errorCount: summary.errors,
+        warningCount: summary.warnings,
+        topErrors: topRules(summary, "error", 4).map(asChip),
+        topWarnings: topRules(summary, "warning", 4).map(asChip),
+      };
+    }, [validationReport]);
 
   const calendarCoverage = useMemo(() => {
     if (!stats?.calendarPeriod) return null;
@@ -563,7 +675,10 @@ function HomeDashboard({
     return stats.agencyNames[0];
   }, [stats]);
 
-  const isFullyConformant = errorCount === 0 && warningCount === 0;
+  // "Conformant" is only claimed on the strength of an actual report. After a
+  // project open / snapshot restore / reload the report is null: say so
+  // instead of showing a green tick for a feed nobody validated.
+  const isFullyConformant = isValidated && errorCount === 0 && warningCount === 0;
 
   const bg = isDark ? "#0a1929" : "#f8fafc";
   const surface = isDark ? "#132f4c" : "#ffffff";
@@ -665,7 +780,15 @@ function HomeDashboard({
               mb: 2,
             }}
           >
-            {isFullyConformant ? (
+            {!isValidated ? (
+              <NotValidatedCard
+                animationDelay={0.04}
+                isDark={isDark}
+                surface={surface}
+                textPrimary={textPrimary}
+                textSecondary={textSecondary}
+              />
+            ) : isFullyConformant ? (
               <ConformanceInfoCard
                 onNavigateToSchedule={onNavigateToSchedule}
                 animationDelay={0.04}

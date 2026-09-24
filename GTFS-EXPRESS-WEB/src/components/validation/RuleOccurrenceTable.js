@@ -103,7 +103,7 @@ function RuleOccurrenceTable({ occurrences, ruleCode }) {
   // entityType=null (generic rule); fall back to the row's own entityType.
   const resolveFixMeta = useCallback(
     (row) => {
-      const mapping = getFixMetaForRule(row.ruleCode || ruleCode);
+      const mapping = getFixMetaForRule(row.ruleCode || ruleCode, row);
       if (!mapping) return null;
       if (!row.entityId) return null;
       const effectiveEntityType = mapping.entityType || row.entityType || null;

@@ -1,4 +1,10 @@
-const OSRM_BASE = "https://router.project-osrm.org/route/v1/driving";
+// Road-routing backend used by the shape editor (snap to road, auto-generate).
+// Overridable at build time so operators can point to a self-hosted OSRM with
+// a bus/transit profile instead of the public demo server. The host must also
+// be allowed in the production CSP `connect-src` (security-headers.conf).
+export const OSRM_BASE =
+  (import.meta.env && import.meta.env.VITE_OSRM_URL) ||
+  "https://router.project-osrm.org/route/v1/driving";
 
 export async function fetchRoadRoute(from, to, options = {}) {
   const { signal } = options;

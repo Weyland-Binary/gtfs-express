@@ -206,6 +206,13 @@ function ExportPreflightDialog({ open, onClose, onConfirmExport, onReviewErrors 
       setReport(body);
       setValidatedAt(Date.now());
       setElapsed(0);
+      // Share the fresh report with the rest of the app (header badge, home
+      // dashboard, validation page, AI context) — same channel RepairFlow
+      // uses — instead of keeping it private to this dialog while the other
+      // screens keep showing the upload-time counts.
+      window.dispatchEvent(
+        new CustomEvent("gtfs:validation-refreshed", { detail: { report: body } }),
+      );
     } catch (err) {
       console.error("ExportPreflightDialog: validation fetch failed", err);
       setValidationError(err.message || "Network error");

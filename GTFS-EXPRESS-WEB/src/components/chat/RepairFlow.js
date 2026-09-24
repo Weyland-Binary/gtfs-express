@@ -242,7 +242,12 @@ function RepairFlow({
         setPhase("previewed");
         return;
       }
-      setApplied({ affected: body.affected ?? 0 });
+      setApplied({
+        affected: body.affected ?? 0,
+        // Log entry of THIS repair — the Undo chip targets it explicitly so
+        // it can never revert an unrelated later edit.
+        undoEntryId: body.undoEntryId ?? null,
+      });
       if (onApplied) onApplied(true);
       // Rule #17: every client-side mutation must call recordEdit() so the
       // pending-edits counter / dataVersion / auto-save stay in sync.
@@ -293,7 +298,10 @@ function RepairFlow({
     if (busyRef.current) return;
     busyRef.current = true;
     try {
-      await undoLast();
+      const ok = await undoLast(applied?.undoEntryId ?? null);
+      // `false` = refused (409 no longer latest / nothing to undo): keep the
+      // chip so the user can go through the history panel instead.
+      if (ok === false) return;
       setUndone(true);
       if (onApplied) onApplied(false);
       if (onOutcome) {
@@ -302,7 +310,7 @@ function RepairFlow({
     } finally {
       busyRef.current = false;
     }
-  }, [undoLast, onOutcome, onApplied]);
+  }, [undoLast, onOutcome, onApplied, applied]);
 
   // ── Step states derived from the phase ────────────────────────────────────
   const previewState =

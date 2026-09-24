@@ -558,6 +558,15 @@ function SqlConsole() {
       const trimmed = (sqlText || "").trim();
       if (!trimmed) return;
 
+      // Template guard: presets and "Fix in SQL Console" seed queries with
+      // placeholders such as '<value>' / 'XXXXXX' / OFFSET_SECS that the user
+      // must replace. A mutation still carrying one would otherwise run
+      // silently on ≤50 rows (the preview gate auto-bypasses small batches).
+      if (editing && detectMutation(trimmed) && /<[a-z_ ]+>|\bXXXXXX\b|\bOFFSET_SECS\b|\bAGENCY_ID\b/i.test(trimmed)) {
+        setError(t("sqlConsole.placeholderGuard"));
+        return;
+      }
+
       // Preview-and-confirm gate. Only triggers when the user is in edit
       // mode AND the query is a mutation AND we haven't already confirmed.
       if (!skipPreview && editing && detectMutation(trimmed)) {

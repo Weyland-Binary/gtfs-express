@@ -42,9 +42,9 @@ import { useEditMode } from "../../contexts/EditModeContext";
 import { useLanguage } from "../../contexts/LanguageContext";
 import API_BASE_URL from "../../config";
 import LinkShapeToTripsDialog from "./LinkShapeToTripsDialog";
+import { OSRM_BASE } from "../../utils/osrmRouting";
 
 // ── OSRM routing ────────────────────────────────────────────────────────────
-const OSRM_BASE = "https://router.project-osrm.org/route/v1/driving";
 
 // Re-throws AbortError so callers can distinguish user-cancellation from
 // network/OSRM failures (the latter fall back to straight-line).
@@ -1164,11 +1164,17 @@ function ShapeEditorOverlay({ editShapeRequest = null }) {
   useEffect(() => {
     const isDirty = Boolean(activeShapeId && dirty);
     window.__gtfsShapeEditorDirty = isDirty;
+    // While a shape is being edited, Ctrl+Z / Ctrl+Shift+Z belong to the
+    // local vertex history. The global EditModeContext handler reads this
+    // flag and stays out of the way (otherwise one keypress would undo a
+    // vertex locally AND the last saved edit on the server).
+    window.__gtfsShapeEditorActive = Boolean(activeShapeId);
     window.dispatchEvent(
       new CustomEvent("shapeEditorDirtyChanged", { detail: { dirty: isDirty } }),
     );
     return () => {
       window.__gtfsShapeEditorDirty = false;
+      window.__gtfsShapeEditorActive = false;
     };
   }, [activeShapeId, dirty]);
 
@@ -1185,9 +1191,21 @@ function ShapeEditorOverlay({ editShapeRequest = null }) {
           handleCancel();
         }
       }
+      // Leave text fields alone: Ctrl+Z inside an input must edit the text,
+      // not the shape.
+      const tag = document.activeElement?.tagName;
+      if (
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        tag === "SELECT" ||
+        document.activeElement?.isContentEditable
+      ) {
+        return;
+      }
       // Ctrl+Z = local undo
-      if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !e.shiftKey) {
         e.preventDefault();
+        e.stopPropagation();
         handleUndo();
       }
       // Ctrl+Shift+Z (or Ctrl+Y) = local redo

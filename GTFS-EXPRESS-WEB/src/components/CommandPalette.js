@@ -22,6 +22,7 @@ import { fetchWithSession } from "../utils/sessionManager";
 import { useLanguage } from "../contexts/LanguageContext";
 import { useEditMode } from "../contexts/EditModeContext";
 import { useDetailPanel } from "../contexts/DetailPanelContext";
+import { useDestructiveGuard } from "../contexts/DestructiveGuardContext";
 import {
   useKeyboardShortcut,
   formatChord,
@@ -171,8 +172,8 @@ function CommandPalette() {
     undoLast,
     redoLast,
     exitEditMode,
-    enterEditMode,
   } = useEditMode();
+  const { guard } = useDestructiveGuard();
   const { openPanel, showSqlConsole } = useDetailPanel();
 
   const [open, setOpen] = useState(false);
@@ -239,7 +240,9 @@ function CommandPalette() {
         label: t("palette.action.enterEdit"),
         hint: t("palette.action.enterEditHint"),
         category: "edit",
-        run: () => enterEditMode(),
+        // Routed through EditModeToggle so the beta-gate dialog opens when
+        // the server asks for a code, instead of failing silently here.
+        run: () => window.dispatchEvent(new CustomEvent("gtfs:enter-edit-mode")),
       });
     } else {
       cmds.push(
@@ -278,7 +281,9 @@ function CommandPalette() {
           label: t("palette.action.exitEdit"),
           hint: t("palette.action.exitEditHint"),
           category: "edit",
-          run: () => exitEditMode(),
+          // Same unsaved-changes guard as the header button (Cancel /
+          // Discard / Save & continue) — never discard silently.
+          run: () => guard(() => exitEditMode(), { reason: "exitEditMode" }),
         },
         {
           id: "edit.history",
@@ -362,8 +367,8 @@ function CommandPalette() {
   }, [
     editing,
     pendingEdits,
-    enterEditMode,
     exitEditMode,
+    guard,
     undoLast,
     redoLast,
     openPanel,

@@ -143,12 +143,14 @@ function QuickFixDialog({ open, onClose, ruleCode }) {
       if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
       setResult(body);
       setStep("result");
-      // Quickfix can mutate many entities at once. Pass the validation block
-      // (the API returns one — incremental validation runs scoped to the rule
-      // code's affected files) so the inline UX surfaces any *new* findings
-      // introduced by the bulk fix. No toast suffix override since this dialog
-      // owns its own success message via the result step.
-      recordEdit(null, body.validation, { entity: "quickfix", entityId: ruleCode });
+      // Quickfix can mutate many entities at once. The apply endpoint returns
+      // {applied, skipped} only (no per-edit validation block), so this call
+      // just bumps dataVersion / pending counters. No toast: this dialog owns
+      // its own success message via the result step.
+      recordEdit(null, body.validation || null, {
+        entity: "quickfix",
+        entityId: ruleCode,
+      });
     } catch (err) {
       setError(err.message);
     } finally {

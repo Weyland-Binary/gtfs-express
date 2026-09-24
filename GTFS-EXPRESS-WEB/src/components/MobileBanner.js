@@ -15,11 +15,36 @@ const shimmer = keyframes`
   100% { background-position: 200% center; }
 `;
 
+const DISMISS_KEY = "gtfs_mobile_banner_dismissed";
+
+// Remembered for the browser session: the banner used to come back on
+// every reload, covering the app again after the user had already said
+// "continue anyway".
+const readDismissed = () => {
+  try {
+    return sessionStorage.getItem(DISMISS_KEY) === "1";
+  } catch {
+    return false;
+  }
+};
+
 function MobileBanner() {
-  const [dismissed, setDismissed] = useState(false);
+  const [dismissed, setDismissedState] = useState(readDismissed);
   const [isMobile, setIsMobile] = useState(false);
   const [visible, setVisible] = useState(false);
   const theme = useTheme();
+  const reducedMotion =
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const setDismissed = (value) => {
+    setDismissedState(value);
+    try {
+      if (value) sessionStorage.setItem(DISMISS_KEY, "1");
+    } catch {
+      /* private mode — in-memory state still applies */
+    }
+  };
   // All banner colours (gradients, borders, text tones) live in
   // theme.palette.banner — light/dark variants are resolved by the theme.
   const banner = theme.palette.banner;
@@ -42,8 +67,11 @@ function MobileBanner() {
   if (!isMobile || dismissed) return null;
 
   return (
-    <Fade in={visible} timeout={600}>
+    <Fade in={visible} timeout={reducedMotion ? 0 : 600}>
       <Box
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="mobile-banner-title"
         sx={{
           position: "fixed",
           inset: 0,
@@ -84,7 +112,9 @@ function MobileBanner() {
             background: banner.iconBg,
             border: `1px solid ${banner.iconBorder}`,
             mb: 3.5,
-            animation: `${float} 3s ease-in-out infinite`,
+            animation: reducedMotion
+              ? "none"
+              : `${float} 3s ease-in-out infinite`,
           }}
         >
           <DesktopWindowsIcon
@@ -98,6 +128,7 @@ function MobileBanner() {
 
         {/* Title */}
         <Typography
+          id="mobile-banner-title"
           variant="h5"
           fontWeight={700}
           textAlign="center"
@@ -128,6 +159,7 @@ function MobileBanner() {
         {/* CTA — continue anyway */}
         <Button
           onClick={() => setDismissed(true)}
+          autoFocus
           variant="contained"
           disableElevation
           startIcon={<TouchAppIcon sx={{ fontSize: 18 }} />}
@@ -166,7 +198,9 @@ function MobileBanner() {
             // (#1976d2 / #90caf9) — exactly primary.main in each theme.
             background: `linear-gradient(90deg, transparent 0%, ${theme.palette.primary.main} 50%, transparent 100%)`,
             backgroundSize: "200% 100%",
-            animation: `${shimmer} 2.5s ease-in-out infinite`,
+            animation: reducedMotion
+              ? "none"
+              : `${shimmer} 2.5s ease-in-out infinite`,
             opacity: 0.5,
           }}
         />

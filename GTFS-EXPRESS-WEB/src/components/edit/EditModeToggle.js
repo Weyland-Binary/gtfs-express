@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
 import {
-  Button,
   IconButton,
   Tooltip,
   Badge,
@@ -10,12 +9,7 @@ import {
   ListItemText,
   CircularProgress,
   Box,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
   Typography,
-  Alert,
   Fade,
 } from "@mui/material";
 import { useDestructiveGuard } from "../../contexts/DestructiveGuardContext";
@@ -31,6 +25,7 @@ import ArrowDropDownIcon from "@mui/icons-material/ArrowDropDown";
 import { useEditMode } from "../../contexts/EditModeContext";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { useDetailPanel } from "../../contexts/DetailPanelContext";
+import { useKeyboardShortcut } from "../../contexts/ShortcutsContext";
 import ExportPreflightDialog from "./ExportPreflightDialog";
 import BetaGateDialog from "./BetaGateDialog";
 
@@ -67,7 +62,6 @@ function EditModeToggle() {
     entering,
     pendingEdits,
     undoneEdits,
-    error,
     enterEditMode,
     exitEditMode,
     undoLast,
@@ -91,7 +85,6 @@ function EditModeToggle() {
   const { openPanel, entity: currentPanel } = useDetailPanel();
   const { guard } = useDestructiveGuard();
 
-  const [confirmEnter, setConfirmEnter] = useState(false);
   const [undoing, setUndoing] = useState(false);
   const [redoing, setRedoing] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -111,10 +104,48 @@ function EditModeToggle() {
     return () => window.removeEventListener("gtfs:open-export-preflight", handler);
   }, [editing]);
 
+  // Keyboard shortcuts advertised in tooltips / the palette. Registered
+  // through the shared registry so they show up in the Shift+? help dialog.
+  useKeyboardShortcut({
+    id: "edit.export",
+    keys: ["mod+e"],
+    description: t("edit.exportTooltip"),
+    category: "edit",
+    when: () => editing,
+    handler: (e) => {
+      e.preventDefault();
+      setPreflightOpen(true);
+    },
+  });
+  useKeyboardShortcut({
+    id: "edit.history",
+    keys: ["mod+h"],
+    description: t("editHistory.openTooltip"),
+    category: "navigation",
+    when: () => editing,
+    handler: (e) => {
+      e.preventDefault();
+      openPanel("edit_history", "history");
+    },
+  });
+
+  // Entering edit mode is a single click: every change is undoable and the
+  // .gtfsproj / auto-save keep the work safe, so a confirmation dialog only
+  // added friction. The beta-gate dialog still opens when the server asks
+  // for a code. CommandPalette dispatches this event so it follows the same
+  // path (and gets the beta dialog) instead of calling the context directly.
   const handleEnterClick = () => {
     clearError();
-    setConfirmEnter(true);
+    doEnter();
   };
+  useEffect(() => {
+    if (editing) return;
+    const handler = () => handleEnterClick();
+    window.addEventListener("gtfs:enter-edit-mode", handler);
+    return () => window.removeEventListener("gtfs:enter-edit-mode", handler);
+    // handleEnterClick reads only stable context callbacks.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing]);
 
   /**
    * Attempts to enter edit mode. The `enterEditMode` context automatically
@@ -124,7 +155,7 @@ function EditModeToggle() {
    * the BetaGateDialog with the pre-filled error.
    */
   const doEnter = async () => {
-    setConfirmEnter(false);
+    if (entering) return;
     const result = await enterEditMode();
     if (isBetaGateError(result)) {
       setBetaGateInitialError({
@@ -237,70 +268,6 @@ function EditModeToggle() {
             </IconButton>
           </span>
         </Tooltip>
-
-        <Dialog
-          open={confirmEnter}
-          onClose={() => setConfirmEnter(false)}
-          maxWidth="xs"
-          fullWidth
-          PaperProps={{
-            sx: {
-              borderTop: `3px solid ${theme.palette.warning.main}`,
-              borderRadius: 2,
-            },
-          }}
-        >
-          <DialogTitle sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
-            <Box
-              sx={{
-                width: 36,
-                height: 36,
-                borderRadius: 1.5,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                background: alpha(theme.palette.warning.main, 0.14),
-                color: theme.palette.warning.main,
-              }}
-            >
-              <EditIcon sx={{ fontSize: 20 }} />
-            </Box>
-            <Typography variant="h6" fontWeight={700}>
-              {t("edit.confirmEnterTitle")}
-            </Typography>
-          </DialogTitle>
-          <DialogContent>
-            <Typography variant="body2" color="text.secondary">
-              {t("edit.confirmEnterBody")}
-            </Typography>
-            {error && (
-              <Alert severity="error" sx={{ mt: 2 }}>
-                {error}
-              </Alert>
-            )}
-          </DialogContent>
-          <DialogActions sx={{ px: 3, py: 1.5 }}>
-            <Button
-              onClick={() => setConfirmEnter(false)}
-              color="inherit"
-              disabled={entering}
-            >
-              {t("app.cancel")}
-            </Button>
-            <Button
-              onClick={doEnter}
-              variant="contained"
-              color="warning"
-              disabled={entering}
-              data-testid="edit-mode-enter-confirm"
-              startIcon={
-                entering ? <CircularProgress size={14} color="inherit" /> : null
-              }
-            >
-              {entering ? t("edit.migrating") : t("edit.enterAction")}
-            </Button>
-          </DialogActions>
-        </Dialog>
 
         <BetaGateDialog
           open={betaGateOpen}

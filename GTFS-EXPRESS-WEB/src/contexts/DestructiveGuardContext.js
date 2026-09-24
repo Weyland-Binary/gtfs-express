@@ -52,18 +52,21 @@ import { useLanguage } from "./LanguageContext";
 const DestructiveGuardContext = createContext(null);
 
 export function DestructiveGuardProvider({ children }) {
-  const { editing, pendingEdits, saveProject, savingProject } = useEditMode();
+  const { editing, unsavedChanges, saveProject, savingProject } = useEditMode();
   const { t } = useLanguage();
   const theme = useTheme();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [reason, setReason] = useState(null);
   const pendingActionRef = useRef(null);
 
+  // Dirty = changes since the last explicit save/export (not the undo
+  // depth, which never goes back to zero after a save) or an unsaved shape
+  // draft in the map editor.
   const isDirty = useCallback(() => {
     if (!editing) return false;
     const shapeDirty = Boolean(window.__gtfsShapeEditorDirty);
-    return pendingEdits > 0 || shapeDirty;
-  }, [editing, pendingEdits]);
+    return unsavedChanges > 0 || shapeDirty;
+  }, [editing, unsavedChanges]);
 
   const guard = useCallback(
     async (action, options = {}) => {
@@ -212,7 +215,7 @@ export function DestructiveGuardProvider({ children }) {
                   textAlign: "center",
                 }}
               >
-                {pendingEdits}
+                {unsavedChanges}
               </Typography>
               <Box sx={{ flex: 1, minWidth: 0 }}>
                 <Typography
@@ -220,7 +223,7 @@ export function DestructiveGuardProvider({ children }) {
                   fontWeight={600}
                   sx={{ color: "text.primary", lineHeight: 1.3 }}
                 >
-                  {t("guard.heroLabel", { count: pendingEdits })}
+                  {t("guard.heroLabel", { count: unsavedChanges })}
                 </Typography>
                 <Typography
                   variant="caption"
