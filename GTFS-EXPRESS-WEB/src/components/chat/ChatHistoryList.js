@@ -8,89 +8,83 @@
  *    them alone — yanking the viewport while they're reading is awful UX.
  *  - On send (new user turn), we always force scroll-to-bottom.
  *
- * Empty state:
- *  - Friendly intro card with 4 example prompts the user can click to send
- *    immediately. Better than a blank canvas.
+ * Empty state: what the assistant can do, as three groups of one-click
+ * prompts (explore, diagnose, repair) plus the live repair suggestions
+ * built from the validation findings.
  */
 
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Box, Fade, alpha, useTheme } from "@mui/material";
 import AutoFixHighIcon from "@mui/icons-material/AutoFixHigh";
 import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
+import TravelExploreIcon from "@mui/icons-material/TravelExplore";
+import HealthAndSafetyOutlinedIcon from "@mui/icons-material/HealthAndSafetyOutlined";
+import BuildCircleOutlinedIcon from "@mui/icons-material/BuildCircleOutlined";
 import GTFSAIIcon from "./GTFSAIIcon";
 import { useLanguage } from "../../contexts/LanguageContext";
 import MessageBubble from "./MessageBubble";
 
 const STICK_THRESHOLD_PX = 80;
 
-const ExampleChip = ({ label, onClick }) => {
+const PromptChip = ({ label, onClick, accent = false }) => {
   const theme = useTheme();
+  const color = accent ? theme.palette.warning.main : theme.palette.primary.main;
   return (
     <Box
       component="button"
       type="button"
       onClick={onClick}
+      data-testid={accent ? "chat-suggestion" : "chat-example"}
       sx={{
         all: "unset",
         cursor: "pointer",
         textAlign: "left",
-        px: 1.5,
-        py: 1,
+        px: 1.25,
+        py: 0.8,
         borderRadius: 1.5,
-        background: alpha(theme.palette.primary.main, 0.04),
-        border: `1px solid ${alpha(theme.palette.primary.main, 0.18)}`,
+        display: "flex",
+        alignItems: "center",
+        gap: 0.75,
+        background: alpha(color, accent ? 0.07 : 0.04),
+        border: `1px solid ${alpha(color, accent ? 0.35 : 0.18)}`,
         color: "text.primary",
         fontSize: "0.78rem",
+        fontWeight: accent ? 600 : 500,
         lineHeight: 1.4,
         transition: "all 140ms",
         "&:hover": {
-          background: alpha(theme.palette.primary.main, 0.10),
-          borderColor: alpha(theme.palette.primary.main, 0.40),
+          background: alpha(color, accent ? 0.14 : 0.1),
+          borderColor: alpha(color, accent ? 1 : 0.4),
           transform: "translateY(-1px)",
         },
       }}
     >
+      {accent && <AutoFixHighIcon sx={{ fontSize: 14, color: theme.palette.warning.dark, flexShrink: 0 }} />}
       {label}
     </Box>
   );
 };
 
-const SuggestionChip = ({ label, onClick }) => {
+const Group = ({ Icon, title, children }) => {
   const theme = useTheme();
   return (
-    <Box
-      component="button"
-      type="button"
-      onClick={onClick}
-      data-testid="chat-suggestion"
-      sx={{
-        all: "unset",
-        cursor: "pointer",
-        textAlign: "left",
-        px: 1.5,
-        py: 1,
-        borderRadius: 1.5,
-        display: "flex",
-        alignItems: "center",
-        gap: 0.75,
-        background: alpha(theme.palette.warning.main, 0.07),
-        border: `1px solid ${alpha(theme.palette.warning.main, 0.35)}`,
-        color: "text.primary",
-        fontSize: "0.78rem",
-        fontWeight: 600,
-        lineHeight: 1.4,
-        transition: "all 140ms",
-        "&:hover": {
-          background: alpha(theme.palette.warning.main, 0.14),
-          borderColor: theme.palette.warning.main,
-          transform: "translateY(-1px)",
-        },
-      }}
-    >
-      <AutoFixHighIcon
-        sx={{ fontSize: 14, color: theme.palette.warning.dark, flexShrink: 0 }}
-      />
-      {label}
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 0.6 }}>
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          gap: 0.6,
+          fontSize: "0.68rem",
+          fontWeight: 700,
+          letterSpacing: 0.5,
+          textTransform: "uppercase",
+          color: "text.secondary",
+        }}
+      >
+        <Icon sx={{ fontSize: 14, color: theme.palette.ai.main }} />
+        {title}
+      </Box>
+      {children}
     </Box>
   );
 };
@@ -100,27 +94,37 @@ const EmptyState = ({ onPickExample, suggestions = [], onPickSuggestion }) => {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const aiColor = theme.palette.ai.main;
-  const examples = [
-    t("chat.empty.example1"),
-    t("chat.empty.example2"),
-    t("chat.empty.example3"),
-    t("chat.empty.example4"),
+  const groups = [
+    {
+      Icon: TravelExploreIcon,
+      title: t("chat.empty.groupExplore"),
+      items: [t("chat.empty.exploreA"), t("chat.empty.exploreB")],
+    },
+    {
+      Icon: HealthAndSafetyOutlinedIcon,
+      title: t("chat.empty.groupDiagnose"),
+      items: [t("chat.empty.diagnoseA"), t("chat.empty.diagnoseB")],
+    },
+    {
+      Icon: BuildCircleOutlinedIcon,
+      title: t("chat.empty.groupRepair"),
+      items: [t("chat.empty.repairA"), t("chat.empty.repairB")],
+    },
   ];
   return (
     <Box
       sx={{
         flex: 1,
+        overflowY: "auto",
         display: "flex",
         flexDirection: "column",
-        justifyContent: "center",
         alignItems: "center",
         px: 3,
-        py: 4,
+        py: 3,
         textAlign: "center",
       }}
     >
-      {/* Icon with glow ring */}
-      <Box sx={{ position: "relative", mb: 2 }}>
+      <Box sx={{ position: "relative", mb: 1.5, mt: 1 }}>
         <Box
           sx={{
             position: "absolute",
@@ -132,8 +136,8 @@ const EmptyState = ({ onPickExample, suggestions = [], onPickSuggestion }) => {
         />
         <Box
           sx={{
-            width: 64,
-            height: 64,
+            width: 56,
+            height: 56,
             borderRadius: "50%",
             display: "flex",
             alignItems: "center",
@@ -144,50 +148,29 @@ const EmptyState = ({ onPickExample, suggestions = [], onPickSuggestion }) => {
             position: "relative",
           }}
         >
-          <GTFSAIIcon sx={{ fontSize: 32 }} />
+          <GTFSAIIcon sx={{ fontSize: 28 }} />
         </Box>
       </Box>
-      <Box
-        sx={{
-          fontSize: "1.05rem",
-          fontWeight: 700,
-          color: "text.primary",
-          mb: 0.5,
-        }}
-      >
+      <Box sx={{ fontSize: "1.02rem", fontWeight: 700, color: "text.primary", mb: 0.4 }}>
         {t("chat.empty.title")}
       </Box>
-      <Box
-        sx={{
-          fontSize: "0.82rem",
-          color: "text.secondary",
-          maxWidth: 320,
-          lineHeight: 1.5,
-          mb: 2.5,
-        }}
-      >
+      <Box sx={{ fontSize: "0.8rem", color: "text.secondary", maxWidth: 380, lineHeight: 1.5, mb: 2 }}>
         {t("chat.empty.subtitle")}
       </Box>
-      <Box
-        sx={{
-          width: "100%",
-          maxWidth: 360,
-          display: "grid",
-          gridTemplateColumns: "1fr",
-          gap: 0.75,
-        }}
-      >
-        {/* Contextual repair suggestions first — built from the live
-            validation findings, one click sends the question. */}
-        {suggestions.map((s, i) => (
-          <SuggestionChip
-            key={`s${i}`}
-            label={s.label}
-            onClick={() => onPickSuggestion && onPickSuggestion(s.message)}
-          />
-        ))}
-        {examples.map((ex, i) => (
-          <ExampleChip key={i} label={ex} onClick={() => onPickExample(ex)} />
+      <Box sx={{ width: "100%", maxWidth: 420, display: "flex", flexDirection: "column", gap: 1.5, textAlign: "left" }}>
+        {suggestions.length > 0 && (
+          <Group Icon={AutoFixHighIcon} title={t("chat.empty.groupNow")}>
+            {suggestions.map((s, i) => (
+              <PromptChip key={`s${i}`} accent label={s.label} onClick={() => onPickSuggestion && onPickSuggestion(s.message)} />
+            ))}
+          </Group>
+        )}
+        {groups.map((g) => (
+          <Group key={g.title} Icon={g.Icon} title={g.title}>
+            {g.items.map((ex, i) => (
+              <PromptChip key={i} label={ex} onClick={() => onPickExample(ex)} />
+            ))}
+          </Group>
         ))}
       </Box>
     </Box>
@@ -199,7 +182,9 @@ export default function ChatHistoryList({
   onPickExample,
   onRegenerateTurn,
   currentErrorCount = null,
-  onRepairOutcome = null,
+  onProposalOutcome = null,
+  onPickFollowup = null,
+  onReplayAction = null,
   suggestions = [],
   onPickSuggestion = null,
 }) {
@@ -208,11 +193,8 @@ export default function ChatHistoryList({
   const scrollRef = useRef(null);
   const stickRef = useRef(true);
   const lastUserTurnIdRef = useRef(null);
-  // Mirrors !stickRef for rendering the jump-to-latest pill — refs don't
-  // trigger renders, so the scroll handler keeps this state in sync.
   const [awayFromBottom, setAwayFromBottom] = useState(false);
 
-  // Track whether the user is near the bottom (or scrolled up to read).
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -233,14 +215,9 @@ export default function ChatHistoryList({
     el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   };
 
-  // Auto-scroll on new content if the user was near the bottom.
-  // useLayoutEffect (not useEffect) so the scroll happens before paint —
-  // avoids a one-frame visual jump.
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    // Sending a message always snaps to the bottom — the user's own turn is
-    // the one thing they must always see — regardless of scroll position.
     const lastUser = [...turns].reverse().find((tt) => tt.role === "user");
     if (lastUser && lastUser.id !== lastUserTurnIdRef.current) {
       lastUserTurnIdRef.current = lastUser.id;
@@ -253,17 +230,9 @@ export default function ChatHistoryList({
   }, [turns]);
 
   if (turns.length === 0) {
-    return (
-      <EmptyState
-        onPickExample={onPickExample}
-        suggestions={suggestions}
-        onPickSuggestion={onPickSuggestion}
-      />
-    );
+    return <EmptyState onPickExample={onPickExample} suggestions={suggestions} onPickSuggestion={onPickSuggestion} />;
   }
 
-  // The last assistant turn is the only one that gets a regenerate action
-  // (regenerating an earlier turn would invalidate downstream turns).
   let lastAssistantIdx = -1;
   for (let i = turns.length - 1; i >= 0; i--) {
     if (turns[i].role === "assistant") {
@@ -275,21 +244,14 @@ export default function ChatHistoryList({
   const lastAssistantIsDone =
     lastAssistantTurn &&
     (lastAssistantTurn.status === "complete" ||
-      lastAssistantTurn.status === "blocked" ||
-      lastAssistantTurn.status === "error");
+      lastAssistantTurn.status === "error" ||
+      lastAssistantTurn.status === "aborted");
 
   return (
-    <Box
-      sx={{
-        flex: 1,
-        position: "relative",
-        minHeight: 0,
-        display: "flex",
-        flexDirection: "column",
-      }}
-    >
+    <Box sx={{ flex: 1, position: "relative", minHeight: 0, display: "flex", flexDirection: "column" }}>
       <Box
         ref={scrollRef}
+        data-testid="chat-history"
         sx={{
           flex: 1,
           overflowY: "auto",
@@ -299,14 +261,13 @@ export default function ChatHistoryList({
           display: "flex",
           flexDirection: "column",
           gap: 1.25,
-          // Custom scrollbar to match the chat panel theme.
           "&::-webkit-scrollbar": { width: 8 },
           "&::-webkit-scrollbar-thumb": {
-            background: (t) => alpha(t.palette.text.primary, 0.18),
+            background: (th) => alpha(th.palette.text.primary, 0.18),
             borderRadius: 4,
           },
           "&::-webkit-scrollbar-thumb:hover": {
-            background: (t) => alpha(t.palette.text.primary, 0.28),
+            background: (th) => alpha(th.palette.text.primary, 0.28),
           },
         }}
       >
@@ -315,7 +276,10 @@ export default function ChatHistoryList({
             key={turn.id}
             turn={turn}
             currentErrorCount={currentErrorCount}
-            onRepairOutcome={onRepairOutcome}
+            onProposalOutcome={onProposalOutcome}
+            onPickFollowup={onPickFollowup}
+            onReplayAction={onReplayAction}
+            showFollowups={idx === lastAssistantIdx}
             onRegenerate={
               idx === lastAssistantIdx && lastAssistantIsDone && onRegenerateTurn
                 ? () => onRegenerateTurn(turn.id)
@@ -325,8 +289,6 @@ export default function ChatHistoryList({
         ))}
       </Box>
 
-      {/* Jump-to-latest pill — appears the moment the user scrolls up so a
-          streaming answer never disappears "below the fold" unnoticed. */}
       <Fade in={awayFromBottom}>
         <Box
           component="button"

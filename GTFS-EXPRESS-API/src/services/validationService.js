@@ -13,6 +13,7 @@
 "use strict";
 
 const path = require("path");
+const { saveReport: saveValidationReport } = require("./validationReportStore");
 const fs = require("fs");
 const fsp = require("fs").promises;
 const os = require("os");
@@ -686,6 +687,7 @@ const revalidate = async (req, res) => {
       console.warn(`[revalidate] telemetry: ${telemetryErr.message}`);
     }
 
+    saveValidationReport(sessionId, report);
     return res.json(report);
   } catch (err) {
     if (err.statusCode === 404) {
@@ -739,6 +741,7 @@ const revalidateCanonical = async (req, res) => {
     });
     const { toCanonicalReport } = require("../utils/canonicalReport");
     const canonical = toCanonicalReport(report);
+    saveValidationReport(sessionId, report);
     return res.json(canonical);
   } catch (err) {
     if (err.statusCode === 404) {

@@ -1718,6 +1718,49 @@ const runSqlQuery = async (req, res) => {
  *   exceedsConfirmedCap: boolean,
  * }
  */
+// Dry-run impact of already-classified statements (see parseStatements).
+// Shared by the HTTP preview endpoint and the chat assistant's propose_fix
+// tool so both surfaces show the same numbers.
+const previewStatements = (db, statements) => {
+  const out = [];
+  let totalAffected = 0;
+
+  // Wrap the whole preview in a SAVEPOINT so any INSERT preview rolls back
+  // even if a later statement throws. UPDATE/DELETE previews are pure
+  // reads (COUNT) but the SAVEPOINT keeps semantics uniform.
+  db.exec("SAVEPOINT __sql_preview_outer__");
+  try {
+    for (const s of statements) {
+      if (s.kind === "read") {
+        out.push({
+          verb: s.verb,
+          table: null,
+          affected: 0,
+          cascade: [],
+          sampleRows: [],
+        });
+        continue;
+      }
+      const preview = previewMutation(db, s.sql, s);
+      out.push(preview);
+      totalAffected += preview.affected;
+    }
+  } finally {
+    db.exec("ROLLBACK TO __sql_preview_outer__");
+    db.exec("RELEASE __sql_preview_outer__");
+  }
+
+  return {
+    statements: out,
+    totalAffected,
+    defaultCap: MAX_AFFECTED_ROWS_PER_STATEMENT,
+    confirmedCap: MAX_AFFECTED_ROWS_CONFIRMED,
+    previewThreshold: PREVIEW_REQUIRED_THRESHOLD,
+    exceedsDefaultCap: totalAffected > MAX_AFFECTED_ROWS_PER_STATEMENT,
+    exceedsConfirmedCap: totalAffected > MAX_AFFECTED_ROWS_CONFIRMED,
+  };
+};
+
 const previewSql = async (req, res) => {
   try {
     const ctx = requireEditMode(req, res);
@@ -1729,43 +1772,9 @@ const previewSql = async (req, res) => {
       return res.status(parsed.status).json({ error: parsed.error });
     }
 
-    const statements = [];
-    let totalAffected = 0;
-
-    // Wrap the whole preview in a SAVEPOINT so any INSERT preview rolls back
-    // even if a later statement throws. UPDATE/DELETE previews are pure
-    // reads (COUNT) but the SAVEPOINT keeps semantics uniform.
-    db.exec("SAVEPOINT __sql_preview_outer__");
-    try {
-      for (const s of parsed.statements) {
-        if (s.kind === "read") {
-          statements.push({
-            verb: s.verb,
-            table: null,
-            affected: 0,
-            cascade: [],
-            sampleRows: [],
-          });
-          continue;
-        }
-        const preview = previewMutation(db, s.sql, s);
-        statements.push(preview);
-        totalAffected += preview.affected;
-      }
-    } finally {
-      db.exec("ROLLBACK TO __sql_preview_outer__");
-      db.exec("RELEASE __sql_preview_outer__");
-    }
-
-    res.json({
-      statements,
-      totalAffected,
-      defaultCap: MAX_AFFECTED_ROWS_PER_STATEMENT,
-      confirmedCap: MAX_AFFECTED_ROWS_CONFIRMED,
-      previewThreshold: PREVIEW_REQUIRED_THRESHOLD,
-      exceedsDefaultCap: totalAffected > MAX_AFFECTED_ROWS_PER_STATEMENT,
-      exceedsConfirmedCap: totalAffected > MAX_AFFECTED_ROWS_CONFIRMED,
-    });
+    const result = previewStatements(db, parsed.statements);
+    const { totalAffected } = result;
+    res.json(result);
 
     // Funnel telemetry: a preview initiated from the guided chat repair flow
     // is the "fix previewed" step of the conversion funnel.
@@ -1843,6 +1852,7 @@ module.exports = {
   runSqlQueryReadOnly,
   exportSqlCsv,
   previewSql,
+  previewStatements,
   getSqlSchema,
   // Programmatic (AI hook)
   executeSqlInSession,

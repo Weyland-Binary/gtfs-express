@@ -1,19 +1,19 @@
 /**
- * ChatDrawer — Side panel hosting the multi-turn chat assistant.
+ * ChatDrawer — Side panel hosting the chat assistant.
  *
  * Responsibilities:
  *  - Owns conversation state (via useChatHistory)
- *  - Drives the SSE stream (via streamChat)
- *  - Translates SSE events into turn updates
+ *  - Drives the SSE stream (via streamChat) and maps its events onto the
+ *    turn: tool activity, results, proposals, charts, the markdown answer,
+ *    follow-up questions
+ *  - Performs the assistant's navigation requests in the app (detail
+ *    panel, schedule & map, validation report, SQL console, shape studio)
  *  - Surfaces 403 → BetaGateDialog with auto-retry on success
  *  - Manages AbortController for the active stream
- *  - Confirms "new conversation" before wiping history
  *
- * Layout:
- *  - Right-anchored Drawer, 480 px on md+, full width on xs.
- *  - Sticky header with title, model chip, "Read-only" chip, action buttons.
- *  - Scrollable history list (auto-stick-to-bottom).
- *  - Sticky input bar.
+ * Layout: a docked, non-modal panel on the left (next to the assistant
+ * button) so the app stays usable while chatting — the assistant opens
+ * routes and stops on the right side. Full-screen bottom sheet on phones.
  */
 
 import React, {
@@ -45,9 +45,13 @@ import CloseIcon from "@mui/icons-material/Close";
 import RestartAltIcon from "@mui/icons-material/RestartAlt";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import CheckIcon from "@mui/icons-material/Check";
-import LockOutlinedIcon from "@mui/icons-material/LockOutlined";
+import VerifiedUserOutlinedIcon from "@mui/icons-material/VerifiedUserOutlined";
 import CloudOffIcon from "@mui/icons-material/CloudOff";
+import OpenInFullIcon from "@mui/icons-material/OpenInFull";
+import CloseFullscreenIcon from "@mui/icons-material/CloseFullscreen";
+import GTFSAIIcon from "./GTFSAIIcon";
 import { useLanguage } from "../../contexts/LanguageContext";
+import { useDetailPanel } from "../../contexts/DetailPanelContext";
 import useChatHistory, { turnsToWireMessages, newChatId } from "./useChatHistory";
 import { streamChat } from "../../utils/chatStream";
 import {
@@ -65,13 +69,19 @@ import BetaGateDialog, {
   BETA_CODE_STORAGE_KEY,
 } from "../edit/BetaGateDialog";
 
-const DRAWER_WIDTH = "50vw";
+const WIDTH_NORMAL = "min(520px, 100vw)";
+const WIDTH_WIDE = "min(50vw, 100vw)";
+const WIDTH_KEY = "gtfs.chat.wide";
 
 const isBetaError = (code) =>
   code === "INVALID_BETA_CODE" ||
   code === "BETA_REVOKED" ||
   code === "BETA_CODE_REQUIRED" ||
   code === "BETA_CONFIG_ERROR";
+
+// Custom event the app shell listens to for view-level navigation requested
+// by the assistant (schedule & map of a route, shape studio, home).
+export const NAVIGATE_EVENT = "gtfs:navigate";
 
 export default function ChatDrawer({
   open,
@@ -87,6 +97,7 @@ export default function ChatDrawer({
   const { t } = useLanguage();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
+  const { openPanel, showSqlConsole } = useDetailPanel();
 
   const {
     conversationId,
@@ -101,28 +112,26 @@ export default function ChatDrawer({
   const [draft, setDraft] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
-  const [betaGate, setBetaGate] = useState(null); // { initialError, pendingTurnPair? }
-  // Anonymous free-trial state: allowance left (from the SSE meta event,
-  // null for coded users) and whether the paywall replaces the input bar.
+  const [betaGate, setBetaGate] = useState(null);
   const [freeRemaining, setFreeRemaining] = useState(null);
   const [upsell, setUpsell] = useState(false);
-  // Tabular attachment (conversation-persistent): server metadata of the
-  // imported `_chat_att_<n>` table, the File currently uploading, and a
-  // transient localized error surfaced in a snackbar.
   const [attachment, setAttachment] = useState(null);
   const [attachmentUploading, setAttachmentUploading] = useState(null);
   const [attachmentError, setAttachmentError] = useState(null);
+  const [wide, setWide] = useState(() => {
+    try {
+      return localStorage.getItem(WIDTH_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [navToast, setNavToast] = useState(null);
 
-  // The current pending pair we re-run after a successful beta-gate retry.
-  // Stored as a ref because the BetaGateDialog onSubmit closure must read
-  // the latest value without re-rendering.
   const pendingRetryRef = useRef(null);
   const abortRef = useRef(null);
   const feedEpochRef = useRef(feedEpoch);
 
-  // Reset conversation history when a new feed is loaded (upload, sample, project).
-  // feedEpochRef skips the initial mount — useChatHistory handles stale sessionStorage
-  // across page reloads via APP_LAUNCH_ID, so no first-mount reset is needed here.
+  // Reset conversation history when a new feed is loaded.
   useEffect(() => {
     if (feedEpoch === feedEpochRef.current) return;
     feedEpochRef.current = feedEpoch;
@@ -131,15 +140,11 @@ export default function ChatDrawer({
       abortRef.current = null;
       setStreaming(false);
     }
-    // Attachment tables died with the replaced session DB — clear the chip
-    // client-side only (no DELETE call: the table no longer exists).
     setAttachment(null);
     setAttachmentUploading(null);
     reset();
   }, [feedEpoch, reset]);
 
-  // Reset everything when the drawer is fully closed (avoids stale state
-  // bleeding into the next open).
   useEffect(() => {
     if (!open && abortRef.current) {
       abortRef.current.abort();
@@ -148,34 +153,77 @@ export default function ChatDrawer({
     }
   }, [open]);
 
+  const toggleWide = useCallback(() => {
+    setWide((w) => {
+      try {
+        localStorage.setItem(WIDTH_KEY, w ? "0" : "1");
+      } catch {
+        /* storage disabled */
+      }
+      return !w;
+    });
+  }, []);
+
+  // ── Navigation requested by the assistant ───────────────────────────
+  const performUiAction = useCallback(
+    (action) => {
+      if (!action || typeof action !== "object") return;
+      const dispatch = (detail) =>
+        window.dispatchEvent(new CustomEvent(NAVIGATE_EVENT, { detail }));
+      switch (action.target) {
+        case "route":
+          dispatch({ target: "schedule", routeId: action.id, agencyId: action.agencyId || null });
+          openPanel("route", action.id);
+          break;
+        case "stop":
+        case "trip":
+        case "shape":
+          openPanel(action.target, action.id);
+          break;
+        case "validation":
+          window.dispatchEvent(new CustomEvent("gtfs:review-errors"));
+          break;
+        case "sql_console":
+          window.dispatchEvent(new CustomEvent("gtfs:close-validation-report"));
+          showSqlConsole();
+          break;
+        case "schedule":
+        case "shape_studio":
+        case "home":
+          dispatch({
+            target: action.target,
+            routeId: action.routeId || null,
+            agencyId: action.agencyId || null,
+          });
+          break;
+        default:
+          return;
+      }
+      if (action.label) setNavToast(t("chat.activity.opened", { label: action.label }));
+    },
+    [openPanel, showSqlConsole, t],
+  );
+
   const sendTurn = useCallback(
     async ({ userMessage, regenerateOf = null, retryOf = null }) => {
       if (streaming) return;
 
-      // ── Resolve the user-message + history to send ───────────────────
       let userTurnId = null;
       let assistantTurnId = null;
 
       if (regenerateOf) {
-        // We're re-running an existing assistant turn — find the user
-        // turn immediately preceding it. Drop the assistant turn first.
-        const idx = turns.findIndex((t) => t.id === regenerateOf);
+        const idx = turns.findIndex((tt) => tt.id === regenerateOf);
         if (idx <= 0) return;
         const prevUser = turns[idx - 1];
         if (prevUser.role !== "user") return;
         userMessage = prevUser.content;
         userTurnId = prevUser.id;
-        // Wipe the existing assistant turn and create a fresh one.
         removeTurn(regenerateOf);
       } else if (retryOf) {
-        // We're retrying after a beta-code prompt. The user+assistant
-        // pair already exists — keep the user turn, recreate assistant.
         userMessage = retryOf.userMessage;
         userTurnId = retryOf.userTurnId;
         if (retryOf.assistantTurnId) removeTurn(retryOf.assistantTurnId);
       } else {
-        // Fresh send. Stamp the active attachment on the user turn so the
-        // bubble shows which file the question was asked against.
         const userTurn = appendUser(
           userMessage,
           attachment
@@ -196,10 +244,6 @@ export default function ChatDrawer({
 
       const turnId = newChatId();
       const wireMessages = turnsToWireMessages(
-        // Recompute fresh: we just appended; turns state from closure is
-        // stale. Reconstruct the wire messages from `turns` + the new user.
-        // For "new" sends, the user turn isn't in `turns` yet (state hasn't
-        // re-rendered) — include it manually.
         regenerateOf
           ? turns.filter((tt) => tt.id !== regenerateOf)
           : retryOf
@@ -212,15 +256,17 @@ export default function ChatDrawer({
       setStreaming(true);
       if (!regenerateOf && !retryOf) setDraft("");
 
+      const patchStep = (stepId, patch) =>
+        updateTurn(assistantTurnId, (prev) => ({
+          steps: (prev.steps || []).map((s) => (s.stepId === stepId ? { ...s, ...patch } : s)),
+        }));
+
       try {
         await streamChat({
           messages: wireMessages,
           userMessage,
           language,
           sessionContext,
-          // Conversation-persistent: the active chip is re-declared on every
-          // turn (the server rebuilds the [Attached file] block from its own
-          // metadata — history never accumulates it).
           attachments: attachment ? [{ table: attachment.table }] : [],
           conversationId,
           turnId,
@@ -229,74 +275,79 @@ export default function ChatDrawer({
             switch (event) {
               case "meta":
                 updateTurn(assistantTurnId, { model: data.model });
-                setFreeRemaining(
-                  typeof data.freeRemaining === "number"
-                    ? data.freeRemaining
-                    : null,
-                );
+                setFreeRemaining(typeof data.freeRemaining === "number" ? data.freeRemaining : null);
+                break;
+              case "tool_pending":
+                updateTurn(assistantTurnId, { pendingTool: data.name || null });
+                break;
+              case "step_start":
+                updateTurn(assistantTurnId, (prev) => ({
+                  pendingTool: null,
+                  steps: [
+                    ...(prev.steps || []),
+                    { stepId: data.stepId, kind: data.kind, sql: data.sql, purpose: data.purpose || "", status: "running" },
+                  ],
+                }));
+                break;
+              case "step_result":
+                patchStep(data.stepId, {
+                  status: data.error ? "error" : "done",
+                  error: data.error || null,
+                  rowCount: data.rowCount,
+                  columns: data.columns || [],
+                  rowsPreview: data.rowsPreview || [],
+                  truncated: Boolean(data.truncated),
+                  durationMs: data.durationMs,
+                });
+                break;
+              case "proposal":
+                updateTurn(assistantTurnId, (prev) => ({
+                  pendingTool: null,
+                  proposals: [
+                    ...(prev.proposals || []),
+                    {
+                      proposalId: data.proposalId,
+                      title: data.title,
+                      rationale: data.rationale || "",
+                      sql: data.sql,
+                      preview: data.preview || null,
+                    },
+                  ],
+                }));
+                break;
+              case "ui_action":
+                updateTurn(assistantTurnId, (prev) => ({
+                  pendingTool: null,
+                  uiActions: [...(prev.uiActions || []), data],
+                }));
+                performUiAction(data);
+                break;
+              case "chart":
+                updateTurn(assistantTurnId, (prev) => ({
+                  pendingTool: null,
+                  charts: [...(prev.charts || []), data],
+                }));
                 break;
               case "token":
-                if (data.phase === "preamble") {
-                  updateTurn(assistantTurnId, (prev) => ({
-                    preamble: (prev.preamble || "") + (data.text || ""),
-                  }));
-                } else if (data.phase === "summary") {
-                  updateTurn(assistantTurnId, (prev) => ({
-                    summary: (prev.summary || "") + (data.text || ""),
-                  }));
-                }
+                updateTurn(assistantTurnId, (prev) => ({
+                  pendingTool: null,
+                  content: (prev.content || "") + (data.text || ""),
+                }));
                 break;
-              case "sql_generated":
-                updateTurn(assistantTurnId, {
-                  sql: data.sql,
-                  preamble: data.preamble || "",
-                });
-                break;
-              case "sql_blocked":
-                updateTurn(assistantTurnId, {
-                  status: "blocked",
-                  preamble: data.preamble || "",
-                  sql: data.draftSql || "",
-                  blocked: {
-                    reason: data.reason,
-                    message: data.message,
-                    draftSql: data.draftSql,
-                  },
-                });
-                break;
-              case "sql_executing":
-                // No state change — the streaming cursor is enough UX.
-                break;
-              case "sql_result":
-                updateTurn(assistantTurnId, {
-                  result: {
-                    rowCount: data.rowCount,
-                    columns: data.columns || [],
-                    rowsPreview: data.rowsPreview || [],
-                    truncated: Boolean(data.truncated),
-                    durationMs: data.durationMs,
-                  },
-                });
-                break;
-              case "sql_error":
-                updateTurn(assistantTurnId, {
-                  status: "error",
-                  error: { message: data.message },
-                });
+              case "followups":
+                updateTurn(assistantTurnId, { followups: Array.isArray(data.items) ? data.items : [] });
                 break;
               case "error":
                 updateTurn(assistantTurnId, {
                   status: "error",
+                  pendingTool: null,
                   error: { message: data.message, code: data.code },
                 });
                 break;
               case "done":
                 updateTurn(assistantTurnId, (prev) => ({
-                  status:
-                    prev.status === "blocked" ||
-                    prev.status === "error"
-                      ? prev.status
-                      : "complete",
+                  pendingTool: null,
+                  status: prev.status === "error" ? prev.status : "complete",
                 }));
                 break;
               default:
@@ -307,48 +358,26 @@ export default function ChatDrawer({
       } catch (err) {
         if (err.code === "ABORTED") {
           updateTurn(assistantTurnId, (prev) => ({
+            pendingTool: null,
             status: prev.status === "complete" ? "complete" : "aborted",
-            error: prev.error || { message: t("chat.error.aborted") },
           }));
         } else if (err.code === "FREE_QUOTA_EXHAUSTED") {
-          // The free trial is over — this is the conversion moment. Drop the
-          // dangling assistant placeholder, keep the user's question visible
-          // and swap the input bar for the UpsellPanel. If the user unlocks
-          // with a code, the blocked question is retried automatically.
           removeTurn(assistantTurnId);
-          pendingRetryRef.current = {
-            userMessage,
-            userTurnId,
-            assistantTurnId: null,
-          };
+          pendingRetryRef.current = { userMessage, userTurnId, assistantTurnId: null };
           setFreeRemaining(0);
           setUpsell(true);
         } else if (isBetaError(err.code)) {
-          // Surface the beta dialog. On success, retry this same turn.
-          pendingRetryRef.current = {
-            userMessage,
-            userTurnId,
-            assistantTurnId,
-          };
+          pendingRetryRef.current = { userMessage, userTurnId, assistantTurnId };
           updateTurn(assistantTurnId, {
             status: "error",
-            error: {
-              message: err.message || t("chat.error.betaRequired"),
-              code: err.code,
-            },
+            error: { message: err.message || t("chat.error.betaRequired"), code: err.code },
           });
-          setBetaGate({
-            initialError: { code: err.code, message: err.message },
-          });
+          setBetaGate({ initialError: { code: err.code, message: err.message } });
         } else if (
           err.code === "RATE_LIMITED" ||
           err.code === "DAILY_LIMIT_REACHED" ||
           err.code === "BUDGET_EXHAUSTED"
         ) {
-          // Three-tier AI cost guard from services/aiCostLimiter — render
-          // a localised message per code so testers know whether to retry
-          // soon (hourly), tomorrow (daily), or wait for the operator
-          // budget reset (global).
           const messageByCode = {
             RATE_LIMITED: t("nl2sql.error.rateLimited"),
             DAILY_LIMIT_REACHED: t("nl2sql.error.dailyLimit"),
@@ -356,37 +385,23 @@ export default function ChatDrawer({
           };
           updateTurn(assistantTurnId, {
             status: "error",
-            error: {
-              message: messageByCode[err.code] || err.message,
-              code: err.code,
-            },
+            error: { message: messageByCode[err.code] || err.message, code: err.code },
           });
         } else if (err.code === "ATTACHMENT_NOT_FOUND") {
-          // Stale chip (feed re-uploaded, table dropped elsewhere) — clear
-          // it and tell the user to re-attach.
           setAttachment(null);
           updateTurn(assistantTurnId, {
             status: "error",
             error: { message: t("chat.attach.error.gone"), code: err.code },
           });
-        } else if (
-          err.code === "NL2SQL_CHAT_DISABLED" ||
-          err.code === "HTTP_503"
-        ) {
+        } else if (err.code === "NL2SQL_CHAT_DISABLED" || err.code === "HTTP_503") {
           updateTurn(assistantTurnId, {
             status: "error",
-            error: {
-              message: err.message || t("chat.error.disabled"),
-              code: err.code,
-            },
+            error: { message: err.message || t("chat.error.disabled"), code: err.code },
           });
         } else {
           updateTurn(assistantTurnId, {
             status: "error",
-            error: {
-              message: err.message || t("chat.error.generic"),
-              code: err.code,
-            },
+            error: { message: err.message || t("chat.error.generic"), code: err.code },
           });
         }
       } finally {
@@ -405,13 +420,13 @@ export default function ChatDrawer({
       language,
       sessionContext,
       attachment,
+      performUiAction,
       t,
     ],
   );
 
   // Auto-send a message handed off by another surface (e.g. "Ask AI" on a
-  // validation finding). Consumed exactly once per hand-off — the consume
-  // callback runs BEFORE the send so a re-render can't double-fire it.
+  // validation finding). Consumed exactly once per hand-off.
   useEffect(() => {
     if (!open || !prefillMessage || streaming) return;
     const msg = String(prefillMessage).trim().slice(0, 2000);
@@ -426,23 +441,16 @@ export default function ChatDrawer({
   }, [draft, streaming, sendTurn]);
 
   const handleStop = useCallback(() => {
-    if (abortRef.current) {
-      abortRef.current.abort();
-    }
+    if (abortRef.current) abortRef.current.abort();
   }, []);
 
-  // ── Attachment upload / removal ─────────────────────────────────────
   const attachErrorMessage = useCallback(
     (err) => {
       const byCode = {
-        ATTACHMENT_TOO_LARGE: t("chat.attach.error.tooLarge", {
-          max: MAX_ATTACHMENT_MB,
-        }),
+        ATTACHMENT_TOO_LARGE: t("chat.attach.error.tooLarge", { max: MAX_ATTACHMENT_MB }),
         UNSUPPORTED_FORMAT: t("chat.attach.error.format"),
         ATTACHMENT_EMPTY: t("chat.attach.error.empty"),
-        ATTACHMENT_TOO_MANY_COLUMNS: t("chat.attach.error.columns", {
-          max: MAX_ATTACHMENT_COLS,
-        }),
+        ATTACHMENT_TOO_MANY_COLUMNS: t("chat.attach.error.columns", { max: MAX_ATTACHMENT_COLS }),
         ATTACHMENT_LIMIT_REACHED: t("chat.attach.error.limit"),
         ATTACHMENT_NOT_FOUND: t("chat.attach.error.gone"),
       };
@@ -454,16 +462,13 @@ export default function ChatDrawer({
   const handleAttachFile = useCallback(
     async (file) => {
       if (attachmentUploading || attachment) return;
-      // Instant client-side pre-checks — the server remains the authority.
       const ext = (file.name.match(/\.[^.]+$/) || [""])[0].toLowerCase();
       if (!ACCEPTED_EXTENSIONS.split(",").includes(ext)) {
         setAttachmentError(t("chat.attach.error.format"));
         return;
       }
       if (file.size > MAX_ATTACHMENT_BYTES) {
-        setAttachmentError(
-          t("chat.attach.error.tooLarge", { max: MAX_ATTACHMENT_MB }),
-        );
+        setAttachmentError(t("chat.attach.error.tooLarge", { max: MAX_ATTACHMENT_MB }));
         return;
       }
       setAttachmentUploading(file);
@@ -482,25 +487,23 @@ export default function ChatDrawer({
   const handleRemoveAttachment = useCallback(() => {
     if (!attachment) return;
     const { table } = attachment;
-    // Optimistic: the chip disappears immediately; the DROP is fire-and-
-    // forget (the table dies with the session TTL anyway).
     setAttachment(null);
     deleteChatAttachment(table).catch(() => {});
   }, [attachment]);
 
   const handleRegenerate = useCallback(
-    (assistantTurnId) => {
-      sendTurn({ userMessage: "", regenerateOf: assistantTurnId });
-    },
+    (assistantTurnId) => sendTurn({ userMessage: "", regenerateOf: assistantTurnId }),
     [sendTurn],
   );
 
-  const handlePickExample = useCallback((example) => {
-    setDraft(example);
-  }, []);
+  const handlePickExample = useCallback(
+    (example) => {
+      if (!streaming) sendTurn({ userMessage: example });
+    },
+    [streaming, sendTurn],
+  );
 
-  // Copy the whole conversation as readable markdown (Q/A + SQL + result
-  // line) — for sharing findings or pasting into a ticket.
+  // Copy the whole conversation as markdown (Q/A + the queries run).
   const [conversationCopied, setConversationCopied] = useState(false);
   const handleCopyConversation = useCallback(() => {
     const parts = [];
@@ -508,14 +511,16 @@ export default function ChatDrawer({
       if (turn.role === "user") {
         parts.push(`**Q:** ${turn.content}`);
       } else {
-        const prose = [turn.preamble, turn.summary]
-          .filter(Boolean)
-          .join("\n\n");
-        if (prose) parts.push(`**A:** ${prose}`);
-        if (turn.sql) parts.push("```sql\n" + turn.sql + "\n```");
-        if (turn.result)
-          parts.push(`_Result: ${turn.result.rowCount} row(s)._`);
-        if (turn.resultSummary) parts.push(`_${turn.resultSummary}_`);
+        if (turn.content) parts.push(`**A:** ${turn.content}`);
+        for (const s of turn.steps || []) {
+          if (s.kind === "sql" && s.sql) {
+            parts.push("```sql\n" + s.sql + "\n```");
+            if (typeof s.rowCount === "number") parts.push(`_${s.rowCount} row(s)._`);
+          }
+        }
+        for (const p of turn.proposals || []) {
+          parts.push(`**Fix — ${p.title}**\n\`\`\`sql\n${p.sql}\n\`\`\`${p.outcome ? `\n_${p.outcome}_` : ""}`);
+        }
       }
     }
     try {
@@ -528,8 +533,7 @@ export default function ChatDrawer({
   }, [turns]);
 
   // Contextual quick-starts: the top validation findings become one-click
-  // "fix this" suggestions in the empty state — the shortest path from a
-  // broken feed to the guided repair flow.
+  // "fix this" suggestions in the empty state.
   const suggestions = useMemo(() => {
     const rules = sessionContext?.validation?.topRules || [];
     return rules.slice(0, 3).map((r) => ({
@@ -545,21 +549,21 @@ export default function ChatDrawer({
     [streaming, sendTurn],
   );
 
-  // Outcome of a guided repair flow (RepairFlow inside a blocked bubble).
-  // Persisting it as `resultSummary` makes flattenAssistantTurn feed the real
-  // outcome ("applied, errors 12 -> 0" / "undone") back to the model on the
-  // next turn — the assistant always knows what actually happened.
-  const handleRepairOutcome = useCallback(
-    (turnId, summary) => {
-      updateTurn(turnId, { resultSummary: summary });
+  // Outcome of a guided repair (applied / undone): stored on the proposal
+  // so the next turn's history tells the model what actually happened.
+  const handleProposalOutcome = useCallback(
+    (turnId, proposalId, summary) => {
+      updateTurn(turnId, (prev) => ({
+        proposals: (prev.proposals || []).map((p) =>
+          p.proposalId === proposalId ? { ...p, outcome: summary } : p,
+        ),
+      }));
     },
     [updateTurn],
   );
 
   const handleResetConfirmed = useCallback(() => {
     if (abortRef.current) abortRef.current.abort();
-    // A new conversation drops the attachment too — its table is freed
-    // server-side (fire-and-forget, same rationale as manual removal).
     if (attachment) {
       deleteChatAttachment(attachment.table).catch(() => {});
       setAttachment(null);
@@ -571,19 +575,14 @@ export default function ChatDrawer({
 
   const handleBetaGateSubmit = useCallback(
     async (code) => {
-      // No dedicated validation endpoint — we persist the code optimistically
-      // and re-trigger the pending chat turn. If the code is bad, streamChat
-      // 403s again and we re-open the dialog with the fresh error message
-      // (handled in the sendTurn catch block).
       try {
         localStorage.setItem(BETA_CODE_STORAGE_KEY, code);
       } catch {
-        /* ignore — streamChat will silently send no header */
+        /* ignore */
       }
       const pending = pendingRetryRef.current;
       pendingRetryRef.current = null;
       setBetaGate(null);
-      // Unlocking with a code also clears the free-trial paywall.
       setUpsell(false);
       setFreeRemaining(null);
       if (pending) sendTurn({ retryOf: pending });
@@ -592,12 +591,15 @@ export default function ChatDrawer({
     [sendTurn],
   );
 
+  const width = isMobile ? "100vw" : wide ? WIDTH_WIDE : WIDTH_NORMAL;
+
   // ── Render ──────────────────────────────────────────────────────────
   const drawerContent = (
     <Box
+      data-testid="chat-drawer"
       sx={{
         height: "100%",
-        width: isMobile ? "100vw" : DRAWER_WIDTH,
+        width,
         display: "flex",
         flexDirection: "column",
         background: theme.palette.background.default,
@@ -607,42 +609,52 @@ export default function ChatDrawer({
       <Box
         sx={{
           px: 1.5,
-          py: 1.25,
+          py: 1,
           display: "flex",
           alignItems: "center",
-          gap: 0.75,
-          borderBottom: `1px solid ${alpha(theme.palette.text.primary, 0.10)}`,
+          gap: 1,
+          borderBottom: `1px solid ${alpha(theme.palette.text.primary, 0.1)}`,
           background: alpha(theme.palette.background.paper, 0.95),
           backdropFilter: "blur(10px)",
         }}
       >
-
+        <Box
+          sx={{
+            width: 30,
+            height: 30,
+            borderRadius: "10px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0,
+            background: `linear-gradient(135deg, ${theme.palette.ai.gradientStart} 0%, ${theme.palette.ai.gradientEnd} 100%)`,
+            color: theme.palette.ai.contrastText,
+            boxShadow: `0 2px 8px ${alpha(theme.palette.ai.main, 0.35)}`,
+          }}
+        >
+          <GTFSAIIcon sx={{ fontSize: 17 }} />
+        </Box>
         <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Box
-            sx={{
-              fontSize: "0.92rem",
-              fontWeight: 700,
-              color: "text.primary",
-              lineHeight: 1.2,
-            }}
-          >
+          <Box sx={{ fontSize: "0.92rem", fontWeight: 700, color: "text.primary", lineHeight: 1.2 }}>
             {t("chat.title")}
           </Box>
-          <Box sx={{ display: "flex", gap: 0.5, mt: 0.3 }}>
-            <Chip
-              icon={<LockOutlinedIcon sx={{ fontSize: 11 }} />}
-              label={t("chat.readOnlyChip")}
-              size="small"
-              sx={{
-                height: 16,
-                fontSize: "0.58rem",
-                fontWeight: 700,
-                color: "info.dark",
-                bgcolor: alpha(theme.palette.info.main, 0.10),
-                "& .MuiChip-label": { px: 0.6 },
-                "& .MuiChip-icon": { ml: 0.4, color: "info.dark" },
-              }}
-            />
+          <Box sx={{ display: "flex", gap: 0.5, mt: 0.3, alignItems: "center", flexWrap: "wrap" }}>
+            <Tooltip title={t("chat.safeChipTooltip")} arrow>
+              <Chip
+                icon={<VerifiedUserOutlinedIcon sx={{ fontSize: 11 }} />}
+                label={t("chat.safeChip")}
+                size="small"
+                sx={{
+                  height: 16,
+                  fontSize: "0.58rem",
+                  fontWeight: 700,
+                  color: "success.dark",
+                  bgcolor: alpha(theme.palette.success.main, 0.1),
+                  "& .MuiChip-label": { px: 0.6 },
+                  "& .MuiChip-icon": { ml: 0.4, color: "success.dark" },
+                }}
+              />
+            </Tooltip>
             {features?.chat?.model && (
               <Chip
                 label={features.chat.model}
@@ -674,13 +686,14 @@ export default function ChatDrawer({
             )}
           </Box>
         </Box>
-        <Tooltip
-          title={
-            conversationCopied
-              ? t("chat.action.conversationCopied")
-              : t("chat.action.copyConversation")
-          }
-        >
+        {!isMobile && (
+          <Tooltip title={wide ? t("chat.action.narrow") : t("chat.action.widen")}>
+            <IconButton size="small" onClick={toggleWide} aria-label={wide ? t("chat.action.narrow") : t("chat.action.widen")} sx={{ width: 28, height: 28 }}>
+              {wide ? <CloseFullscreenIcon sx={{ fontSize: 15 }} /> : <OpenInFullIcon sx={{ fontSize: 15 }} />}
+            </IconButton>
+          </Tooltip>
+        )}
+        <Tooltip title={conversationCopied ? t("chat.action.conversationCopied") : t("chat.action.copyConversation")}>
           <span>
             <IconButton
               size="small"
@@ -689,11 +702,7 @@ export default function ChatDrawer({
               aria-label={t("chat.action.copyConversation")}
               sx={{ width: 28, height: 28 }}
             >
-              {conversationCopied ? (
-                <CheckIcon sx={{ fontSize: 15, color: "success.main" }} />
-              ) : (
-                <ContentCopyIcon sx={{ fontSize: 15 }} />
-              )}
+              {conversationCopied ? <CheckIcon sx={{ fontSize: 15, color: "success.main" }} /> : <ContentCopyIcon sx={{ fontSize: 15 }} />}
             </IconButton>
           </span>
         </Tooltip>
@@ -704,6 +713,7 @@ export default function ChatDrawer({
               onClick={() => setConfirmReset(true)}
               disabled={turns.length === 0 && !streaming}
               aria-label={t("chat.action.newConversation")}
+              data-testid="chat-new-conversation"
               sx={{ width: 28, height: 28 }}
             >
               <RestartAltIcon sx={{ fontSize: 16 }} />
@@ -711,12 +721,7 @@ export default function ChatDrawer({
           </span>
         </Tooltip>
         <Tooltip title={t("chat.action.close")}>
-          <IconButton
-            size="small"
-            onClick={onClose}
-            aria-label={t("chat.action.close")}
-            sx={{ width: 28, height: 28 }}
-          >
+          <IconButton size="small" onClick={onClose} aria-label={t("chat.action.close")} data-testid="chat-close" sx={{ width: 28, height: 28 }}>
             <CloseIcon sx={{ fontSize: 16 }} />
           </IconButton>
         </Tooltip>
@@ -752,19 +757,10 @@ export default function ChatDrawer({
           >
             <CloudOffIcon sx={{ fontSize: 28 }} />
           </Box>
-          <Box
-            sx={{
-              fontSize: "0.95rem",
-              fontWeight: 700,
-              color: "text.primary",
-              mb: 0.5,
-            }}
-          >
+          <Box sx={{ fontSize: "0.95rem", fontWeight: 700, color: "text.primary", mb: 0.5 }}>
             {t("chat.disabled.noFeedTitle")}
           </Box>
-          <Box sx={{ fontSize: "0.8rem", maxWidth: 280, lineHeight: 1.5 }}>
-            {t("chat.disabled.noFeedBody")}
-          </Box>
+          <Box sx={{ fontSize: "0.8rem", maxWidth: 280, lineHeight: 1.5 }}>{t("chat.disabled.noFeedBody")}</Box>
         </Box>
       ) : (
         <ChatHistoryList
@@ -772,18 +768,17 @@ export default function ChatDrawer({
           onPickExample={handlePickExample}
           onRegenerateTurn={handleRegenerate}
           currentErrorCount={sessionContext?.validation?.errors ?? null}
-          onRepairOutcome={handleRepairOutcome}
+          onProposalOutcome={handleProposalOutcome}
+          onPickFollowup={handlePickSuggestion}
+          onReplayAction={performUiAction}
           suggestions={suggestions}
           onPickSuggestion={handlePickSuggestion}
         />
       )}
 
-      {/* Input — replaced by the paywall once the free trial is used up */}
       {feedLoaded &&
         (upsell ? (
-          <UpsellPanel
-            onHaveCode={() => setBetaGate({ initialError: null })}
-          />
+          <UpsellPanel onHaveCode={() => setBetaGate({ initialError: null })} />
         ) : (
           <ChatInputBar
             value={draft}
@@ -796,6 +791,7 @@ export default function ChatDrawer({
             attachmentUploading={attachmentUploading}
             onAttachFile={handleAttachFile}
             onRemoveAttachment={handleRemoveAttachment}
+            onQuickAction={handlePickSuggestion}
           />
         ))}
       <Snackbar
@@ -804,13 +800,18 @@ export default function ChatDrawer({
         onClose={() => setAttachmentError(null)}
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
       >
-        <Alert
-          severity="error"
-          variant="filled"
-          onClose={() => setAttachmentError(null)}
-          sx={{ fontSize: "0.8rem" }}
-        >
+        <Alert severity="error" variant="filled" onClose={() => setAttachmentError(null)} sx={{ fontSize: "0.8rem" }}>
           {attachmentError}
+        </Alert>
+      </Snackbar>
+      <Snackbar
+        open={Boolean(navToast)}
+        autoHideDuration={2200}
+        onClose={() => setNavToast(null)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      >
+        <Alert severity="info" variant="filled" onClose={() => setNavToast(null)} sx={{ fontSize: "0.8rem" }}>
+          {navToast}
         </Alert>
       </Snackbar>
     </Box>
@@ -819,8 +820,6 @@ export default function ChatDrawer({
   return (
     <>
       {isMobile ? (
-        /* Bottom sheet with native swipe-to-dismiss + a grab handle —
-           the expected mobile affordance for a chat surface. */
         <SwipeableDrawer
           anchor="bottom"
           open={open}
@@ -854,36 +853,40 @@ export default function ChatDrawer({
           {drawerContent}
         </SwipeableDrawer>
       ) : (
+        /* Docked companion: no backdrop, no focus trap, no scroll lock —
+           the user keeps working in the app while the assistant answers
+           and opens things on the right. */
         <Drawer
-          anchor="right"
+          anchor="left"
           open={open}
           onClose={onClose}
+          hideBackdrop
+          ModalProps={{
+            keepMounted: false,
+            disableEnforceFocus: true,
+            disableAutoFocus: true,
+            disableRestoreFocus: true,
+            disableScrollLock: true,
+            disableEscapeKeyDown: true,
+          }}
           PaperProps={{
             sx: {
-              width: DRAWER_WIDTH,
+              width,
               height: "100%",
-              borderLeft: `1px solid ${alpha(theme.palette.text.primary, 0.10)}`,
-              boxShadow: `-8px 0 32px ${alpha("#000", theme.palette.mode === "dark" ? 0.45 : 0.15)}`,
+              borderRight: `1px solid ${alpha(theme.palette.text.primary, 0.1)}`,
+              boxShadow: `8px 0 32px ${alpha("#000", theme.palette.mode === "dark" ? 0.45 : 0.15)}`,
             },
           }}
-          ModalProps={{ keepMounted: false }}
+          sx={{ pointerEvents: "none", "& .MuiDrawer-paper": { pointerEvents: "auto" } }}
         >
           {drawerContent}
         </Drawer>
       )}
 
-      {/* New-conversation confirmation */}
-      <Dialog
-        open={confirmReset}
-        onClose={() => setConfirmReset(false)}
-        maxWidth="xs"
-        fullWidth
-      >
+      <Dialog open={confirmReset} onClose={() => setConfirmReset(false)} maxWidth="xs" fullWidth>
         <DialogTitle sx={{ pb: 1 }}>{t("chat.confirmReset.title")}</DialogTitle>
         <DialogContent>
-          <Box sx={{ fontSize: "0.85rem", color: "text.secondary" }}>
-            {t("chat.confirmReset.body")}
-          </Box>
+          <Box sx={{ fontSize: "0.85rem", color: "text.secondary" }}>{t("chat.confirmReset.body")}</Box>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setConfirmReset(false)} color="inherit">

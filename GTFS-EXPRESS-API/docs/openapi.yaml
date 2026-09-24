@@ -835,8 +835,13 @@ paths:
     post:
       tags:
         - AI
-      summary: Multi-turn NL2SQL chat assistant (Server-Sent Events stream, beta-gated with anonymous free trial).
-      description: Conversational repair companion. A valid `X-Beta-Code` grants full access; anonymous
+      summary: Tool-using GTFS chat assistant (Server-Sent Events stream, beta-gated with anonymous free trial).
+      description: |
+        Agentic assistant. Each turn streams `meta`, then any number of tool events
+        (`tool_pending`, `step_start`/`step_result` for read-only SQL, `proposal` for a
+        dry-run fix the user applies through the guided flow, `ui_action`, `chart`),
+        `token` deltas of the markdown answer, optional `followups`, `usage`, `done`.
+        A valid `X-Beta-Code` grants full access; anonymous
         sessions get a small free-trial allowance (`NL2SQL_FREE_MESSAGES_PER_SESSION`, typed 403
         `FREE_QUOTA_EXHAUSTED` once spent). Model-generated mutations are never executed by this
         endpoint — they are surfaced as `sql_blocked` drafts the guided RepairFlow applies through

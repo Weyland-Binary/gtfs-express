@@ -37,6 +37,7 @@ const getMigrateUploadToDb = () => {
 };
 
 const { recordEvent, extractReqMeta } = require("./eventLogger");
+const { saveReport: saveValidationReport } = require("./validationReportStore");
 
 // Upload statistics file (JSON lines)
 const STATS_FILE = path.join(GTFS_UPLOAD_DIR, "_upload_stats.jsonl");
@@ -565,6 +566,9 @@ const uploadGTFSFile = async (req, res) => {
       // that should not have to re-derive it from errors_count.
       compliance: validationResult.valid ? "compliant" : "non_compliant",
     });
+
+    // The assistant reads the findings server-side (chat tools).
+    saveValidationReport(sessionId, validationResult);
 
     res.json({
       // `valid` mirrors the canonical verdict; the upload itself succeeded
@@ -1476,6 +1480,8 @@ const loadSample = async (req, res) => {
           ? "non_compliant"
           : "compliant",
     });
+
+    if (validationReport) saveValidationReport(sessionId, validationReport);
 
     res.json({
       sessionId,

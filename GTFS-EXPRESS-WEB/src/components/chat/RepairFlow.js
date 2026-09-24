@@ -110,19 +110,22 @@ function Step({ label, state, children, theme }) {
 // hidden once applied so the user is not invited to run the same statement
 // a second time (prod bug: re-running an applied INSERT INTO feed_info
 // tripped the at-most-one-row guard and read like a failure).
+// `initialPreview`: a dry-run the assistant already ran server-side — the
+// flow then starts at the "previewed" step (no extra click).
 function RepairFlow({
   draftSql,
   currentErrorCount = null,
   onOutcome,
   onApplied = null,
+  initialPreview = null,
 }) {
   const theme = useTheme();
   const { t } = useLanguage();
   const { editing, entering, enterEditMode, recordEdit, undoLast } =
     useEditMode();
 
-  const [phase, setPhase] = useState("idle");
-  const [preview, setPreview] = useState(null);
+  const [phase, setPhase] = useState(initialPreview ? "previewed" : "idle");
+  const [preview, setPreview] = useState(initialPreview || null);
   const [confirmed, setConfirmed] = useState(false);
   const [applied, setApplied] = useState(null); // { affected }
   const [revalidation, setRevalidation] = useState(null); // { before, after }

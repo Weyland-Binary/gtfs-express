@@ -1,20 +1,14 @@
 /**
- * MessageBubble — One conversation turn (user OR assistant) with full
- * inline tooling: SQL accordion, result preview, blocked-state CTA, error
- * surface, regenerate / open-in-console actions.
+ * MessageBubble — One conversation turn (user OR assistant).
  *
- * Visual language:
- *  - User: right-aligned, primary-tinted, max-width 85%, plain text.
- *  - Assistant: left-aligned, surface-tinted, max-width 95%, can host
- *    rich children (SqlAccordion, ResultTablePreview).
- *  - Blocked: warning-bordered notice with the draft SQL inline + a
- *    primary CTA to open the SQL Console (mirrors FixInSqlConsoleButton's
- *    edit-mode-aware UX).
- *  - Error: muted, italic, centered.
- *  - Streaming: subtle animated cursor at the end of the live token stream.
- *
- * Footer toolbar (assistant complete only): Open in SQL Console, copy,
- * regenerate. All icon-only with tooltips to keep the bubble light.
+ * Assistant turns compose, top to bottom:
+ *  - the activity timeline (queries run, views opened, tool in progress),
+ *  - charts the assistant drew,
+ *  - the answer (markdown, streamed with a smooth reveal),
+ *  - fix proposals (guided repair cards),
+ *  - an error block when the turn failed,
+ *  - follow-up question chips (last turn only),
+ *  - a footer toolbar: copy answer, regenerate, thumbs.
  */
 
 import React, { useState } from "react";
@@ -36,22 +30,21 @@ import ThumbUpOutlinedIcon from "@mui/icons-material/ThumbUpOutlined";
 import ThumbDownOutlinedIcon from "@mui/icons-material/ThumbDownOutlined";
 import ThumbUpIcon from "@mui/icons-material/ThumbUp";
 import ThumbDownIcon from "@mui/icons-material/ThumbDown";
-import API_BASE_URL from "../../config";
-import { fetchWithSession } from "../../utils/sessionManager";
-import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import CheckIcon from "@mui/icons-material/Check";
 import ReplayIcon from "@mui/icons-material/Replay";
-import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 import ErrorOutlineIcon from "@mui/icons-material/ErrorOutline";
+import ArrowForwardIcon from "@mui/icons-material/ArrowForward";
+import API_BASE_URL from "../../config";
+import { fetchWithSession } from "../../utils/sessionManager";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { useDetailPanel } from "../../contexts/DetailPanelContext";
-import { useEditMode } from "../../contexts/EditModeContext";
-import SqlAccordion from "./SqlAccordion";
-import ResultTablePreview from "./ResultTablePreview";
-import RepairFlow from "./RepairFlow";
 import useSmoothText from "./useSmoothText";
 import { openInSqlConsole } from "./openInSqlConsole";
+import MarkdownText from "./MarkdownText";
+import ActivityTimeline from "./ActivityTimeline";
+import ProposalCard from "./ProposalCard";
+import MiniChart from "./MiniChart";
 
 const StreamingCursor = () => {
   const theme = useTheme();
@@ -119,7 +112,7 @@ const UserBubble = ({ content, attachment = null }) => {
           lineHeight: 1.45,
           whiteSpace: "pre-wrap",
           wordBreak: "break-word",
-          boxShadow: `0 1px 3px ${alpha(theme.palette.primary.main, 0.30)}`,
+          boxShadow: `0 1px 3px ${alpha(theme.palette.primary.main, 0.3)}`,
         }}
       >
         {attachment && (
@@ -138,16 +131,8 @@ const UserBubble = ({ content, attachment = null }) => {
             }}
           >
             <AttachFileIcon sx={{ fontSize: 13, flexShrink: 0 }} />
-            <Box
-              component="span"
-              sx={{
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {attachment.filename} ·{" "}
-              {t("chat.attach.chipRows", { count: attachment.rowCount })}
+            <Box component="span" sx={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {attachment.filename} · {t("chat.attach.chipRows", { count: attachment.rowCount })}
             </Box>
           </Box>
         )}
@@ -157,7 +142,7 @@ const UserBubble = ({ content, attachment = null }) => {
   );
 };
 
-const AssistantHeader = () => {
+const AssistantAvatar = () => {
   const theme = useTheme();
   return (
     <Avatar
@@ -168,7 +153,7 @@ const AssistantHeader = () => {
         background: `linear-gradient(135deg, ${theme.palette.ai.gradientStart} 0%, ${theme.palette.ai.gradientEnd} 100%)`,
         color: theme.palette.ai.contrastText,
         flexShrink: 0,
-        boxShadow: `0 2px 6px ${alpha(theme.palette.ai.main, 0.30)}`,
+        boxShadow: `0 2px 6px ${alpha(theme.palette.ai.main, 0.3)}`,
       }}
     >
       <GTFSAIIcon sx={{ fontSize: 15 }} />
@@ -176,9 +161,7 @@ const AssistantHeader = () => {
   );
 };
 
-// Latency masking: a "thinking…" pulse shown between the user's send and
-// the first streamed token (2-5s on complex questions) — without it the
-// empty bubble reads as a hang.
+// Latency masking between the send and the first event.
 const ThinkingHint = () => {
   const { t } = useLanguage();
   const theme = useTheme();
@@ -205,169 +188,6 @@ const ThinkingHint = () => {
   );
 };
 
-const ProseBlock = ({ text, streaming, muted = false }) => {
-  if (!text && !streaming) return null;
-  return (
-    <Box
-      sx={{
-        fontSize: "0.85rem",
-        lineHeight: 1.5,
-        color: muted ? "text.secondary" : "text.primary",
-        whiteSpace: "pre-wrap",
-        wordBreak: "break-word",
-      }}
-    >
-      {text}
-      {streaming && <StreamingCursor />}
-    </Box>
-  );
-};
-
-const BlockedNotice = ({
-  blocked,
-  onOpen,
-  editing,
-  onEnterEditMode,
-  requestingEditMode,
-  repairFlow = null,
-  repairApplied = false,
-}) => {
-  const { t } = useLanguage();
-  const theme = useTheme();
-  const isMutation = blocked.reason === "mutation_in_read_mode";
-  const titleKey = isMutation ? "chat.blocked.mutationTitle" : "chat.blocked.forbiddenTitle";
-  // With the guided flow embedded, "open the console and run it yourself"
-  // is wrong advice — the flow right below applies it safely. The console
-  // stays a review escape hatch only.
-  const bodyKey = isMutation
-    ? repairFlow
-      ? "chat.blocked.mutationBodyGuided"
-      : "chat.blocked.mutationBody"
-    : "chat.blocked.forbiddenBody";
-
-  return (
-    <Box
-      sx={{
-        mt: 1,
-        borderRadius: 1.5,
-        overflow: "hidden",
-        border: `1px solid ${alpha(theme.palette.warning.main, 0.45)}`,
-        background: alpha(theme.palette.warning.main, 0.06),
-      }}
-    >
-      <Box
-        sx={{
-          px: 1.5,
-          py: 1,
-          display: "flex",
-          alignItems: "flex-start",
-          gap: 1,
-          borderBottom: `1px solid ${alpha(theme.palette.warning.main, 0.20)}`,
-        }}
-      >
-        <WarningAmberIcon
-          sx={{ fontSize: 18, color: theme.palette.warning.dark, mt: 0.1 }}
-        />
-        <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Box
-            sx={{
-              fontSize: "0.78rem",
-              fontWeight: 700,
-              color: theme.palette.warning.dark,
-              lineHeight: 1.35,
-            }}
-          >
-            {t(titleKey)}
-          </Box>
-          <Box
-            sx={{
-              fontSize: "0.74rem",
-              color: "text.secondary",
-              mt: 0.35,
-              lineHeight: 1.5,
-            }}
-          >
-            {t(bodyKey)}
-          </Box>
-        </Box>
-      </Box>
-      <Box sx={{ px: 1.25, py: 1, display: "flex", flexDirection: "column", gap: 0.75 }}>
-        <SqlAccordion sql={blocked.draftSql} defaultExpanded dense />
-        {/* Guided repair loop — preview/apply/revalidate without leaving the
-            chat. The console hand-off below stays as the power-user escape
-            hatch; the redundant standalone "Enter Edit Mode" button is hidden
-            because RepairFlow embeds its own. */}
-        {repairFlow}
-        {/* Once the draft has been applied through the guided flow, the
-            "Open in SQL Console" hand-off disappears: running the same
-            statement a second time is never what the user wants (e.g. a
-            re-run INSERT INTO feed_info trips the at-most-one-row guard
-            and reads like a failure). */}
-        {repairApplied ? (
-          <Box
-            sx={{ fontSize: "0.7rem", color: "text.secondary", mt: 0.25 }}
-            data-testid="chat-blocked-applied"
-          >
-            {t("chat.blocked.alreadyApplied")}
-          </Box>
-        ) : (
-        <Stack direction="row" spacing={0.75} sx={{ mt: 0.25 }}>
-          <Box
-            component="button"
-            type="button"
-            onClick={onOpen}
-            sx={{
-              all: "unset",
-              cursor: "pointer",
-              fontSize: "0.72rem",
-              fontWeight: 700,
-              px: 1.1,
-              py: 0.5,
-              borderRadius: 1,
-              background: theme.palette.warning.main,
-              color: theme.palette.warning.contrastText,
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 0.4,
-              transition: "background 120ms",
-              "&:hover": { background: theme.palette.warning.dark },
-            }}
-          >
-            {t("chat.blocked.openConsole")}
-            <OpenInNewIcon sx={{ fontSize: 12 }} />
-          </Box>
-          {isMutation && !editing && onEnterEditMode && !repairFlow && (
-            <Box
-              component="button"
-              type="button"
-              disabled={requestingEditMode}
-              onClick={onEnterEditMode}
-              sx={{
-                all: "unset",
-                cursor: requestingEditMode ? "wait" : "pointer",
-                opacity: requestingEditMode ? 0.6 : 1,
-                fontSize: "0.7rem",
-                fontWeight: 600,
-                px: 1.1,
-                py: 0.5,
-                borderRadius: 1,
-                color: theme.palette.warning.dark,
-                border: `1px solid ${alpha(theme.palette.warning.main, 0.55)}`,
-                "&:hover": {
-                  background: alpha(theme.palette.warning.main, 0.10),
-                },
-              }}
-            >
-              {t("chat.blocked.enterEditMode")}
-            </Box>
-          )}
-        </Stack>
-        )}
-      </Box>
-    </Box>
-  );
-};
-
 const ErrorBlock = ({ message, onRetry }) => {
   const { t } = useLanguage();
   const theme = useTheme();
@@ -379,7 +199,7 @@ const ErrorBlock = ({ message, onRetry }) => {
         py: 0.85,
         borderRadius: 1.25,
         background: alpha(theme.palette.error.main, 0.07),
-        border: `1px solid ${alpha(theme.palette.error.main, 0.30)}`,
+        border: `1px solid ${alpha(theme.palette.error.main, 0.3)}`,
         color: theme.palette.error.dark,
         fontSize: "0.74rem",
         lineHeight: 1.45,
@@ -413,7 +233,7 @@ const ErrorBlock = ({ message, onRetry }) => {
               color: theme.palette.error.dark,
               border: `1px solid ${alpha(theme.palette.error.main, 0.45)}`,
               transition: "background 120ms",
-              "&:hover": { background: alpha(theme.palette.error.main, 0.10) },
+              "&:hover": { background: alpha(theme.palette.error.main, 0.1) },
             }}
           >
             <ReplayIcon sx={{ fontSize: 13 }} />
@@ -425,31 +245,69 @@ const ErrorBlock = ({ message, onRetry }) => {
   );
 };
 
+const FollowupChips = ({ items, onPick }) => {
+  const theme = useTheme();
+  return (
+    <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.6, mt: 1 }} data-testid="chat-followups">
+      {items.map((q, i) => (
+        <Box
+          key={i}
+          component="button"
+          type="button"
+          onClick={() => onPick(q)}
+          sx={{
+            all: "unset",
+            cursor: "pointer",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 0.5,
+            px: 1.1,
+            py: 0.5,
+            borderRadius: 99,
+            fontSize: "0.74rem",
+            fontWeight: 600,
+            color: theme.palette.ai.dark,
+            background: alpha(theme.palette.ai.main, 0.08),
+            border: `1px solid ${alpha(theme.palette.ai.main, 0.3)}`,
+            transition: "all 120ms",
+            "&:hover": {
+              background: alpha(theme.palette.ai.main, 0.16),
+              borderColor: theme.palette.ai.main,
+            },
+          }}
+        >
+          {q}
+          <ArrowForwardIcon sx={{ fontSize: 12, opacity: 0.7 }} />
+        </Box>
+      ))}
+    </Box>
+  );
+};
+
 const AssistantBubble = ({
   turn,
   onRegenerate,
   currentErrorCount = null,
-  onRepairOutcome = null,
+  onProposalOutcome = null,
+  onPickFollowup = null,
+  onReplayAction = null,
+  showFollowups = false,
 }) => {
   const { t } = useLanguage();
   const theme = useTheme();
   const { showSqlConsole } = useDetailPanel();
-  const editModeCtx = useEditMode();
-  const editing = Boolean(editModeCtx?.editing);
-  const enterEditMode = editModeCtx?.enterEditMode;
 
   const [copied, setCopied] = useState(false);
   const [snackbar, setSnackbar] = useState(null);
-  const [requestingEditMode, setRequestingEditMode] = useState(false);
   const [rated, setRated] = useState(null); // "up" | "down" | null
-  // True once the embedded RepairFlow applied the draft (false again after
-  // an undo) — drives the console hand-off visibility in BlockedNotice.
-  const [repairApplied, setRepairApplied] = useState(false);
 
   const isStreaming = turn.status === "streaming";
   const isComplete = turn.status === "complete";
-  const isBlocked = turn.status === "blocked" && turn.blocked;
   const isError = turn.status === "error";
+  const steps = turn.steps || [];
+  const proposals = turn.proposals || [];
+  const charts = turn.charts || [];
+  const uiActions = turn.uiActions || [];
 
   const handleOpenInConsole = (sql) => {
     if (!sql) return;
@@ -457,26 +315,10 @@ const AssistantBubble = ({
     setSnackbar({ severity: "success", message: t("chat.toast.openedInConsole") });
   };
 
-  const handleEnterEditMode = async () => {
-    if (!enterEditMode || requestingEditMode) return;
-    setRequestingEditMode(true);
+  const handleCopy = () => {
+    if (!turn.content) return;
     try {
-      const res = await enterEditMode();
-      if (res === true || res?.ok) {
-        // After entering edit mode, open the draft SQL in the console.
-        if (turn.blocked?.draftSql) {
-          openInSqlConsole(turn.blocked.draftSql, showSqlConsole);
-        }
-      }
-    } finally {
-      setRequestingEditMode(false);
-    }
-  };
-
-  const handleCopy = (text) => {
-    if (!text) return;
-    try {
-      navigator.clipboard.writeText(text);
+      navigator.clipboard.writeText(turn.content);
       setCopied(true);
       setTimeout(() => setCopied(false), 1400);
     } catch {
@@ -484,8 +326,7 @@ const AssistantBubble = ({
     }
   };
 
-  // Thumbs feedback — optimistic UI, fire-and-forget telemetry. Quota-free
-  // server-side; failures are silent (rating must never block the flow).
+  // Thumbs feedback — optimistic UI, fire-and-forget telemetry.
   const handleRate = (rating) => {
     if (rated) return;
     setRated(rating);
@@ -494,32 +335,17 @@ const AssistantBubble = ({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ turnId: turn.id, rating }),
     }).catch(() => {});
-    setSnackbar({
-      severity: "success",
-      message: t("chat.action.feedbackThanks"),
-    });
+    setSnackbar({ severity: "success", message: t("chat.action.feedbackThanks") });
   };
 
-  // Combine preamble + summary as the main prose. During streaming we want
-  // smooth concat; once complete we keep them separated by a blank line for
-  // readability.
-  const proseSeparator = isComplete && turn.preamble && turn.summary ? "\n\n" : "";
-  const prose = (turn.preamble || "") + proseSeparator + (turn.summary || "");
   // Silky reveal: SSE chunks land bursty — animate the display towards the
   // streamed target (snaps instantly the moment streaming ends).
-  const smoothProse = useSmoothText(prose, turn.status === "streaming");
-
-  // Show streaming cursor only on the active phase (no SQL yet OR no
-  // summary yet AND a SQL was generated).
-  const cursorShouldShow = isStreaming;
+  const smoothAnswer = useSmoothText(turn.content || "", isStreaming);
+  const nothingYet = isStreaming && !smoothAnswer && steps.length === 0 && !turn.pendingTool && charts.length === 0;
 
   return (
     <Box
-      title={
-        turn.startedAt
-          ? new Date(turn.startedAt).toLocaleTimeString()
-          : undefined
-      }
+      title={turn.startedAt ? new Date(turn.startedAt).toLocaleTimeString() : undefined}
       sx={{
         alignSelf: "flex-start",
         display: "flex",
@@ -533,7 +359,7 @@ const AssistantBubble = ({
         animation: "gtfsBubbleIn 200ms ease-out",
       }}
     >
-      <AssistantHeader />
+      <AssistantAvatar />
       <Box
         sx={{
           flex: 1,
@@ -550,98 +376,63 @@ const AssistantBubble = ({
           py: 1.1,
         }}
       >
-        {/* Pre-first-token latency masking */}
-        {isStreaming && !prose && !turn.sql && <ThinkingHint />}
+        {nothingYet && <ThinkingHint />}
 
-        <ProseBlock
-          text={smoothProse}
-          streaming={cursorShouldShow && Boolean(smoothProse)}
+        <ActivityTimeline
+          steps={steps}
+          uiActions={uiActions}
+          pendingTool={turn.pendingTool}
+          streaming={isStreaming}
+          onOpenInConsole={handleOpenInConsole}
+          onReplayAction={onReplayAction}
         />
 
-        {/* SQL is shown as soon as the server emits sql_generated, even
-            before execution finishes — gives the user immediate feedback. */}
-        {turn.sql && !isBlocked && (
-          <SqlAccordion sql={turn.sql} defaultExpanded={false} />
+        {charts.map((c) => (
+          <MiniChart key={c.chartId} chart={c} />
+        ))}
+
+        {(smoothAnswer || (isStreaming && !nothingYet && steps.length === 0)) && (
+          <Box sx={{ mt: steps.length || charts.length ? 0.75 : 0 }} data-testid="chat-answer">
+            <MarkdownText text={smoothAnswer}>
+              {isStreaming && smoothAnswer ? <StreamingCursor /> : null}
+            </MarkdownText>
+          </Box>
         )}
 
-        {/* Result table — only after sql_result lands. */}
-        {turn.result && !isBlocked && (
-          <ResultTablePreview
-            result={turn.result}
-            durationMs={turn.result.durationMs}
-            onOpenInConsole={turn.sql ? () => handleOpenInConsole(turn.sql) : null}
+        {proposals.map((p, i) => (
+          <ProposalCard
+            key={p.proposalId}
+            proposal={p}
+            index={proposals.length > 1 ? i : null}
+            currentErrorCount={currentErrorCount}
+            onOutcome={onProposalOutcome ? (summary) => onProposalOutcome(turn.id, p.proposalId, summary) : null}
           />
+        ))}
+
+        {isError && turn.error && <ErrorBlock message={turn.error.message} onRetry={onRegenerate || null} />}
+        {turn.status === "aborted" && (
+          <Box sx={{ mt: 0.75, fontSize: "0.72rem", color: "text.disabled", fontStyle: "italic" }}>
+            {t("chat.error.aborted")}
+          </Box>
         )}
 
-        {isBlocked && (
-          <BlockedNotice
-            blocked={turn.blocked}
-            onOpen={() => handleOpenInConsole(turn.blocked.draftSql)}
-            editing={editing}
-            onEnterEditMode={turn.blocked.reason === "mutation_in_read_mode" ? handleEnterEditMode : null}
-            requestingEditMode={requestingEditMode}
-            repairApplied={repairApplied}
-            repairFlow={
-              turn.blocked.reason === "mutation_in_read_mode" &&
-              turn.blocked.draftSql ? (
-                <RepairFlow
-                  draftSql={turn.blocked.draftSql}
-                  currentErrorCount={currentErrorCount}
-                  onApplied={setRepairApplied}
-                  onOutcome={
-                    onRepairOutcome
-                      ? (summary) => onRepairOutcome(turn.id, summary)
-                      : null
-                  }
-                />
-              ) : null
-            }
-          />
-        )}
-
-        {isError && turn.error && (
-          <ErrorBlock
-            message={turn.error.message}
-            onRetry={onRegenerate || null}
-          />
+        {showFollowups && isComplete && Array.isArray(turn.followups) && turn.followups.length > 0 && onPickFollowup && (
+          <FollowupChips items={turn.followups} onPick={onPickFollowup} />
         )}
 
         {/* Action footer — only when the turn is fully done. */}
-        {(isComplete || isBlocked || isError) && turn.sql && !isError && (
+        {(isComplete || isError) && (
           <Stack direction="row" spacing={0.5} sx={{ mt: 0.85, justifyContent: "flex-end" }}>
-            {turn.sql && (
-              <>
-                <Tooltip title={t("chat.action.openInConsole")}>
-                  <IconButton
-                    size="small"
-                    onClick={() => handleOpenInConsole(turn.sql)}
-                    sx={{ width: 24, height: 24 }}
-                  >
-                    <OpenInNewIcon sx={{ fontSize: 13 }} />
-                  </IconButton>
-                </Tooltip>
-                <Tooltip title={copied ? t("chat.sql.copied") : t("chat.action.copySql")}>
-                  <IconButton
-                    size="small"
-                    onClick={() => handleCopy(turn.sql)}
-                    sx={{ width: 24, height: 24 }}
-                  >
-                    {copied ? (
-                      <CheckIcon sx={{ fontSize: 13, color: "success.main" }} />
-                    ) : (
-                      <ContentCopyIcon sx={{ fontSize: 13 }} />
-                    )}
-                  </IconButton>
-                </Tooltip>
-              </>
+            {turn.content && (
+              <Tooltip title={copied ? t("chat.sql.copied") : t("chat.action.copyAnswer")}>
+                <IconButton size="small" onClick={handleCopy} sx={{ width: 24, height: 24 }}>
+                  {copied ? <CheckIcon sx={{ fontSize: 13, color: "success.main" }} /> : <ContentCopyIcon sx={{ fontSize: 13 }} />}
+                </IconButton>
+              </Tooltip>
             )}
             {onRegenerate && (
               <Tooltip title={t("chat.action.regenerate")}>
-                <IconButton
-                  size="small"
-                  onClick={onRegenerate}
-                  sx={{ width: 24, height: 24 }}
-                >
+                <IconButton size="small" onClick={onRegenerate} sx={{ width: 24, height: 24 }} data-testid="chat-regenerate">
                   <ReplayIcon sx={{ fontSize: 13 }} />
                 </IconButton>
               </Tooltip>
@@ -650,39 +441,15 @@ const AssistantBubble = ({
               <>
                 <Tooltip title={t("chat.action.thumbsUp")}>
                   <span>
-                    <IconButton
-                      size="small"
-                      onClick={() => handleRate("up")}
-                      disabled={Boolean(rated)}
-                      data-testid="chat-thumb-up"
-                      sx={{ width: 24, height: 24 }}
-                    >
-                      {rated === "up" ? (
-                        <ThumbUpIcon
-                          sx={{ fontSize: 12, color: "success.main" }}
-                        />
-                      ) : (
-                        <ThumbUpOutlinedIcon sx={{ fontSize: 12 }} />
-                      )}
+                    <IconButton size="small" onClick={() => handleRate("up")} disabled={Boolean(rated)} data-testid="chat-thumb-up" sx={{ width: 24, height: 24 }}>
+                      {rated === "up" ? <ThumbUpIcon sx={{ fontSize: 12, color: "success.main" }} /> : <ThumbUpOutlinedIcon sx={{ fontSize: 12 }} />}
                     </IconButton>
                   </span>
                 </Tooltip>
                 <Tooltip title={t("chat.action.thumbsDown")}>
                   <span>
-                    <IconButton
-                      size="small"
-                      onClick={() => handleRate("down")}
-                      disabled={Boolean(rated)}
-                      data-testid="chat-thumb-down"
-                      sx={{ width: 24, height: 24 }}
-                    >
-                      {rated === "down" ? (
-                        <ThumbDownIcon
-                          sx={{ fontSize: 12, color: "error.main" }}
-                        />
-                      ) : (
-                        <ThumbDownOutlinedIcon sx={{ fontSize: 12 }} />
-                      )}
+                    <IconButton size="small" onClick={() => handleRate("down")} disabled={Boolean(rated)} data-testid="chat-thumb-down" sx={{ width: 24, height: 24 }}>
+                      {rated === "down" ? <ThumbDownIcon sx={{ fontSize: 12, color: "error.main" }} /> : <ThumbDownOutlinedIcon sx={{ fontSize: 12 }} />}
                     </IconButton>
                   </span>
                 </Tooltip>
@@ -698,12 +465,7 @@ const AssistantBubble = ({
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
       >
         {snackbar ? (
-          <Alert
-            severity={snackbar.severity || "info"}
-            onClose={() => setSnackbar(null)}
-            variant="filled"
-            sx={{ alignItems: "center" }}
-          >
+          <Alert severity={snackbar.severity || "info"} onClose={() => setSnackbar(null)} variant="filled" sx={{ alignItems: "center" }}>
             {snackbar.message}
           </Alert>
         ) : (
@@ -718,7 +480,10 @@ export default function MessageBubble({
   turn,
   onRegenerate,
   currentErrorCount = null,
-  onRepairOutcome = null,
+  onProposalOutcome = null,
+  onPickFollowup = null,
+  onReplayAction = null,
+  showFollowups = false,
 }) {
   if (turn.role === "user") {
     return <UserBubble content={turn.content} attachment={turn.attachment} />;
@@ -728,7 +493,10 @@ export default function MessageBubble({
       turn={turn}
       onRegenerate={onRegenerate}
       currentErrorCount={currentErrorCount}
-      onRepairOutcome={onRepairOutcome}
+      onProposalOutcome={onProposalOutcome}
+      onPickFollowup={onPickFollowup}
+      onReplayAction={onReplayAction}
+      showFollowups={showFollowups}
     />
   );
 }

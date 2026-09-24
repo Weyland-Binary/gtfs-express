@@ -1,0 +1,604 @@
+/**
+ * chatAgentTools — the tools the chat assistant can call during a turn.
+ *
+ * Each tool has an Anthropic tool definition (`definition`) and an executor
+ * `run(input, ctx)` returning `{ content, isError? }` — `content` is the text
+ * handed back to the model. Executors also emit the SSE events the UI
+ * renders (steps, proposals, charts, navigation) through `ctx.emit`.
+ *
+ * Every executor treats its input as untrusted: identifiers are validated,
+ * SQL goes through the SQL Console classifier (read-only for run_sql, and
+ * never executed at all for propose_fix — a dry-run only), payload sizes are
+ * capped before anything reaches the model or the browser.
+ */
+
+"use strict";
+
+const sqlConsoleService = require("./edit/sqlConsoleService");
+const validationReportStore = require("./validationReportStore");
+const { getRule } = require("../utils/rulesCatalog");
+
+// ── Caps ──────────────────────────────────────────────────────────────────
+const MODEL_SAMPLE_ROWS = 30; // rows the model sees per query
+const MODEL_SAMPLE_BYTES = 6 * 1024; // …bounded in bytes too
+const UI_PREVIEW_ROWS = 50; // rows the chat table shows
+const CHART_MAX_ROWS = 200; // rows a chart may plot
+const KEPT_ROWS = 2000; // rows kept per step for a later chart
+const FINDINGS_MAX = 25;
+const MAX_SQL_CHARS = 8000;
+
+const SAFE_ID_RE = /^[^\x00-\x1f\x7f]{1,128}$/;
+const RULE_CODE_RE = /^[a-z0-9_]{1,64}$/i;
+
+const clip = (s, n) => (typeof s === "string" && s.length > n ? `${s.slice(0, n)}…` : s);
+
+// Bounded JSON snapshot of a SQL result for the model.
+const resultSnapshot = ({ columns, rows, rowCount, truncated }) => {
+  let sample = rows.slice(0, MODEL_SAMPLE_ROWS);
+  let payload = JSON.stringify({ rowCount, truncated, columns, sampleRows: sample });
+  while (payload.length > MODEL_SAMPLE_BYTES && sample.length > 3) {
+    sample = sample.slice(0, Math.ceil(sample.length / 2));
+    payload = JSON.stringify({
+      rowCount,
+      truncated: true,
+      columns,
+      sampleRows: sample,
+      note: "Sample shortened to fit the size budget.",
+    });
+  }
+  if (payload.length > MODEL_SAMPLE_BYTES) {
+    payload = JSON.stringify({
+      rowCount,
+      truncated: true,
+      columns,
+      note: `Rows are too wide to include. ${rowCount} rows × ${columns.length} columns; first columns: ${columns.slice(0, 8).join(", ")}.`,
+    });
+  }
+  return payload;
+};
+
+// ── run_sql ───────────────────────────────────────────────────────────────
+const runSql = {
+  definition: {
+    name: "run_sql",
+    description:
+      "Run ONE read-only SQLite query (SELECT / WITH … SELECT) against the loaded GTFS feed and get its result (row count, columns, a sample of rows). The user sees the query and a table of the first rows. Mutations are refused: use propose_fix for UPDATE/INSERT/DELETE.",
+    input_schema: {
+      type: "object",
+      properties: {
+        sql: { type: "string", description: "A single SQLite SELECT statement." },
+        purpose: {
+          type: "string",
+          description:
+            "Very short label of what this query checks, shown to the user (e.g. 'Trips per route', 'Stops with no name').",
+        },
+      },
+      required: ["sql"],
+    },
+  },
+  run(input, ctx) {
+    const sql = typeof input?.sql === "string" ? input.sql.trim() : "";
+    const purpose = clip(typeof input?.purpose === "string" ? input.purpose.trim() : "", 80);
+    if (!sql) return { content: "Error: sql is required.", isError: true };
+    if (sql.length > MAX_SQL_CHARS) {
+      return { content: `Error: query is too long (max ${MAX_SQL_CHARS} chars).`, isError: true };
+    }
+    const stepId = ctx.nextStepId();
+    const parsed = sqlConsoleService.parseStatements(sql, { allowMutations: false });
+    if (!parsed.ok) {
+      const isMutation = /Mutations are not allowed/i.test(parsed.error || "");
+      ctx.emit("step_start", { stepId, kind: "sql", sql, purpose });
+      ctx.emit("step_result", {
+        stepId,
+        kind: "sql",
+        error: isMutation
+          ? "Mutations are not executed from the chat — use propose_fix."
+          : parsed.error,
+      });
+      return {
+        content: isMutation
+          ? "Refused: this statement modifies data. Call propose_fix with it instead (the user will preview and apply it)."
+          : `SQL rejected: ${parsed.error}`,
+        isError: true,
+      };
+    }
+    ctx.emit("step_start", { stepId, kind: "sql", sql, purpose });
+    const t0 = Date.now();
+    const exec = sqlConsoleService.executeSqlInSession(ctx.dbCtx, sql, {
+      allowMutations: false,
+    });
+    if (exec.status >= 400) {
+      const message = exec.body?.error || "SQL execution failed.";
+      ctx.emit("step_result", { stepId, kind: "sql", error: message, durationMs: Date.now() - t0 });
+      return { content: `SQL error: ${message}\nFix the query and try again.`, isError: true };
+    }
+    const body = exec.body || {};
+    const rows = Array.isArray(body.rows) ? body.rows : [];
+    const columns = Array.isArray(body.columns) ? body.columns : [];
+    const rowCount = body.rowCount ?? rows.length;
+    const truncated = Boolean(body.truncated);
+    ctx.steps.set(stepId, { sql, purpose, columns, rows: rows.slice(0, KEPT_ROWS), rowCount });
+    ctx.emit("step_result", {
+      stepId,
+      kind: "sql",
+      rowCount,
+      columns,
+      rowsPreview: rows.slice(0, UI_PREVIEW_ROWS),
+      truncated: truncated || rows.length > UI_PREVIEW_ROWS,
+      durationMs: body.duration_ms ?? Date.now() - t0,
+    });
+    return {
+      content: `step_id: ${stepId}\n${resultSnapshot({ columns, rows, rowCount, truncated })}`,
+    };
+  },
+};
+
+// ── propose_fix ───────────────────────────────────────────────────────────
+const proposeFix = {
+  definition: {
+    name: "propose_fix",
+    description:
+      "Propose a data fix (one or a few UPDATE/INSERT/DELETE statements) as a guided repair card. The statements are NOT executed: the server dry-runs them (affected rows, cascades) and the user decides to apply them, with undo. Use a precise WHERE clause. Returns the dry-run numbers.",
+    input_schema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "Short title of the fix (≤ 60 chars), in the user's language." },
+        sql: { type: "string", description: "The mutation statement(s), SQLite dialect, each ending with ';'." },
+        rationale: {
+          type: "string",
+          description: "One or two sentences on what the fix changes and why it is safe, in the user's language.",
+        },
+      },
+      required: ["title", "sql"],
+    },
+  },
+  run(input, ctx) {
+    const sql = typeof input?.sql === "string" ? input.sql.trim() : "";
+    const title = clip(typeof input?.title === "string" ? input.title.trim() : "", 80) || "Fix";
+    const rationale = clip(typeof input?.rationale === "string" ? input.rationale.trim() : "", 600);
+    if (!sql) return { content: "Error: sql is required.", isError: true };
+    if (sql.length > MAX_SQL_CHARS) {
+      return { content: `Error: statement is too long (max ${MAX_SQL_CHARS} chars).`, isError: true };
+    }
+    const parsed = sqlConsoleService.parseStatements(sql, { allowMutations: true });
+    if (!parsed.ok) return { content: `Statement rejected: ${parsed.error}`, isError: true };
+    if (!parsed.statements.some((s) => s.kind === "mutate")) {
+      return {
+        content: "Not a mutation: propose_fix expects UPDATE/INSERT/DELETE. Use run_sql for SELECT.",
+        isError: true,
+      };
+    }
+    let preview;
+    try {
+      preview = sqlConsoleService.previewStatements(ctx.dbCtx.db, parsed.statements);
+    } catch (err) {
+      return { content: `Dry-run failed: ${err.message}. Fix the statement and try again.`, isError: true };
+    }
+    const proposalId = ctx.nextProposalId();
+    ctx.emit("proposal", { proposalId, title, rationale, sql, preview });
+    const lines = preview.statements
+      .filter((s) => s.table)
+      .map(
+        (s) =>
+          `${s.verb} ${s.table}: ${s.affected} row(s)` +
+          (s.cascade && s.cascade.length
+            ? ` (cascade: ${s.cascade.map((c) => `${c.count} in ${c.table}`).join(", ")})`
+            : ""),
+      );
+    return {
+      content: [
+        `proposal_id: ${proposalId}`,
+        `Dry-run: ${preview.totalAffected} row(s) affected in total.`,
+        ...lines,
+        preview.exceedsConfirmedCap
+          ? `WARNING: exceeds the ${preview.confirmedCap}-row cap; the user cannot apply this as is — narrow the WHERE clause.`
+          : preview.totalAffected === 0
+            ? "No row matches: the issue may already be fixed (or the WHERE clause is wrong). Check with run_sql before proposing again."
+            : "The user can now preview and apply it from the chat. Do not claim it was applied.",
+      ].join("\n"),
+    };
+  },
+};
+
+// ── get_validation_findings ───────────────────────────────────────────────
+const weightOf = (f) => (f && f.aggregate ? Math.max(0, Number(f.aggregateCount) || 0) : 1);
+const severityOf = (f) => (f && (f.severity === "warning" || f.severity === "info") ? f.severity : "error");
+
+const summarizeStoredReport = (report) => {
+  const byRule = new Map();
+  let errors = 0;
+  let warnings = 0;
+  let infos = 0;
+  for (const [file, findings] of Object.entries(report?.errors || {})) {
+    if (!Array.isArray(findings)) continue;
+    for (const f of findings) {
+      if (!f || f.resolvedByImport) continue;
+      const w = weightOf(f);
+      const sev = severityOf(f);
+      if (sev === "error") errors += w;
+      else if (sev === "warning") warnings += w;
+      else infos += w;
+      const code = f.ruleCode || "unknown";
+      const cur = byRule.get(code) || { code, severity: sev, count: 0, files: new Set() };
+      cur.count += w;
+      cur.files.add(file);
+      byRule.set(code, cur);
+    }
+  }
+  return {
+    errors,
+    warnings,
+    infos,
+    rules: [...byRule.values()]
+      .map((r) => ({ ...r, files: [...r.files] }))
+      .sort((a, b) => b.count - a.count || a.code.localeCompare(b.code)),
+  };
+};
+
+const getValidationFindings = {
+  definition: {
+    name: "get_validation_findings",
+    description:
+      "The latest validation report of this feed (MobilityData canonical validator). Without rule_code: counts per severity and per rule. With rule_code: the sampled findings of that rule (file, entity type and id, field, line, message) so you can inspect and fix the exact rows.",
+    input_schema: {
+      type: "object",
+      properties: {
+        rule_code: { type: "string", description: "A rule code such as invalid_color." },
+        limit: { type: "integer", description: `Max findings to return (default 15, max ${FINDINGS_MAX}).` },
+      },
+    },
+  },
+  run(input, ctx) {
+    const stored = validationReportStore.loadReport(ctx.dbCtx.sessionId);
+    if (!stored) {
+      return {
+        content:
+          "No validation report is available for this session yet. Ask the user to run the validation (Validate button) — or answer from the data with run_sql.",
+      };
+    }
+    const report = stored.report;
+    const summary = summarizeStoredReport(report);
+    const code = typeof input?.rule_code === "string" ? input.rule_code.trim() : "";
+    const ageMin = Math.round((Date.now() - (stored.savedAt || Date.now())) / 60000);
+    const header = `Report from ${ageMin} min ago: ${summary.errors} error(s), ${summary.warnings} warning(s), ${summary.infos} info. Export is ${summary.errors > 0 ? "blocked until the errors are fixed" : "allowed"}.`;
+    if (!code) {
+      const rules = summary.rules.slice(0, 40).map((r) => `- ${r.code} (${r.severity}): ${r.count} in ${r.files.join(", ")}`);
+      return { content: [header, rules.length ? "Rules:" : "No outstanding finding.", ...rules].join("\n") };
+    }
+    if (!RULE_CODE_RE.test(code)) return { content: "Error: invalid rule_code.", isError: true };
+    const limit = Math.min(FINDINGS_MAX, Math.max(1, parseInt(input?.limit, 10) || 15));
+    const items = [];
+    let total = 0;
+    for (const [file, findings] of Object.entries(report.errors || {})) {
+      if (!Array.isArray(findings)) continue;
+      for (const f of findings) {
+        if (!f || f.resolvedByImport || f.ruleCode !== code) continue;
+        total += weightOf(f);
+        if (f.aggregate) continue;
+        if (items.length < limit) {
+          items.push({
+            file,
+            severity: severityOf(f),
+            entityType: f.entityType || null,
+            entityId: f.entityId != null ? String(f.entityId) : null,
+            field: f.field || null,
+            line: f.lineNumber ?? f.csvRowNumber ?? null,
+            message: clip(typeof f.context === "string" ? f.context : f.message || "", 240),
+          });
+        }
+      }
+    }
+    if (total === 0) return { content: `${header}\nNo outstanding finding for rule ${code}.` };
+    const rule = getRule(code);
+    return {
+      content: [
+        header,
+        `Rule ${code}: ${total} finding(s)${rule?.description ? ` — ${rule.description}` : ""}.`,
+        `Sample (${items.length}):`,
+        JSON.stringify(items),
+      ].join("\n"),
+    };
+  },
+};
+
+// ── get_rule_info ─────────────────────────────────────────────────────────
+const getRuleInfo = {
+  definition: {
+    name: "get_rule_info",
+    description: "Meaning, default severity and GTFS section of a validation rule code.",
+    input_schema: {
+      type: "object",
+      properties: { rule_code: { type: "string" } },
+      required: ["rule_code"],
+    },
+  },
+  run(input) {
+    const code = typeof input?.rule_code === "string" ? input.rule_code.trim() : "";
+    if (!RULE_CODE_RE.test(code)) return { content: "Error: invalid rule_code.", isError: true };
+    const rule = getRule(code);
+    if (!rule) {
+      return {
+        content: `Rule ${code} is not in the catalogue. It may be a validator notice this app does not document; explain it from the MobilityData rule name.`,
+      };
+    }
+    return {
+      content: JSON.stringify({
+        code,
+        severity: rule.default_severity,
+        section: rule.gtfs_section,
+        description: rule.description,
+        mobilitydata_rule: rule.mobilitydata_match || code,
+        docs: `https://gtfs-validator.mobilitydata.org/rules.html#${rule.mobilitydata_match || code}`,
+      }),
+    };
+  },
+};
+
+// ── get_feed_overview ─────────────────────────────────────────────────────
+const OVERVIEW_TABLES = [
+  "agency",
+  "routes",
+  "stops",
+  "trips",
+  "stop_times",
+  "calendar",
+  "calendar_dates",
+  "shapes",
+  "frequencies",
+  "transfers",
+  "pathways",
+  "levels",
+  "feed_info",
+  "fare_attributes",
+  "fare_rules",
+  "fare_products",
+  "attributions",
+  "translations",
+];
+
+const getFeedOverview = {
+  definition: {
+    name: "get_feed_overview",
+    description:
+      "Orientation snapshot of the loaded feed: row counts per table, agencies, service date range, route type breakdown, shape coverage, feed_info. Cheap — call it before exploring an unfamiliar feed.",
+    input_schema: { type: "object", properties: {} },
+  },
+  run(_input, ctx) {
+    const db = ctx.dbCtx.db;
+    const q = (sql) => {
+      try {
+        return db.prepare(sql).all();
+      } catch {
+        return [];
+      }
+    };
+    const one = (sql) => q(sql)[0] || {};
+    const counts = {};
+    for (const table of OVERVIEW_TABLES) {
+      const row = one(`SELECT COUNT(*) AS n FROM ${table}`);
+      if (row.n != null) counts[table] = row.n;
+    }
+    counts.distinct_shapes = one("SELECT COUNT(DISTINCT shape_id) AS n FROM shapes").n ?? 0;
+    const agencies = q("SELECT agency_id, agency_name, agency_timezone, agency_lang FROM agency LIMIT 10");
+    const routeTypes = q(
+      "SELECT route_type, COUNT(*) AS routes FROM routes GROUP BY route_type ORDER BY routes DESC",
+    );
+    const cal = one("SELECT MIN(start_date) AS min_start, MAX(end_date) AS max_end FROM calendar");
+    const calDates = one(
+      "SELECT MIN(date) AS min_date, MAX(date) AS max_date, COUNT(*) AS n FROM calendar_dates",
+    );
+    const feedInfo = one(
+      "SELECT feed_publisher_name, feed_lang, feed_start_date, feed_end_date, feed_version FROM feed_info LIMIT 1",
+    );
+    const tripsWithoutShape = one(
+      "SELECT COUNT(*) AS n FROM trips WHERE shape_id IS NULL OR shape_id = ''",
+    ).n;
+    const stopsNoCoords = one(
+      "SELECT COUNT(*) AS n FROM stops WHERE stop_lat IS NULL OR stop_lat = '' OR stop_lon IS NULL OR stop_lon = ''",
+    ).n;
+    return {
+      content: JSON.stringify({
+        counts,
+        agencies,
+        route_types: routeTypes,
+        service_dates: {
+          calendar: cal,
+          calendar_dates: calDates,
+        },
+        feed_info: feedInfo,
+        quality_hints: {
+          trips_without_shape: tripsWithoutShape,
+          stops_without_coordinates: stopsNoCoords,
+        },
+      }),
+    };
+  },
+};
+
+// ── navigate ──────────────────────────────────────────────────────────────
+const NAV_TARGETS = new Set([
+  "route",
+  "stop",
+  "trip",
+  "shape",
+  "validation",
+  "schedule",
+  "sql_console",
+  "shape_studio",
+  "home",
+]);
+const ENTITY_TABLE = {
+  route: ["routes", "route_id"],
+  stop: ["stops", "stop_id"],
+  trip: ["trips", "trip_id"],
+  shape: ["shapes", "shape_id"],
+};
+
+const navigate = {
+  definition: {
+    name: "navigate",
+    description:
+      "Open something in the app for the user: an entity's detail panel (route, stop, trip, shape — give its id), the schedule & map of a route (target 'schedule' + route_id), the validation report, the SQL console, the shape studio of a route (edit mode only), or the home dashboard. Use it when the user asks to see or open something, or to point at the entity you just discussed.",
+    input_schema: {
+      type: "object",
+      properties: {
+        target: {
+          type: "string",
+          enum: [...NAV_TARGETS],
+        },
+        id: { type: "string", description: "Entity id for route/stop/trip/shape targets." },
+        route_id: { type: "string", description: "Route to show for schedule / shape_studio targets." },
+      },
+      required: ["target"],
+    },
+  },
+  run(input, ctx) {
+    const target = typeof input?.target === "string" ? input.target : "";
+    if (!NAV_TARGETS.has(target)) return { content: "Error: unknown target.", isError: true };
+    const id = typeof input?.id === "string" ? input.id.trim() : "";
+    const routeId = typeof input?.route_id === "string" ? input.route_id.trim() : "";
+    if (id && !SAFE_ID_RE.test(id)) return { content: "Error: invalid id.", isError: true };
+    if (routeId && !SAFE_ID_RE.test(routeId)) return { content: "Error: invalid route_id.", isError: true };
+    const db = ctx.dbCtx.db;
+    const exists = (table, col, value) => {
+      try {
+        return Boolean(db.prepare(`SELECT 1 FROM ${table} WHERE ${col} = ? LIMIT 1`).get(value));
+      } catch {
+        return false;
+      }
+    };
+    let label = target;
+    let payload = { target };
+    if (ENTITY_TABLE[target]) {
+      if (!id) return { content: `Error: id is required for target ${target}.`, isError: true };
+      const [table, col] = ENTITY_TABLE[target];
+      if (!exists(table, col, id)) {
+        return { content: `Not found: no ${target} with id "${id}" in this feed.`, isError: true };
+      }
+      payload = { target, id };
+      // Routes deep-link to the schedule & map as well.
+      if (target === "route") {
+        const r = db.prepare("SELECT agency_id FROM routes WHERE route_id = ?").get(id);
+        payload.agencyId = r?.agency_id || null;
+      }
+      if (target === "trip") {
+        const r = db.prepare("SELECT route_id FROM trips WHERE trip_id = ?").get(id);
+        payload.routeId = r?.route_id || null;
+      }
+      label = `${target} ${id}`;
+    } else if (target === "schedule" || target === "shape_studio") {
+      if (routeId) {
+        if (!exists("routes", "route_id", routeId)) {
+          return { content: `Not found: no route with id "${routeId}".`, isError: true };
+        }
+        const r = db.prepare("SELECT agency_id FROM routes WHERE route_id = ?").get(routeId);
+        payload = { target, routeId, agencyId: r?.agency_id || null };
+        label = `${target} · route ${routeId}`;
+      } else {
+        payload = { target };
+      }
+      if (target === "shape_studio" && !ctx.dbCtx.editing) {
+        payload.requiresEditMode = true;
+      }
+    }
+    ctx.emit("ui_action", { actionId: ctx.nextActionId(), ...payload, label });
+    return {
+      content:
+        target === "shape_studio" && payload.requiresEditMode
+          ? "Opened the request; the Shape Studio needs edit mode, the app asks the user to enable it."
+          : `Opened ${label} in the app.`,
+    };
+  },
+};
+
+// ── show_chart ────────────────────────────────────────────────────────────
+const CHART_TYPES = new Set(["bar", "line", "pie"]);
+
+const showChart = {
+  definition: {
+    name: "show_chart",
+    description:
+      "Draw a chart in the chat from the rows of a previous run_sql step (use its step_id). x is the category/time column; y one or more numeric columns. Keep ≤ 200 rows (aggregate first). pie needs exactly one y column.",
+    input_schema: {
+      type: "object",
+      properties: {
+        step_id: { type: "string" },
+        chart_type: { type: "string", enum: [...CHART_TYPES] },
+        x: { type: "string", description: "Column for the X axis / categories." },
+        y: { type: "array", items: { type: "string" }, description: "Numeric column(s) to plot." },
+        title: { type: "string" },
+      },
+      required: ["step_id", "chart_type", "x", "y"],
+    },
+  },
+  run(input, ctx) {
+    const stepId = typeof input?.step_id === "string" ? input.step_id : "";
+    const step = ctx.steps.get(stepId);
+    if (!step) return { content: `Error: unknown step_id "${stepId}". Run the query first.`, isError: true };
+    const type = CHART_TYPES.has(input?.chart_type) ? input.chart_type : "bar";
+    const x = typeof input?.x === "string" ? input.x : "";
+    const y = Array.isArray(input?.y) ? input.y.filter((c) => typeof c === "string") : [];
+    const title = clip(typeof input?.title === "string" ? input.title.trim() : "", 80);
+    const cols = new Set(step.columns);
+    if (!cols.has(x)) return { content: `Error: column "${x}" is not in the result.`, isError: true };
+    const missing = y.filter((c) => !cols.has(c));
+    if (y.length === 0 || missing.length) {
+      return { content: `Error: y column(s) missing from the result: ${missing.join(", ") || "(none given)"}.`, isError: true };
+    }
+    if (type === "pie" && y.length !== 1) return { content: "Error: pie needs exactly one y column.", isError: true };
+    const rows = step.rows.slice(0, CHART_MAX_ROWS).map((r) => {
+      const out = { [x]: r[x] };
+      for (const c of y) out[c] = Number(r[c]);
+      return out;
+    });
+    ctx.emit("chart", {
+      chartId: ctx.nextChartId(),
+      stepId,
+      chartType: type,
+      x,
+      y,
+      title,
+      rows,
+      truncated: step.rows.length > CHART_MAX_ROWS,
+    });
+    return { content: `Chart drawn (${rows.length} points).` };
+  },
+};
+
+const TOOLS = [runSql, proposeFix, getValidationFindings, getRuleInfo, getFeedOverview, navigate, showChart];
+const TOOL_DEFINITIONS = TOOLS.map((t) => t.definition);
+const TOOLS_BY_NAME = Object.fromEntries(TOOLS.map((t) => [t.definition.name, t]));
+
+// Per-turn tool context: step/proposal ids and the rows kept for charts.
+const createToolContext = ({ dbCtx, emit }) => {
+  let stepSeq = 0;
+  let proposalSeq = 0;
+  let actionSeq = 0;
+  let chartSeq = 0;
+  return {
+    dbCtx,
+    emit,
+    steps: new Map(),
+    nextStepId: () => `s${++stepSeq}`,
+    nextProposalId: () => `p${++proposalSeq}`,
+    nextActionId: () => `a${++actionSeq}`,
+    nextChartId: () => `c${++chartSeq}`,
+  };
+};
+
+const executeTool = (name, input, ctx) => {
+  const tool = TOOLS_BY_NAME[name];
+  if (!tool) return { content: `Error: unknown tool ${name}.`, isError: true };
+  try {
+    return tool.run(input || {}, ctx);
+  } catch (err) {
+    return { content: `Tool ${name} failed: ${err.message}`, isError: true };
+  }
+};
+
+module.exports = {
+  TOOL_DEFINITIONS,
+  createToolContext,
+  executeTool,
+  _internals: { summarizeStoredReport, resultSnapshot, TOOLS_BY_NAME },
+};

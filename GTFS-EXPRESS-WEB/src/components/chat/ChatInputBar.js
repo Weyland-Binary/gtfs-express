@@ -10,7 +10,7 @@
  * The component is dumb — all state lives upstream in ChatDrawer.
  */
 
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Box,
   TextField,
@@ -23,6 +23,19 @@ import {
 } from "@mui/material";
 import SendIcon from "@mui/icons-material/Send";
 import StopIcon from "@mui/icons-material/Stop";
+import BoltIcon from "@mui/icons-material/Bolt";
+import {
+  Menu,
+  MenuItem,
+  ListItemIcon,
+  ListItemText,
+} from "@mui/material";
+import TravelExploreIcon from "@mui/icons-material/TravelExplore";
+import HealthAndSafetyOutlinedIcon from "@mui/icons-material/HealthAndSafetyOutlined";
+import AutoFixHighIcon from "@mui/icons-material/AutoFixHigh";
+import CalendarMonthOutlinedIcon from "@mui/icons-material/CalendarMonthOutlined";
+import PlaceOutlinedIcon from "@mui/icons-material/PlaceOutlined";
+import TimelineIcon from "@mui/icons-material/Timeline";
 import AttachFileIcon from "@mui/icons-material/AttachFile";
 import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 import { useLanguage } from "../../contexts/LanguageContext";
@@ -47,11 +60,23 @@ export default function ChatInputBar({
   attachmentUploading = null,
   onAttachFile = null,
   onRemoveAttachment = null,
+  // Quick actions: ready-made prompts sent immediately (bolt menu).
+  onQuickAction = null,
 }) {
   const { t } = useLanguage();
   const theme = useTheme();
   const inputRef = useRef(null);
   const attachInputRef = useRef(null);
+  const [quickAnchor, setQuickAnchor] = useState(null);
+
+  const quickActions = [
+    { Icon: TravelExploreIcon, key: "chat.quick.overview" },
+    { Icon: HealthAndSafetyOutlinedIcon, key: "chat.quick.errors" },
+    { Icon: AutoFixHighIcon, key: "chat.quick.fixTop" },
+    { Icon: CalendarMonthOutlinedIcon, key: "chat.quick.calendar" },
+    { Icon: PlaceOutlinedIcon, key: "chat.quick.stops" },
+    { Icon: TimelineIcon, key: "chat.quick.headways" },
+  ];
 
   useEffect(() => {
     if (autoFocus) {
@@ -206,6 +231,60 @@ export default function ChatInputBar({
           gap: 0.75,
         }}
       >
+        {onQuickAction && (
+          <>
+            <Tooltip title={t("chat.quick.button")}>
+              <Box>
+                <IconButton
+                  onClick={(e) => setQuickAnchor(e.currentTarget)}
+                  disabled={streaming || disabled}
+                  aria-label={t("chat.quick.button")}
+                  data-testid="chat-quick-actions"
+                  sx={{
+                    width: 38,
+                    height: 38,
+                    borderRadius: 2,
+                    color: streaming || disabled ? theme.palette.text.disabled : theme.palette.ai.main,
+                    border: `1px solid ${alpha(theme.palette.ai.main, 0.35)}`,
+                    "&:hover": {
+                      background: alpha(theme.palette.ai.main, 0.08),
+                      borderColor: theme.palette.ai.main,
+                    },
+                  }}
+                >
+                  <BoltIcon sx={{ fontSize: 19 }} />
+                </IconButton>
+              </Box>
+            </Tooltip>
+            <Menu
+              anchorEl={quickAnchor}
+              open={Boolean(quickAnchor)}
+              onClose={() => setQuickAnchor(null)}
+              anchorOrigin={{ vertical: "top", horizontal: "left" }}
+              transformOrigin={{ vertical: "bottom", horizontal: "left" }}
+              slotProps={{ paper: { sx: { minWidth: 260, mt: -1 } } }}
+            >
+              {quickActions.map(({ Icon, key }) => (
+                <MenuItem
+                  key={key}
+                  data-testid="chat-quick-item"
+                  onClick={() => {
+                    setQuickAnchor(null);
+                    onQuickAction(t(`${key}.prompt`));
+                  }}
+                >
+                  <ListItemIcon>
+                    <Icon fontSize="small" sx={{ color: theme.palette.ai.main }} />
+                  </ListItemIcon>
+                  <ListItemText
+                    primary={t(`${key}.label`)}
+                    primaryTypographyProps={{ fontSize: "0.82rem", fontWeight: 600 }}
+                  />
+                </MenuItem>
+              ))}
+            </Menu>
+          </>
+        )}
         {attachAvailable && (
           <>
             <input

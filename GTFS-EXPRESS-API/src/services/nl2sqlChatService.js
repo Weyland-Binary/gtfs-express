@@ -1,60 +1,30 @@
 /**
- * nl2sqlChatService — Multi-turn streaming SQL assistant.
+ * nl2sqlChatService — the streaming, tool-using chat assistant.
  *
- * Lifecycle of one user turn (driven by `streamChatTurn`):
+ * One user turn (`streamChatTurn`) is an agent loop:
  *
- *   ┌───── PASS 1 (Anthropic streaming) ─────────────────────────────────┐
- *   │  System prompt: buildChatSystemPrompt() (cached, ephemeral)        │
- *   │  Stop sequence: "</sql>"                                           │
- *   │  Output shape: <preamble>…</preamble>\n<sql>\nSELECT …;            │
- *   │  → emit("token", {phase:"preamble", text:Δ}) for each delta        │
- *   │  → on stream end, extract <preamble> / <sql> blocks                │
- *   │  → emit("sql_generated", {sql, preamble}) OR emit("done") if no SQL│
- *   └────────────────────────────────────────────────────────────────────┘
- *                                  │
- *                                  ▼
- *   ┌───── classifyStatement (sqlConsoleService) ────────────────────────┐
- *   │  Reuses the SAME parser the SQL Console uses — error messages and  │
- *   │  protected-table list match what users see elsewhere.              │
- *   │  - allowMutations: false                                           │
- *   │  - On "mutate" → emit("sql_blocked", {reason, draftSql, …})        │
- *   │  - On "forbidden" → emit("sql_blocked", {reason:"forbidden", …})   │
- *   │  - On "read" → continue                                            │
- *   └────────────────────────────────────────────────────────────────────┘
- *                                  │
- *                                  ▼
- *   ┌───── executeSqlInSession ──────────────────────────────────────────┐
- *   │  Same code path the SQL Console hits. Read-only enforced via       │
- *   │  allowMutations:false. Result truncated at the standard MAX_ROWS   │
- *   │  cap (1000 rows). The full row count + truncation flag are echoed  │
- *   │  to the UI; only the first ~20 rows are forwarded to Claude in     │
- *   │  Pass 2 to control token cost.                                     │
- *   │  → emit("sql_executing", {})                                        │
- *   │  → emit("sql_result", {rowCount, columns, rowsPreview, truncated, │
- *   │           durationMs, modelSampleRows}) on success                 │
- *   │  → emit("sql_error", {message}) on SQLite/runtime failure          │
- *   └────────────────────────────────────────────────────────────────────┘
- *                                  │
- *                                  ▼
- *   ┌───── PASS 2 (Anthropic streaming) ─────────────────────────────────┐
- *   │  Same system prompt (cache hit). New user message contains the     │
- *   │  result snapshot + a directive: "summarize in 2-4 sentences in     │
- *   │  {language}". Plain prose only — no <sql> block expected.          │
- *   │  → emit("token", {phase:"summary", text:Δ}) for each delta         │
- *   │  → emit("usage", {pass:2, …}) at end                               │
- *   └────────────────────────────────────────────────────────────────────┘
- *                                  │
- *                                  ▼
- *                            emit("done", {})
+ *   messages = history (flattened) + [context blocks + user text]
+ *   loop (≤ MAX_TOOL_ROUNDS):
+ *     stream = anthropic.messages.stream({ system (cached), tools, messages })
+ *       text deltas       → emit("token", { text })      (answer, markdown)
+ *       tool_use start    → emit("tool_pending", { name })
+ *     final = stream.finalMessage()
+ *     if stop_reason !== "tool_use" → break
+ *     for each tool_use block → executeTool() (chatAgentTools.js), which
+ *       emits the UI events (step_start / step_result / proposal /
+ *       ui_action / chart) and returns the text handed back to the model
+ *     messages += assistant(final.content) + user(tool_results)
+ *   followups tag at the end of the answer → emit("followups", { items })
+ *   emit("done")
  *
- * Cancellation: the controller wires `req.on("close", () => abort.abort())`.
- * Both Anthropic streams accept `signal`. SQL execution is synchronous
- * (better-sqlite3) so abort during execute is a no-op — the result is
- * discarded by the caller after abort.
+ * Safety: run_sql is read-only (same classifier as the SQL Console);
+ * propose_fix never executes (dry-run only) — the user applies through the
+ * guided flow. Tool inputs are validated in chatAgentTools.
  *
- * Rate limiting: per-beta-code sliding 1-hour window in memory. Single
- * process scope — acceptable for the beta footprint. Migrate to Redis when
- * we cluster.
+ * Cancellation: the controller aborts the signal when the client goes away;
+ * both the Anthropic stream and the loop honour it.
+ *
+ * Rate limiting: aiCostLimiter (per key / daily / global), one check per turn.
  */
 
 const fs = require("fs");
@@ -62,6 +32,7 @@ const path = require("path");
 const { Anthropic } = require("@anthropic-ai/sdk");
 const config = require("../config");
 const nl2sqlService = require("./nl2sqlService");
+const chatAgentTools = require("./chatAgentTools");
 const sqlConsoleService = require("./edit/sqlConsoleService");
 const chatAttachmentService = require("./chatAttachmentService");
 const aiCostLimiter = require("./aiCostLimiter");
@@ -109,188 +80,6 @@ const logChatUsage = (entry) => {
   } catch {
     /* swallow — telemetry must never break the stream */
   }
-};
-
-// ─── Block extraction (post-stream) ───────────────────────────────────────
-// Pulls <preamble>…</preamble> and <sql>…</sql>? from the full assistant
-// text. Robust to multiple model output formats — we'd rather salvage a
-// borderline response than tell the user "I had nothing to say".
-//
-// Resolution order for SQL:
-//   1. <sql>...</sql> tags (canonical, what the prompt requests)
-//   2. <sql>...$ (closing tag missing because we use it as stop_sequence)
-//   3. ```sql\n...\n``` markdown fence (some models default to this)
-//   4. ```\n...\n``` plain code fence containing what looks like SQL
-//   5. Bare statement matching ^(WITH|SELECT|EXPLAIN|UPDATE|INSERT|DELETE)
-//      anywhere in the text after the preamble
-//
-// `extracted.via` is set so we can log which fallback fired.
-const extractBlocks = (fullText) => {
-  const out = { preamble: "", sql: "", via: null };
-  const pre = /<preamble>([\s\S]*?)<\/preamble>/i.exec(fullText);
-  if (pre) out.preamble = pre[1].trim();
-
-  // 1 & 2. Tagged form, with or without closing tag.
-  const tagged = /<sql>\s*([\s\S]*?)\s*(?:<\/sql>|$)/i.exec(fullText);
-  if (tagged && tagged[1].trim()) {
-    out.sql = tagged[1].trim();
-    out.via = tagged[0].includes("</sql>") ? "tags" : "tags_open_only";
-  }
-
-  // 3 & 4. Markdown code fence fallback — strip fence markers and trim.
-  if (!out.sql) {
-    const fenced = /```(?:sql)?\s*\n?([\s\S]*?)\n?```/i.exec(fullText);
-    if (fenced && fenced[1].trim()) {
-      out.sql = fenced[1].trim();
-      out.via = "fence";
-    }
-  }
-
-  // 5. Bare SQL statement — last resort. We accept the verbs the SQL
-  //    classifier knows about so the result still flows through the same
-  //    read-only enforcement.
-  if (!out.sql) {
-    // Strip the preamble (if any) before searching, to avoid matching
-    // the word "select" inside conversational text.
-    const after = pre
-      ? fullText.slice(pre.index + pre[0].length)
-      : fullText;
-    const bare =
-      /\b(WITH\s+[\s\S]+?;|SELECT\s+[\s\S]+?;|EXPLAIN\s+[\s\S]+?;|UPDATE\s+[\s\S]+?;|INSERT\s+[\s\S]+?;|DELETE\s+[\s\S]+?;)/i.exec(
-        after,
-      );
-    if (bare && bare[1]) {
-      out.sql = bare[1].trim();
-      out.via = "bare_statement";
-    }
-  }
-
-  // Fallback: if no <preamble> tag was emitted, use everything before the
-  // SQL block (or the whole text if there's none) as the preamble.
-  if (!out.preamble) {
-    const sqlMarker = /<sql>|```/i.exec(fullText);
-    out.preamble = (sqlMarker
-      ? fullText.slice(0, sqlMarker.index)
-      : fullText
-    )
-      .replace(/<\/?preamble>/gi, "")
-      .trim();
-  }
-  return out;
-};
-
-// ─── Streaming token cleaner ──────────────────────────────────────────────
-// Buffers raw deltas and computes the "currently safe to display" preamble
-// text by stripping any <preamble>/</preamble>/<sql> tags and holding back
-// any trailing partial-tag fragment (e.g. "<", "<pr", "</prea") that might
-// resolve into a tag on the next delta.
-const makeStreamCleaner = () => {
-  let raw = "";
-  let lastEmittedLen = 0;
-
-  const computeDisplayable = (buf) => {
-    // Find the boundaries of the <preamble> block.
-    const startIdx = buf.indexOf("<preamble>");
-    let inner;
-    if (startIdx === -1) {
-      // Tag may not have been emitted yet. Tolerate model variations:
-      // if there is no <preamble> open tag but text exists, treat the
-      // whole buffer as preamble until a <sql> tag appears.
-      inner = buf;
-    } else {
-      inner = buf.slice(startIdx + "<preamble>".length);
-    }
-    // Cut at </preamble> or <sql> if present.
-    const endTag = inner.indexOf("</preamble>");
-    const sqlTag = inner.indexOf("<sql>");
-    let cutoff = inner.length;
-    if (endTag !== -1) cutoff = Math.min(cutoff, endTag);
-    if (sqlTag !== -1) cutoff = Math.min(cutoff, sqlTag);
-    let safe = inner.slice(0, cutoff);
-    // Hold back any trailing "<" that might be the start of a tag.
-    const lastLT = safe.lastIndexOf("<");
-    if (lastLT !== -1) {
-      const tail = safe.slice(lastLT);
-      // If the tail looks like a complete safe character sequence (e.g.
-      // standalone "<" used in text), still hold it — better safe.
-      if (!/^<[a-z\/][a-z]*>$/i.test(tail)) {
-        safe = safe.slice(0, lastLT);
-      }
-    }
-    return safe;
-  };
-
-  return {
-    pushDelta(text) {
-      raw += text;
-      const display = computeDisplayable(raw);
-      if (display.length > lastEmittedLen) {
-        const newPart = display.slice(lastEmittedLen);
-        lastEmittedLen = display.length;
-        return newPart;
-      }
-      return "";
-    },
-    finalize() {
-      // On stream end, flush whatever remaining displayable text we held
-      // back (no risk of partial-tag now).
-      const startIdx = raw.indexOf("<preamble>");
-      let inner = startIdx === -1 ? raw : raw.slice(startIdx + "<preamble>".length);
-      const endTag = inner.indexOf("</preamble>");
-      const sqlTag = inner.indexOf("<sql>");
-      let cutoff = inner.length;
-      if (endTag !== -1) cutoff = Math.min(cutoff, endTag);
-      if (sqlTag !== -1) cutoff = Math.min(cutoff, sqlTag);
-      const final = inner.slice(0, cutoff);
-      if (final.length > lastEmittedLen) {
-        const tail = final.slice(lastEmittedLen);
-        lastEmittedLen = final.length;
-        return tail;
-      }
-      return "";
-    },
-    getRaw() {
-      return raw;
-    },
-  };
-};
-
-// ─── History → Anthropic messages array ───────────────────────────────────
-// Each historical assistant turn is collapsed to a single short text block
-// containing the SQL + a one-line result summary. This keeps token cost
-// bounded as history grows. Trim to MAX_TURNS most recent.
-const MAX_TURNS = 10;
-
-const flattenAssistantTurn = (turn) => {
-  const parts = [];
-  if (turn.preamble) parts.push(turn.preamble);
-  if (turn.sql) {
-    parts.push("<sql>\n" + turn.sql + "\n</sql>");
-    if (turn.blocked) {
-      parts.push(`(SQL was a ${turn.blocked.reason}; not executed.)`);
-    } else if (turn.resultSummary) {
-      parts.push(`(Result: ${turn.resultSummary})`);
-    }
-  }
-  if (turn.summary) parts.push(turn.summary);
-  return parts.filter(Boolean).join("\n").trim();
-};
-
-const buildAnthropicMessages = (history, currentUserText) => {
-  // Take only the last MAX_TURNS pairs (each pair = user+assistant).
-  // History is provided client-side as a flat array; we trust ordering.
-  const trimmed = history.slice(-MAX_TURNS * 2);
-  const msgs = [];
-  for (const turn of trimmed) {
-    if (turn.role === "user" && typeof turn.content === "string") {
-      msgs.push({ role: "user", content: turn.content });
-    } else if (turn.role === "assistant") {
-      const flat = flattenAssistantTurn(turn);
-      if (flat) msgs.push({ role: "assistant", content: flat });
-    }
-  }
-  msgs.push({ role: "user", content: currentUserText });
-  return msgs;
 };
 
 // ─── Session context block (companion awareness) ─────────────────────────
@@ -424,7 +213,6 @@ const buildSessionContextBlock = (raw) => {
     : block;
 };
 
-// ─── Pass 2 prompt (result summarisation) ─────────────────────────────────
 const LANG_NAMES = {
   en: "English",
   fr: "French",
@@ -434,227 +222,6 @@ const LANG_NAMES = {
   zh: "Chinese (Simplified)",
   ar: "Arabic",
   hi: "Hindi",
-};
-
-// Hard ceilings to keep the result snapshot sent to Claude under control.
-const MODEL_SAMPLE_ROWS = 20;
-const MODEL_SAMPLE_BYTES = 6 * 1024;
-
-const buildResultSnapshot = (sqlResult) => {
-  const cols = sqlResult.columns || [];
-  const rows = sqlResult.rows || [];
-  const sample = rows.slice(0, MODEL_SAMPLE_ROWS);
-  let payload = JSON.stringify({
-    rowCount: sqlResult.rowCount || rows.length,
-    truncated: Boolean(sqlResult.truncated),
-    columns: cols,
-    sampleRows: sample,
-  });
-  if (payload.length > MODEL_SAMPLE_BYTES) {
-    // Wide rows / long strings — fall back to a textual digest.
-    payload = JSON.stringify({
-      rowCount: sqlResult.rowCount || rows.length,
-      truncated: true,
-      columns: cols,
-      note: `Result is too wide to include verbatim. ${rows.length} rows × ${cols.length} columns. First row keys: ${cols.slice(0, 8).join(", ")}.`,
-    });
-  }
-  return { payload, sample };
-};
-
-const buildPass2UserMessage = ({ sql, sqlResult, language }) => {
-  const langName = LANG_NAMES[language] || "English";
-  const { payload } = buildResultSnapshot(sqlResult);
-  return [
-    `The server executed the SQL you proposed. Here is the result snapshot (JSON):`,
-    "",
-    payload,
-    "",
-    `Now write a 2-4 sentence summary in ${langName} of what the data shows.`,
-    `Reference concrete numbers from the result. Plain prose only — NO code,`,
-    `NO markdown headings, NO XML tags, NO <sql> block.`,
-    `If the result is empty (rowCount = 0), say so plainly and suggest one`,
-    `concrete refinement the user could try.`,
-  ].join("\n");
-};
-
-// ─── Pass 1: SQL generation streaming ─────────────────────────────────────
-const runPass1 = async ({ client, model, history, userMessage, signal, emit }) => {
-  const messages = buildAnthropicMessages(history, userMessage);
-  const cleaner = makeStreamCleaner();
-  let pass1Usage = null;
-
-  let stream;
-  try {
-    stream = client.messages.stream(
-      {
-        model,
-        // 1024 was occasionally tight when Haiku produced verbose SQL
-        // (window functions + CTEs) — bumped to 2048 to leave headroom.
-        // Pass-2 stays at 768 since it only writes prose.
-        max_tokens: 2048,
-        stop_sequences: ["</sql>"],
-        system: [
-          {
-            type: "text",
-            text: nl2sqlService.CHAT_SYSTEM_PROMPT,
-            cache_control: { type: "ephemeral" },
-          },
-        ],
-        messages,
-      },
-      { signal },
-    );
-  } catch (err) {
-    throw mapAnthropicError(err);
-  }
-
-  try {
-    for await (const event of stream) {
-      if (
-        event.type === "content_block_delta" &&
-        event.delta &&
-        event.delta.type === "text_delta"
-      ) {
-        const text = event.delta.text || "";
-        if (!text) continue;
-        const display = cleaner.pushDelta(text);
-        if (display) emit("token", { phase: "preamble", text: display });
-      } else if (event.type === "message_delta" && event.usage) {
-        // Final usage event arrives at the end of the stream.
-        pass1Usage = event.usage;
-      }
-    }
-  } catch (err) {
-    throw mapAnthropicError(err);
-  }
-
-  // Flush any held-back tail from the cleaner.
-  const tail = cleaner.finalize();
-  if (tail) emit("token", { phase: "preamble", text: tail });
-
-  // Pull the final aggregated message for usage + raw text.
-  let finalMessage = null;
-  try {
-    finalMessage = await stream.finalMessage();
-  } catch {
-    /* finalMessage may already have been read by the iterator on some
-       SDK versions — fall back to what we have. */
-  }
-  if (finalMessage && finalMessage.usage) pass1Usage = finalMessage.usage;
-
-  const fullText = cleaner.getRaw() || (finalMessage?.content?.[0]?.text || "");
-  const { preamble, sql, via } = extractBlocks(fullText);
-
-  // Log the rare case where we got NO sql at all — useful for tuning the
-  // system prompt. Truncate to 600 chars so the log file doesn't bloat.
-  if (!sql) {
-    console.warn(
-      "[nl2sql-chat] pass1 produced no SQL block. Raw model output (truncated):\n" +
-        fullText.slice(0, 600),
-    );
-  } else if (via && via !== "tags") {
-    // Non-canonical extraction — the model deviated from the requested
-    // format. Useful breadcrumb without spamming the log on the happy path.
-    console.info(`[nl2sql-chat] pass1 SQL extracted via fallback: ${via}`);
-  }
-
-  if (pass1Usage) emit("usage", { pass: 1, ...pass1Usage });
-
-  return { preamble, sql, fullText };
-};
-
-// ─── Pass 2: result summarisation streaming ───────────────────────────────
-const runPass2 = async ({
-  client,
-  model,
-  history,
-  userMessage,
-  pass1Preamble,
-  pass1Sql,
-  sqlResult,
-  language,
-  signal,
-  emit,
-}) => {
-  // Build messages: prior history + current user msg + the assistant's
-  // pass-1 turn (so the model has full context) + a synthetic user msg
-  // with the result snapshot.
-  const baseMessages = buildAnthropicMessages(history, userMessage);
-  // Append the pass-1 assistant content (pre-execution).
-  const assistantContent = [
-    pass1Preamble ? `<preamble>${pass1Preamble}</preamble>` : "",
-    pass1Sql ? `<sql>\n${pass1Sql}\n</sql>` : "",
-  ]
-    .filter(Boolean)
-    .join("\n");
-  const pass2Messages = [
-    ...baseMessages,
-    { role: "assistant", content: assistantContent },
-    {
-      role: "user",
-      content: buildPass2UserMessage({
-        sql: pass1Sql,
-        sqlResult,
-        language,
-      }),
-    },
-  ];
-
-  let stream;
-  try {
-    stream = client.messages.stream(
-      {
-        model,
-        max_tokens: 768,
-        system: [
-          {
-            type: "text",
-            text: nl2sqlService.CHAT_SYSTEM_PROMPT,
-            cache_control: { type: "ephemeral" },
-          },
-        ],
-        messages: pass2Messages,
-      },
-      { signal },
-    );
-  } catch (err) {
-    throw mapAnthropicError(err);
-  }
-
-  let pass2Usage = null;
-  let summary = "";
-
-  try {
-    for await (const event of stream) {
-      if (
-        event.type === "content_block_delta" &&
-        event.delta &&
-        event.delta.type === "text_delta"
-      ) {
-        const text = event.delta.text || "";
-        if (!text) continue;
-        summary += text;
-        emit("token", { phase: "summary", text });
-      } else if (event.type === "message_delta" && event.usage) {
-        pass2Usage = event.usage;
-      }
-    }
-  } catch (err) {
-    throw mapAnthropicError(err);
-  }
-
-  let finalMessage = null;
-  try {
-    finalMessage = await stream.finalMessage();
-  } catch {
-    /* see Pass 1 */
-  }
-  if (finalMessage && finalMessage.usage) pass2Usage = finalMessage.usage;
-
-  if (pass2Usage) emit("usage", { pass: 2, ...pass2Usage });
-
-  return { summary };
 };
 
 // ─── Anthropic error mapper ───────────────────────────────────────────────
@@ -689,24 +256,238 @@ const resolveChatModel = ({ freeTier = false } = {}) =>
     ? config.NL2SQL_MODEL
     : config.NL2SQL_CHAT_MODEL || config.NL2SQL_MODEL;
 
+// ─── History → Anthropic messages ─────────────────────────────────────────
+// Each past assistant turn is collapsed into one text block: the answer plus
+// a compact trace of the tools it used (queries with their row counts, the
+// fixes it proposed and their outcome). The model keeps continuity ("the
+// query above", "apply the second fix") at bounded token cost.
+const MAX_TURNS = 10;
+const MAX_ANSWER_CHARS = 6000;
+const MAX_TRACE_SQL_CHARS = 1200;
+const MAX_TRACE_ITEMS = 12;
+
+const clipText = (v, n) => {
+  const str = typeof v === "string" ? v : "";
+  return str.length > n ? `${str.slice(0, n)}…` : str;
+};
+
+const flattenAssistantTurn = (turn) => {
+  const parts = [];
+  const answer = clipText(turn.content, MAX_ANSWER_CHARS).trim();
+  if (answer) parts.push(answer);
+  const trace = [];
+  const steps = Array.isArray(turn.steps) ? turn.steps.slice(0, MAX_TRACE_ITEMS) : [];
+  for (const st of steps) {
+    if (!st || typeof st !== "object") continue;
+    if (st.kind === "sql" && typeof st.sql === "string") {
+      const outcome = st.error
+        ? `error: ${clipText(st.error, 200)}`
+        : `${Number.isFinite(Number(st.rowCount)) ? Number(st.rowCount) : "?"} rows`;
+      trace.push(`- run_sql: ${clipText(st.sql, MAX_TRACE_SQL_CHARS)} → ${outcome}`);
+    }
+  }
+  const proposals = Array.isArray(turn.proposals) ? turn.proposals.slice(0, MAX_TRACE_ITEMS) : [];
+  for (const p of proposals) {
+    if (!p || typeof p !== "object" || typeof p.sql !== "string") continue;
+    const outcome = typeof p.outcome === "string" && p.outcome ? clipText(p.outcome, 200) : "not applied yet";
+    trace.push(`- propose_fix "${clipText(p.title, 80)}": ${clipText(p.sql, MAX_TRACE_SQL_CHARS)} → ${outcome}`);
+  }
+  const actions = Array.isArray(turn.uiActions) ? turn.uiActions.slice(0, MAX_TRACE_ITEMS) : [];
+  for (const a of actions) {
+    if (a && typeof a.label === "string") trace.push(`- navigate: ${clipText(a.label, 120)}`);
+  }
+  if (trace.length) parts.push(`[Tools used in this turn]\n${trace.join("\n")}`);
+  return parts.join("\n\n").trim();
+};
+
+const buildAnthropicMessages = (history, currentUserText) => {
+  const trimmed = history.slice(-MAX_TURNS * 2);
+  const msgs = [];
+  for (const turn of trimmed) {
+    if (!turn || typeof turn !== "object") continue;
+    if (turn.role === "user" && typeof turn.content === "string" && turn.content.trim()) {
+      msgs.push({ role: "user", content: clipText(turn.content, MAX_ANSWER_CHARS) });
+    } else if (turn.role === "assistant") {
+      const flat = flattenAssistantTurn(turn);
+      if (flat) msgs.push({ role: "assistant", content: flat });
+    }
+  }
+  // Anthropic requires strictly alternating roles starting with "user".
+  const alternating = [];
+  for (const m of msgs) {
+    const last = alternating[alternating.length - 1];
+    if (last && last.role === m.role) {
+      last.content = `${last.content}\n\n${m.content}`;
+    } else if (alternating.length === 0 && m.role !== "user") {
+      continue;
+    } else {
+      alternating.push({ ...m });
+    }
+  }
+  if (alternating.length && alternating[alternating.length - 1].role === "user") {
+    alternating[alternating.length - 1].content += `\n\n${currentUserText}`;
+  } else {
+    alternating.push({ role: "user", content: currentUserText });
+  }
+  return alternating;
+};
+
+// ─── Answer stream cleaner ────────────────────────────────────────────────
+// Withholds the trailing `<followups>[…]</followups>` tag (and any partial
+// "<f…" tail that might become one) from the displayed text; the parsed
+// questions are emitted as a separate event once the message ends.
+const FOLLOWUPS_OPEN = "<followups>";
+const FOLLOWUPS_RE = /<followups>\s*([\s\S]*?)\s*<\/followups>/i;
+
+const makeAnswerCleaner = () => {
+  let raw = "";
+  let emitted = 0;
+
+  const displayable = (buf) => {
+    const at = buf.toLowerCase().indexOf(FOLLOWUPS_OPEN);
+    let safe = at === -1 ? buf : buf.slice(0, at);
+    if (at === -1) {
+      // Hold back a tail that could be the start of the tag.
+      const lt = safe.lastIndexOf("<");
+      if (lt !== -1 && FOLLOWUPS_OPEN.startsWith(safe.slice(lt).toLowerCase())) {
+        safe = safe.slice(0, lt);
+      }
+    }
+    // Trailing whitespace may precede the tag: keep it until real text follows.
+    return safe.replace(/\s+$/, "");
+  };
+
+  return {
+    push(text) {
+      raw += text;
+      const shown = displayable(raw);
+      if (shown.length > emitted) {
+        const delta = shown.slice(emitted);
+        emitted = shown.length;
+        return delta;
+      }
+      return "";
+    },
+    finalize() {
+      const at = raw.toLowerCase().indexOf(FOLLOWUPS_OPEN);
+      const shown = (at === -1 ? raw : raw.slice(0, at)).replace(/\s+$/, "");
+      const delta = shown.length > emitted ? shown.slice(emitted) : "";
+      emitted = Math.max(emitted, shown.length);
+      return delta;
+    },
+    followups() {
+      const m = FOLLOWUPS_RE.exec(raw);
+      if (!m) return [];
+      try {
+        const arr = JSON.parse(m[1]);
+        return Array.isArray(arr)
+          ? arr.filter((q) => typeof q === "string" && q.trim()).map((q) => q.trim().slice(0, 160)).slice(0, 3)
+          : [];
+      } catch {
+        return [];
+      }
+    },
+    answerText() {
+      const at = raw.toLowerCase().indexOf(FOLLOWUPS_OPEN);
+      return (at === -1 ? raw : raw.slice(0, at)).trim();
+    },
+    reset() {
+      raw = "";
+      emitted = 0;
+    },
+  };
+};
+
+// ─── One model call (streams text, collects tool calls) ───────────────────
+const runModelRound = async ({ client, model, messages, signal, emit, cleaner, maxTokens }) => {
+  let stream;
+  try {
+    stream = client.messages.stream(
+      {
+        model,
+        max_tokens: maxTokens,
+        system: [
+          {
+            type: "text",
+            text: nl2sqlService.CHAT_SYSTEM_PROMPT,
+            cache_control: { type: "ephemeral" },
+          },
+        ],
+        tools: chatAgentTools.TOOL_DEFINITIONS,
+        messages,
+      },
+      { signal },
+    );
+  } catch (err) {
+    throw mapAnthropicError(err);
+  }
+
+  let usage = null;
+  let sawText = false;
+  try {
+    for await (const event of stream) {
+      if (event.type === "content_block_start" && event.content_block?.type === "tool_use") {
+        emit("tool_pending", { name: event.content_block.name });
+      } else if (
+        event.type === "content_block_delta" &&
+        event.delta &&
+        event.delta.type === "text_delta"
+      ) {
+        const text = event.delta.text || "";
+        if (!text) continue;
+        sawText = true;
+        const shown = cleaner.push(text);
+        if (shown) emit("token", { phase: "answer", text: shown });
+      } else if (event.type === "message_delta" && event.usage) {
+        usage = event.usage;
+      }
+    }
+  } catch (err) {
+    throw mapAnthropicError(err);
+  }
+
+  let finalMessage = null;
+  try {
+    finalMessage = await stream.finalMessage();
+  } catch {
+    /* some SDK versions consume it in the iterator — fall back */
+  }
+  if (finalMessage?.usage) usage = finalMessage.usage;
+  const content = Array.isArray(finalMessage?.content) ? finalMessage.content : [];
+  // A non-streaming mock may only return text through finalMessage.
+  if (!sawText) {
+    for (const block of content) {
+      if (block.type === "text" && block.text) {
+        const shown = cleaner.push(block.text);
+        if (shown) emit("token", { phase: "answer", text: shown });
+      }
+    }
+  }
+  return {
+    content,
+    stopReason: finalMessage?.stop_reason || null,
+    toolUses: content.filter((b) => b.type === "tool_use"),
+    usage,
+  };
+};
+
 // ─── Main entry: drive a full chat turn ───────────────────────────────────
+const MAX_TOOL_ROUNDS = 8;
+const MAX_CONSECUTIVE_TOOL_ERRORS = 4;
+
 /**
  * @param {Object} opts
  * @param {Array}  opts.history       — prior turns (client-managed)
  * @param {string} opts.userMessage   — current user request (string)
  * @param {string} opts.language      — UI language code (en, fr, …)
- * @param {Object} opts.dbCtx         — { db, sessionId } from requireSession
+ * @param {Object} opts.dbCtx         — { db, sessionId, editing } from requireSession
  * @param {string} opts.rateKey       — beta code (or fallback) for rate limit
- * @param {object} [opts.aiLimits]    — per-code AI cap overrides for beta
- *                                       holders ({dailyLimit?, hourlyLimit?});
- *                                       {} for anon → strict config defaults
- * @param {AbortSignal} opts.signal   — wired to req close from controller
+ * @param {object} [opts.aiLimits]    — per-code AI cap overrides
+ * @param {AbortSignal} opts.signal   — wired to the response close
  * @param {(event:string, data:Object) => void} opts.emit — SSE writer
- * @param {string} [opts.conversationId] — opaque, echoed back in events
- * @param {string} [opts.turnId]      — opaque, echoed back in events
- * @param {Array<{table:string}>} [opts.attachmentRefs] — chat-attachment
- *        tables to declare to the model this turn (validated upstream by
- *        chatAttachmentService.validateAttachmentRefs)
+ * @param {string} [opts.conversationId]
+ * @param {string} [opts.turnId]
+ * @param {Array<{table:string}>} [opts.attachmentRefs]
  */
 const streamChatTurn = async ({
   history,
@@ -739,16 +520,16 @@ const streamChatTurn = async ({
 
   const trimmed = (userMessage || "").trim();
   if (trimmed.length < 2) {
-    throw Object.assign(
-      new Error("Message is too short (min 2 chars)."),
-      { code: "INVALID_INPUT", status: 400 },
-    );
+    throw Object.assign(new Error("Message is too short (min 2 chars)."), {
+      code: "INVALID_INPUT",
+      status: 400,
+    });
   }
   if (trimmed.length > 2000) {
-    throw Object.assign(
-      new Error("Message is too long (max 2000 chars)."),
-      { code: "INVALID_INPUT", status: 400 },
-    );
+    throw Object.assign(new Error("Message is too long (max 2000 chars)."), {
+      code: "INVALID_INPUT",
+      status: 400,
+    });
   }
   if (!Array.isArray(history)) {
     throw Object.assign(new Error("history must be an array."), {
@@ -786,206 +567,128 @@ const streamChatTurn = async ({
     conversationId,
     turnId,
     model,
-    mode: "read",
-    // Anonymous free-trial allowance left AFTER this turn (null for coded
-    // users) — drives the "N free messages left" chip in the drawer.
+    mode: "agent",
     freeRemaining,
   });
 
-  // Companion awareness: prepend the sanitized session snapshot to the
-  // CURRENT user message only. The client stores its own raw copy of the
-  // user text in history, so past contexts never pile up turn after turn.
-  // The [Attached file] block follows the same discipline: rebuilt from
-  // server-persisted metadata each turn, never stored in history, never in
-  // the (cached) system prompt.
+  // Context blocks travel in the CURRENT user message only (the cached
+  // system prompt stays byte-identical; stale context never accumulates in
+  // history): [Session context] → [Attached file] → user text.
+  const langName = LANG_NAMES[language] || "English";
   const contextBlock = buildSessionContextBlock(sessionContext);
   const attachmentBlock = chatAttachmentService.buildAttachmentContextBlock(
     dbCtx.db,
     attachmentRefs,
   );
-  const outboundUserMessage = [contextBlock, attachmentBlock, trimmed]
+  const outboundUserMessage = [
+    contextBlock ? `${contextBlock}\nUI language: ${langName}.` : `[UI language: ${langName}]`,
+    attachmentBlock,
+    trimmed,
+  ]
     .filter(Boolean)
     .join("\n\n");
 
-  // ── PASS 1 — generate SQL ──────────────────────────────────────────────
-  let pass1;
+  const messages = buildAnthropicMessages(history, outboundUserMessage);
+  const toolCtx = chatAgentTools.createToolContext({ dbCtx, emit });
+  const cleaner = makeAnswerCleaner();
+  const usageTotals = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
+  let rounds = 0;
+  let toolCalls = 0;
+  let consecutiveErrors = 0;
+
+  const addUsage = (u) => {
+    if (!u) return;
+    for (const k of Object.keys(usageTotals)) usageTotals[k] += Number(u[k]) || 0;
+  };
+
   try {
-    pass1 = await runPass1({
-      client,
-      model,
-      history,
-      userMessage: outboundUserMessage,
-      signal,
-      emit,
-    });
+    for (;;) {
+      if (signal?.aborted) {
+        emit("done", { reason: "aborted" });
+        return;
+      }
+      const round = await runModelRound({
+        client,
+        model,
+        messages,
+        signal,
+        emit,
+        cleaner,
+        maxTokens: 4096,
+      });
+      addUsage(round.usage);
+      rounds += 1;
+
+      if (round.stopReason !== "tool_use" || round.toolUses.length === 0) break;
+
+      messages.push({ role: "assistant", content: round.content });
+      const results = [];
+      for (const tu of round.toolUses) {
+        if (signal?.aborted) break;
+        toolCalls += 1;
+        const res = chatAgentTools.executeTool(tu.name, tu.input, toolCtx);
+        if (res.isError) consecutiveErrors += 1;
+        else consecutiveErrors = 0;
+        results.push({
+          type: "tool_result",
+          tool_use_id: tu.id,
+          content: res.content,
+          ...(res.isError ? { is_error: true } : {}),
+        });
+      }
+      const budgetLeft = MAX_TOOL_ROUNDS - rounds;
+      const stopTools =
+        budgetLeft <= 0 || consecutiveErrors >= MAX_CONSECUTIVE_TOOL_ERRORS;
+      const userContent = stopTools
+        ? [
+            ...results,
+            {
+              type: "text",
+              text:
+                consecutiveErrors >= MAX_CONSECUTIVE_TOOL_ERRORS
+                  ? "Several tool calls failed in a row. Stop calling tools and answer the user now with what you know, stating what could not be verified."
+                  : "Tool budget for this turn is exhausted. Do not call tools again: answer the user now with what you have.",
+            },
+          ]
+        : results;
+      messages.push({ role: "user", content: userContent });
+      if (cleaner.answerText()) {
+        // Keep a paragraph break between narration and the final answer.
+        const gap = cleaner.push("\n\n");
+        if (gap) emit("token", { phase: "answer", text: gap });
+      }
+    }
   } catch (err) {
     logChatUsage({
       conversationId,
       turnId,
       ok: false,
-      stage: "pass1",
+      stage: rounds === 0 ? "pass1" : "loop",
       code: err.code || "UPSTREAM_ERROR",
+      rounds,
+      tool_calls: toolCalls,
       duration_ms: Date.now() - startedAt,
     });
     throw err;
   }
 
-  // No <sql> block? Treat as a clarifying question — done.
-  if (!pass1.sql) {
-    logChatUsage({
-      conversationId,
-      turnId,
-      ok: true,
-      stage: "clarify",
-      duration_ms: Date.now() - startedAt,
-    });
-    emit("done", { reason: "clarify" });
-    return;
-  }
-
-  // ── Classify SQL (read-only enforcement) ───────────────────────────────
-  const parsed = sqlConsoleService.parseStatements(pass1.sql, {
-    allowMutations: false,
-  });
-  if (!parsed.ok) {
-    // Determine reason: mutation in read mode vs forbidden verb / table.
-    // The error string from parseStatements distinguishes them.
-    const isMutation = /Mutations are not allowed/i.test(parsed.error);
-    emit("sql_blocked", {
-      reason: isMutation ? "mutation_in_read_mode" : "forbidden",
-      message: parsed.error,
-      draftSql: pass1.sql,
-      preamble: pass1.preamble,
-    });
-    logChatUsage({
-      conversationId,
-      turnId,
-      ok: true,
-      stage: "blocked",
-      reason: isMutation ? "mutation_in_read_mode" : "forbidden",
-      duration_ms: Date.now() - startedAt,
-    });
-    emit("done", { reason: "blocked" });
-    return;
-  }
-
-  // ── Surface the generated SQL to the UI before execution ───────────────
-  emit("sql_generated", {
-    sql: pass1.sql,
-    preamble: pass1.preamble,
-  });
-
-  // Cancellation check before paying for execution.
-  if (signal && signal.aborted) {
-    emit("done", { reason: "aborted" });
-    return;
-  }
-
-  // ── Execute via the same code path the SQL Console uses ────────────────
-  emit("sql_executing", {});
-  const execStart = Date.now();
-  let execResult;
-  try {
-    execResult = sqlConsoleService.executeSqlInSession(dbCtx, pass1.sql, {
-      allowMutations: false,
-    });
-  } catch (err) {
-    emit("sql_error", {
-      message: err?.message || "SQL execution failed.",
-    });
-    logChatUsage({
-      conversationId,
-      turnId,
-      ok: false,
-      stage: "execute",
-      duration_ms: Date.now() - startedAt,
-      sql_duration_ms: Date.now() - execStart,
-    });
-    emit("done", { reason: "sql_error" });
-    return;
-  }
-  if (execResult.status >= 400) {
-    emit("sql_error", {
-      message: execResult.body?.error || "SQL execution failed.",
-      status: execResult.status,
-    });
-    logChatUsage({
-      conversationId,
-      turnId,
-      ok: false,
-      stage: "execute",
-      duration_ms: Date.now() - startedAt,
-      sql_duration_ms: Date.now() - execStart,
-    });
-    emit("done", { reason: "sql_error" });
-    return;
-  }
-
-  const body = execResult.body || {};
-  const rows = Array.isArray(body.rows) ? body.rows : [];
-  const columns = Array.isArray(body.columns) ? body.columns : [];
-  const rowCount = body.rowCount ?? rows.length;
-  // UI preview: first 50 rows. Model snapshot: first 20 (handled later).
-  const PREVIEW_ROWS = 50;
-  const rowsPreview = rows.slice(0, PREVIEW_ROWS);
-  emit("sql_result", {
-    rowCount,
-    columns,
-    rowsPreview,
-    truncated: Boolean(body.truncated) || rows.length > PREVIEW_ROWS,
-    durationMs: body.duration_ms ?? Date.now() - execStart,
-  });
-
-  // ── PASS 2 — summarise the result in natural language ──────────────────
-  if (signal && signal.aborted) {
-    emit("done", { reason: "aborted" });
-    return;
-  }
-
-  let pass2;
-  try {
-    pass2 = await runPass2({
-      client,
-      model,
-      history,
-      userMessage: trimmed,
-      pass1Preamble: pass1.preamble,
-      pass1Sql: pass1.sql,
-      sqlResult: { rowCount, columns, rows, truncated: body.truncated },
-      language,
-      signal,
-      emit,
-    });
-  } catch (err) {
-    // Pass 2 failure is non-fatal — the user got their SQL + result; only
-    // the prose summary is missing. Emit a soft error and finish.
-    emit("sql_error", {
-      message: err?.message || "Summary generation failed.",
-      stage: "summary",
-    });
-    logChatUsage({
-      conversationId,
-      turnId,
-      ok: false,
-      stage: "pass2",
-      code: err.code || "UPSTREAM_ERROR",
-      duration_ms: Date.now() - startedAt,
-    });
-    emit("done", { reason: "summary_failed" });
-    return;
-  }
+  const tail = cleaner.finalize();
+  if (tail) emit("token", { phase: "answer", text: tail });
+  const followups = cleaner.followups();
+  if (followups.length) emit("followups", { items: followups });
+  emit("usage", { rounds, toolCalls, ...usageTotals });
 
   logChatUsage({
     conversationId,
     turnId,
     ok: true,
     stage: "complete",
-    row_count: rowCount,
+    rounds,
+    tool_calls: toolCalls,
+    answer_chars: cleaner.answerText().length,
     duration_ms: Date.now() - startedAt,
-    sql_duration_ms: body.duration_ms ?? null,
-    summary_chars: (pass2?.summary || "").length,
+    ...usageTotals,
   });
-
   emit("done", { reason: "complete" });
 };
 
@@ -996,9 +699,8 @@ module.exports = {
   logChatUsage,
   // Exposed for tests.
   _internals: {
-    extractBlocks,
-    makeStreamCleaner,
     buildAnthropicMessages,
-    buildPass2UserMessage,
+    flattenAssistantTurn,
+    makeAnswerCleaner,
   },
 };

@@ -9,33 +9,34 @@
  *   {
  *     id:           string (uuid)        — react key
  *     role:         "user" | "assistant"
- *     content:      string                — for "user": the prompt; for
- *                                            "assistant": the preamble + summary
+ *     content:      string                — user: the prompt; assistant: the
+ *                                            markdown answer
  *     // user-only field:
  *     attachment?:  { table, filename, rowCount } — tabular file the turn
  *                                            was asked against (chip in bubble)
  *     // assistant-only fields:
- *     status?:      "streaming" | "complete" | "blocked" | "error" | "aborted"
- *     preamble?:    string
- *     sql?:         string
- *     summary?:     string
- *     blocked?:     { reason, message, draftSql }
- *     result?:      { rowCount, columns, rowsPreview, truncated, durationMs }
- *     resultSummary?: string  — short "N rows" hint sent in subsequent turns
+ *     status?:      "streaming" | "complete" | "error" | "aborted"
+ *     steps?:       [{ stepId, kind, sql, purpose, status, rowCount, columns,
+ *                      rowsPreview, truncated, durationMs, error }]
+ *     proposals?:   [{ proposalId, title, rationale, sql, preview, outcome? }]
+ *     uiActions?:   [{ actionId, target, id, routeId, agencyId, label }]
+ *     charts?:      [{ chartId, stepId, chartType, x, y, title, rows }]
+ *     followups?:   string[]
+ *     pendingTool?: string | null   — tool announced but not finished
  *     error?:       { message, code? }
  *     model?:       string
  *     startedAt:    number  (Date.now())
  *   }
  *
- * Persistence: sessionStorage key `gtfs.chat.history`. Capped at 200 KB
+ * Persistence: sessionStorage key `gtfs.chat.history`. Capped at 300 KB
  * (rolling drop oldest pair) to avoid exceeding browser quotas on long
- * sessions.
+ * sessions; chart rows and result previews are trimmed before writing.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
 const STORAGE_KEY = "gtfs.chat.history";
-const MAX_BYTES = 200 * 1024;
+const MAX_BYTES = 300 * 1024;
 
 const newId = () => {
   if (typeof crypto !== "undefined" && crypto.randomUUID) {
@@ -63,7 +64,12 @@ const loadInitial = () => {
           typeof parsed.conversationId === "string"
             ? parsed.conversationId
             : newId(),
-        turns: parsed.turns,
+        // A turn interrupted by a reload can never finish streaming.
+        turns: parsed.turns.map((t) =>
+          t.role === "assistant" && t.status === "streaming"
+            ? { ...t, status: "aborted", pendingTool: null }
+            : t,
+        ),
       };
     }
   } catch {
@@ -72,13 +78,30 @@ const loadInitial = () => {
   return { conversationId: newId(), turns: [] };
 };
 
+// Storage-friendly copy of a turn (previews and chart rows are trimmed).
+const slimTurn = (t) => {
+  if (t.role !== "assistant") return t;
+  return {
+    ...t,
+    steps: (t.steps || []).map((s) => ({
+      ...s,
+      rowsPreview: Array.isArray(s.rowsPreview) ? s.rowsPreview.slice(0, 20) : [],
+    })),
+    charts: (t.charts || []).map((c) => ({
+      ...c,
+      rows: Array.isArray(c.rows) ? c.rows.slice(0, 100) : [],
+    })),
+  };
+};
+
 const persist = (state) => {
   try {
-    let payload = JSON.stringify({ ...state, appLaunchId: APP_LAUNCH_ID });
+    let slim = { ...state, turns: state.turns.map(slimTurn), appLaunchId: APP_LAUNCH_ID };
+    let payload = JSON.stringify(slim);
     // If too large, drop oldest pairs until under MAX_BYTES.
-    while (payload.length > MAX_BYTES && state.turns.length > 2) {
-      state = { ...state, turns: state.turns.slice(2) };
-      payload = JSON.stringify({ ...state, appLaunchId: APP_LAUNCH_ID });
+    while (payload.length > MAX_BYTES && slim.turns.length > 2) {
+      slim = { ...slim, turns: slim.turns.slice(2) };
+      payload = JSON.stringify(slim);
     }
     sessionStorage.setItem(STORAGE_KEY, payload);
   } catch {
@@ -88,8 +111,8 @@ const persist = (state) => {
 
 /**
  * Build the trimmed message array sent to the backend. Each turn becomes
- * one Anthropic message — assistants are flattened to text the model can
- * re-parse if needed (server then re-trims to MAX_TURNS).
+ * one message; assistant turns carry a compact trace of the tools they used
+ * so the model keeps continuity ("the query above", "apply the second fix").
  */
 export const turnsToWireMessages = (turns) => {
   const wire = [];
@@ -99,15 +122,21 @@ export const turnsToWireMessages = (turns) => {
     } else if (t.role === "assistant") {
       wire.push({
         role: "assistant",
-        content: t.summary || t.preamble || "",
-        preamble: t.preamble,
-        sql: t.sql,
-        summary: t.summary,
-        blocked: t.blocked,
-        resultSummary:
-          t.result && typeof t.result.rowCount === "number"
-            ? `${t.result.rowCount} rows`
-            : null,
+        content: t.content || "",
+        steps: (t.steps || [])
+          .filter((s) => s.kind === "sql" && s.sql)
+          .map((s) => ({
+            kind: "sql",
+            sql: s.sql,
+            rowCount: typeof s.rowCount === "number" ? s.rowCount : null,
+            error: s.error || null,
+          })),
+        proposals: (t.proposals || []).map((p) => ({
+          title: p.title,
+          sql: p.sql,
+          outcome: p.outcome || null,
+        })),
+        uiActions: (t.uiActions || []).map((a) => ({ label: a.label })),
       });
     }
   }
@@ -140,9 +169,12 @@ export default function useChatHistory() {
       role: "assistant",
       content: "",
       status: "streaming",
-      preamble: "",
-      sql: "",
-      summary: "",
+      steps: [],
+      proposals: [],
+      uiActions: [],
+      charts: [],
+      followups: [],
+      pendingTool: null,
       startedAt: Date.now(),
       ...init,
     };
