@@ -40,6 +40,17 @@ const ZERO_TRAVEL_MIN_M = 500;
 const LONG_DWELL_S = 1800;
 const SHAPE_FAR_M = 300;
 const FEED_ENDS_SOON_DAYS = 14;
+const OUTLIER_NEIGHBOURS_M = 1500;
+const OUTLIER_DETOUR_M = 3000;
+const HEADWAY_MIN_TRIPS = 6;
+const HEADWAY_MAX_MEDIAN_S = 60 * 60;
+const HEADWAY_GAP_FACTOR = 3;
+const HEADWAY_DAY_START_S = 6 * 3600;
+const HEADWAY_DAY_END_S = 20 * 3600;
+const WALK_SPEED_MPS = 1.2;
+const TRANSFER_FAR_M = 1000;
+
+const secondsToClock = (s) => `${String(Math.floor(s / 3600)).padStart(2, "0")}:${String(Math.floor((s % 3600) / 60)).padStart(2, "0")}`;
 
 const parseTime = (t) => {
   if (typeof t !== "string" || !/^\d{1,3}:\d{2}:\d{2}$/.test(t)) return null;
@@ -105,7 +116,7 @@ const finding = (code, severity, opts) => ({
 
 // One pass over stop_times (ordered by trip, sequence): speeds, zero travel
 // over long distances, long dwells, trips with a single stop.
-const checkStopTimes = (db, out) => {
+const checkStopTimes = (db, out, ctx) => {
   const stops = new Map();
   for (const s of db.prepare("SELECT stop_id, stop_name, stop_lat, stop_lon FROM stops").iterate()) {
     const lat = num(s.stop_lat);
@@ -121,9 +132,12 @@ const checkStopTimes = (db, out) => {
   const zero = finding("zero_travel_time", "info", { unit: "trips", entityType: "trip", fix: "review" });
   const dwell = finding("long_dwell", "info", { unit: "stop_times", entityType: "trip", fix: "review" });
   const short = finding("trip_single_stop", "warning", { unit: "trips", entityType: "trip", fix: "sql" });
+  const outlier = finding("stop_outlier", "warning", { unit: "stops", entityType: "stop", fix: "review" });
   const speedTrips = new Set();
   const zeroTrips = new Set();
+  const outlierStops = new Set();
   let maxSpeed = 0;
+  let prev2 = null;
 
   let rows = 0;
   let partial = false;
@@ -147,8 +161,39 @@ const checkStopTimes = (db, out) => {
     if (!prev || prev.trip_id !== row.trip_id) {
       finishTrip(prev ? prev.trip_id : null);
       stopsInTrip = 0;
+      prev2 = null;
     }
     stopsInTrip += 1;
+    if (ctx && ctx.firstDepByTrip && stopsInTrip === 1) {
+      ctx.firstDepByTrip.set(row.trip_id, parseTime(row.departure_time) ?? parseTime(row.arrival_time));
+    }
+    // A stop far from both its neighbours while they are close to each
+    // other: wrong coordinates or a stop put in the wrong trip (swapped).
+    if (prev2 && prev && prev.trip_id === row.trip_id && prev2.trip_id === row.trip_id && !outlierStops.has(prev.stop_id)) {
+      const a = stops.get(prev2.stop_id);
+      const m = stops.get(prev.stop_id);
+      const b = stops.get(row.stop_id);
+      if (a && m && b) {
+        const direct = haversineMeters(a.lat, a.lon, b.lat, b.lon);
+        if (direct < OUTLIER_NEIGHBOURS_M) {
+          const d1 = haversineMeters(a.lat, a.lon, m.lat, m.lon);
+          const d2 = haversineMeters(m.lat, m.lon, b.lat, b.lon);
+          if (d1 > OUTLIER_DETOUR_M && d2 > OUTLIER_DETOUR_M) {
+            outlierStops.add(prev.stop_id);
+            outlier.count += 1;
+            if (outlier.samples.length < MAX_SAMPLES) {
+              const info = routeTypeByTrip.get(row.trip_id);
+              outlier.samples.push({
+                id: prev.stop_id,
+                routeId: info ? info.routeId : null,
+                label: `${m.name} · ${row.trip_id}`,
+                detail: `${(Math.min(d1, d2) / 1000).toFixed(1)} km from ${a.name} and ${b.name}, which are ${Math.round(direct)} m apart`,
+              });
+            }
+          }
+        }
+      }
+    }
     const arr = parseTime(row.arrival_time);
     const dep = parseTime(row.departure_time);
     // Long dwell (not at the ends: terminus layovers are legitimate).
@@ -202,12 +247,109 @@ const checkStopTimes = (db, out) => {
         }
       }
     }
+    prev2 = prev;
     prev = row;
   }
   if (!partial) finishTrip(prev ? prev.trip_id : null);
   if (speed.count) speed.meta = { max_kmh: Math.round(maxSpeed) };
-  for (const f of [speed, zero, dwell, short]) if (f.count > 0) out.push(f);
+  for (const f of [speed, zero, dwell, short, outlier]) if (f.count > 0) out.push(f);
   return partial;
+};
+
+// Gaps in a route's timetable: a headway several times the usual one during
+// the day (a missing run, a deleted trip, a service split by mistake).
+const checkHeadways = (db, out, ctx) => {
+  const firstDep = ctx && ctx.firstDepByTrip;
+  if (!firstDep || firstDep.size === 0) return;
+  const frequencyTrips = new Set();
+  try {
+    for (const r of db.prepare("SELECT DISTINCT trip_id FROM frequencies").iterate()) frequencyTrips.add(r.trip_id);
+  } catch {
+    /* no frequencies table */
+  }
+  const groups = new Map();
+  for (const t of db.prepare("SELECT trip_id, route_id, direction_id, service_id FROM trips").iterate()) {
+    if (frequencyTrips.has(t.trip_id)) continue;
+    const dep = firstDep.get(t.trip_id);
+    if (dep == null) continue;
+    const key = `${t.route_id}|${t.direction_id ?? ""}|${t.service_id}`;
+    if (!groups.has(key)) groups.set(key, { route: t.route_id, direction: t.direction_id, service: t.service_id, deps: [] });
+    groups.get(key).deps.push(dep);
+  }
+  const f = finding("irregular_headways", "info", { unit: "patterns", entityType: "route", fix: "review" });
+  for (const g of groups.values()) {
+    if (g.deps.length < HEADWAY_MIN_TRIPS) continue;
+    g.deps.sort((a, b) => a - b);
+    const gaps = [];
+    for (let i = 1; i < g.deps.length; i++) gaps.push(g.deps[i] - g.deps[i - 1]);
+    const sorted = [...gaps].sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)];
+    if (!(median > 0) || median > HEADWAY_MAX_MEDIAN_S) continue;
+    let worst = null;
+    for (let i = 0; i < gaps.length; i++) {
+      const start = g.deps[i];
+      if (start < HEADWAY_DAY_START_S || start > HEADWAY_DAY_END_S) continue;
+      if (gaps[i] > Math.max(median * HEADWAY_GAP_FACTOR, median + 20 * 60) && (!worst || gaps[i] > worst.gap)) worst = { gap: gaps[i], start };
+    }
+    if (!worst) continue;
+    f.count += 1;
+    if (f.samples.length < MAX_SAMPLES) {
+      f.samples.push({
+        id: g.route,
+        routeId: g.route,
+        label: `${g.route} · direction ${g.direction ?? "—"} · ${g.service}`,
+        detail: `no departure between ${secondsToClock(worst.start)} and ${secondsToClock(worst.start + worst.gap)} (${Math.round(worst.gap / 60)} min, usual headway ${Math.round(median / 60)} min)`,
+      });
+    }
+  }
+  if (f.count > 0) out.push(f);
+};
+
+// transfers.txt rows a passenger cannot honour: a minimum transfer time
+// shorter than the walk between the two stops, or a "recommended"/"timed"
+// transfer between stops far apart.
+const checkTransfers = (db, out) => {
+  const f = finding("impossible_transfer", "info", { unit: "transfers", entityType: null, fix: "sql" });
+  let rows;
+  try {
+    rows = db
+      .prepare(
+        `SELECT t.from_stop_id, t.to_stop_id, t.transfer_type, t.min_transfer_time,
+                a.stop_name AS from_name, a.stop_lat AS from_lat, a.stop_lon AS from_lon,
+                b.stop_name AS to_name, b.stop_lat AS to_lat, b.stop_lon AS to_lon
+           FROM transfers t
+           JOIN stops a ON a.stop_id = t.from_stop_id
+           JOIN stops b ON b.stop_id = t.to_stop_id
+          WHERE t.from_stop_id != t.to_stop_id`,
+      )
+      .all();
+  } catch {
+    return;
+  }
+  for (const r of rows) {
+    const type = String(r.transfer_type ?? "0");
+    if (type === "3") continue;
+    const lat1 = num(r.from_lat);
+    const lon1 = num(r.from_lon);
+    const lat2 = num(r.to_lat);
+    const lon2 = num(r.to_lon);
+    if (![lat1, lon1, lat2, lon2].every(Number.isFinite)) continue;
+    const dist = haversineMeters(lat1, lon1, lat2, lon2);
+    const walk = dist / WALK_SPEED_MPS;
+    const minTime = num(r.min_transfer_time);
+    let detail = null;
+    if (minTime != null && minTime + 30 < walk) {
+      detail = `min_transfer_time ${Math.round(minTime)} s but the ${Math.round(dist)} m walk takes about ${Math.round(walk)} s`;
+    } else if (dist > TRANSFER_FAR_M && (type === "0" || type === "1")) {
+      detail = `${type === "1" ? "timed" : "recommended"} transfer between stops ${(dist / 1000).toFixed(1)} km apart`;
+    }
+    if (!detail) continue;
+    f.count += 1;
+    if (f.samples.length < MAX_SAMPLES) {
+      f.samples.push({ id: r.from_stop_id, otherId: r.to_stop_id, label: `${r.from_name || r.from_stop_id} → ${r.to_name || r.to_stop_id}`, detail });
+    }
+  }
+  if (f.count > 0) out.push(f);
 };
 
 // Stops within a few metres of each other (same physical place entered twice).
@@ -468,16 +610,19 @@ const checkColours = (db, out) => {
   if (f.count > 0) out.push(f);
 };
 
-const CHECKS = [checkStopTimes, checkDuplicateStops, checkStopNames, checkShapeFit, checkCalendars, checkUnused, checkColours];
+const CHECKS = [checkStopTimes, checkHeadways, checkTransfers, checkDuplicateStops, checkStopNames, checkShapeFit, checkCalendars, checkUnused, checkColours];
 
 const runQualityAudit = (db) => {
   const started = Date.now();
   const findings = [];
   let partial = false;
   const failed = [];
+  // Shared scratch between checks (first departure per trip, filled by the
+  // stop_times pass and read by the headway check).
+  const ctx = { firstDepByTrip: new Map() };
   for (const check of CHECKS) {
     try {
-      const r = check(db, findings);
+      const r = check(db, findings, ctx);
       if (r === true) partial = true;
     } catch (err) {
       failed.push({ check: check.name, error: err.message });

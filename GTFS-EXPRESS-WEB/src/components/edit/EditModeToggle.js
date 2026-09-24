@@ -214,12 +214,12 @@ function EditModeToggle() {
     setPreflightOpen(true);
   };
 
-  const handlePreflightConfirm = async (format = "gtfs") => {
+  const handlePreflightConfirm = async (format = "gtfs", options = {}) => {
     setPreflightOpen(false);
     setExporting(true);
     try {
       if (format === "netex") await exportNetex();
-      else await exportGTFS();
+      else await exportGTFS(options);
     } finally {
       setExporting(false);
     }

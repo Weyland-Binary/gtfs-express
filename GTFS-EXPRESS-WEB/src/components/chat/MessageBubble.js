@@ -47,6 +47,7 @@ import ProposalCard from "./ProposalCard";
 import OperationProposalCard from "./OperationProposalCard";
 import RepairPlanBar from "./RepairPlanBar";
 import MiniChart from "./MiniChart";
+import JourneyCard from "./JourneyCard";
 
 const StreamingCursor = () => {
   const theme = useTheme();
@@ -310,6 +311,7 @@ const AssistantBubble = ({
   const steps = turn.steps || [];
   const proposals = turn.proposals || [];
   const charts = turn.charts || [];
+  const journeys = turn.journeys || [];
   const uiActions = turn.uiActions || [];
 
   const handleOpenInConsole = (sql) => {
@@ -392,6 +394,9 @@ const AssistantBubble = ({
 
         {charts.map((c) => (
           <MiniChart key={c.chartId} chart={c} />
+        ))}
+        {journeys.map((j) => (
+          <JourneyCard key={j.journeyId} journey={j} />
         ))}
 
         {(smoothAnswer || (isStreaming && !nothingYet && steps.length === 0)) && (

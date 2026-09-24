@@ -327,6 +327,15 @@ router.get("/search", searchEntities);
 const { diffFeeds } = require("../services/diffService");
 router.post("/diff", diffFeeds);
 
+// Passenger journey simulation inside the loaded feed (read-only).
+const { journey } = require("../services/journeyService");
+router.post("/journey", journey);
+
+// One-shot AI summaries (release notes from the edit log, diff explanation):
+// gated like the chat (beta code or free trial).
+const { summarize } = require("../services/aiSummaryService");
+router.post("/ai/summarize", chatAccessGate, summarize);
+
 // SQL console (read-only public — works without entering edit mode).
 // Allowed: SELECT / WITH / EXPLAIN / read-only PRAGMA. Mutations always 403.
 router.post("/sql", runSqlQueryReadOnly);

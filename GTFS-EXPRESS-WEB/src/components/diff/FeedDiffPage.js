@@ -34,6 +34,7 @@ import TableChartOutlinedIcon from "@mui/icons-material/TableChartOutlined";
 import API_BASE_URL from "../../config";
 import { fetchWithSession } from "../../utils/sessionManager";
 import { useLanguage } from "../../contexts/LanguageContext";
+import AiSummaryCard from "../common/AiSummaryCard";
 
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024; // 50 MB — same cap as GTFSUploader
 
@@ -724,6 +725,19 @@ function FeedDiffPage() {
                 value={summary.tablesWithChanges}
               />
             </Box>
+
+            {!identical && (
+              <Box sx={{ mb: 3 }}>
+                <AiSummaryCard
+                  kind="diff"
+                  testId="compare-ai"
+                  payload={{ diff }}
+                  title={t("compare.ai.title")}
+                  description={t("compare.ai.description")}
+                  generateLabel={t("compare.ai.generate")}
+                />
+              </Box>
+            )}
 
             {identical ? (
               <Paper

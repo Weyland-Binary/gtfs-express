@@ -19,6 +19,7 @@ const validationReportStore = require("./validationReportStore");
 const qualityAuditService = require("./qualityAuditService");
 const tripEditService = require("./edit/tripEditService");
 const smartEditService = require("./edit/smartEditService");
+const journeyService = require("./journeyService");
 const { getRule } = require("../utils/rulesCatalog");
 
 // ── Caps ──────────────────────────────────────────────────────────────────
@@ -987,6 +988,61 @@ const extendCalendar = {
   },
 };
 
+// ── plan_journey ──────────────────────────────────────────────────────────
+const planJourney = {
+  definition: {
+    name: "plan_journey",
+    description:
+      "Simulate a passenger journey inside THIS feed: earliest-arrival itinerary between two stops on a date and time (services of the day, transfers, walking between nearby stops, frequency trips expanded). Returns the legs with times and routes, or why the trip cannot be made (no service that day, nothing leaves the origin, no connection in the window, tight connection). Use it to check that an edit did not break a link ('can one still get from A to B on Sunday morning?'), to test a new trip, or to answer 'how do I go from X to Y'. Resolve stop ids with run_sql first.",
+    input_schema: {
+      type: "object",
+      properties: {
+        from_stop_id: { type: "string" },
+        to_stop_id: { type: "string" },
+        date: { type: "string", description: "YYYYMMDD (default: today)." },
+        time: { type: "string", description: "Departure time HH:MM (default 08:00)." },
+        window_hours: { type: "integer", description: "How long after `time` departures are considered (default 4, max 12)." },
+      },
+      required: ["from_stop_id", "to_stop_id"],
+    },
+  },
+  run(input, ctx) {
+    const result = journeyService.planJourney(ctx.dbCtx.db, {
+      from_stop_id: input?.from_stop_id,
+      to_stop_id: input?.to_stop_id,
+      date: input?.date,
+      time: input?.time,
+      window_hours: input?.window_hours,
+    });
+    if (!result.ok) return { content: `Cannot plan the journey: ${result.error}`, isError: true };
+    const { ok, ...journey } = result;
+    ctx.emit("journey", { journeyId: ctx.nextJourneyId(), ...journey });
+    if (!journey.reachable) {
+      return {
+        content: [
+          `No itinerary from ${journey.from.stop_name} (${journey.from.stop_id}) to ${journey.to.stop_name} (${journey.to.stop_id}) on ${journey.date} from ${journey.time} within ${journey.window_hours} h.`,
+          `Active services that day: ${journey.active_services}. Diagnostics: ${journey.diagnostics.join(", ") || "none"}.`,
+          "Explain the diagnostic to the user in plain words (no_service_on_date: the calendars do not cover that date; origin_unserved / destination_unserved: no trip serves that stop in the window; no_connection_in_window: both are served but no chain of trips links them in time). Check the calendars or the trips with run_sql if useful.",
+        ].join("\n"),
+      };
+    }
+    const it = journey.itinerary;
+    const legs = it.legs.map((l) =>
+      l.type === "walk"
+        ? `- walk ${l.from.stop_name} → ${l.to.stop_name} (${Math.round(l.duration_secs / 60)} min)`
+        : `- ${l.route_short_name || l.route_id} (${l.headsign || l.route_long_name}) ${l.from.stop_name} ${l.from.time} → ${l.to.stop_name} ${l.to.time}, ${l.stops} stops, trip ${l.trip_id}`,
+    );
+    return {
+      content: [
+        `Itinerary ${journey.from.stop_name} → ${journey.to.stop_name} on ${journey.date}: depart ${it.departure}, arrive ${it.arrival}, ${Math.round(it.duration_secs / 60)} min, ${it.transfers} transfer(s), first departure ${Math.round(it.wait_before_secs / 60)} min after ${journey.time}.`,
+        ...legs,
+        journey.diagnostics.length ? `Notes: ${journey.diagnostics.join(", ")} (tight_connection:<stop>:<seconds> means the change time barely fits).` : "",
+        "The itinerary card is shown to the user; summarise it and point out anything odd (long waits, detours, tight connections).",
+      ].filter(Boolean).join("\n"),
+    };
+  },
+};
+
 const TOOLS = [
   runSql,
   proposeFix,
@@ -1003,6 +1059,7 @@ const TOOLS = [
   getStopNameVariants,
   renameStops,
   extendCalendar,
+  planJourney,
 ];
 const TOOL_DEFINITIONS = TOOLS.map((t) => t.definition);
 const TOOLS_BY_NAME = Object.fromEntries(TOOLS.map((t) => [t.definition.name, t]));
@@ -1013,6 +1070,7 @@ const createToolContext = ({ dbCtx, emit }) => {
   let proposalSeq = 0;
   let actionSeq = 0;
   let chartSeq = 0;
+  let journeySeq = 0;
   return {
     dbCtx,
     emit,
@@ -1021,6 +1079,7 @@ const createToolContext = ({ dbCtx, emit }) => {
     nextProposalId: () => `p${++proposalSeq}`,
     nextActionId: () => `a${++actionSeq}`,
     nextChartId: () => `c${++chartSeq}`,
+    nextJourneyId: () => `j${++journeySeq}`,
   };
 };
 

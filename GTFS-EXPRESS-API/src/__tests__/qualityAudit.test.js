@@ -57,6 +57,9 @@ describe("quality audit", () => {
     // A route with no trip, a never-running service, a low-contrast colour.
     db.prepare("INSERT INTO routes (route_id, agency_id, route_short_name, route_type, route_color, route_text_color) VALUES ('EMPTY', (SELECT agency_id FROM routes LIMIT 1), 'E', '3', 'FFFFFF', 'FFFF00')").run();
     db.prepare("INSERT INTO calendar (service_id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date) VALUES ('NEVER', 0,0,0,0,0,0,0, '20260101', '20261231')").run();
+    // A trip whose middle stop is the moved one, between two close stops.
+    db.prepare("INSERT INTO trips (trip_id, route_id, service_id) VALUES ('OUTLIER_TRIP', 'S1', 'WKD')").run();
+    db.prepare("INSERT INTO stop_times (trip_id, arrival_time, departure_time, stop_id, stop_sequence) VALUES ('OUTLIER_TRIP', '08:00:00', '08:00:00', 'WTC_S', 1), ('OUTLIER_TRIP', '08:10:00', '08:10:00', ?, 2), ('OUTLIER_TRIP', '08:20:00', '08:20:00', 'WSL_F', 3)").run(stopId);
     // A trip with a single stop_time.
     db.prepare("INSERT INTO trips (trip_id, route_id, service_id) VALUES ('ONE_STOP', 'S1', 'WKD')").run();
     db.prepare("INSERT INTO stop_times (trip_id, arrival_time, departure_time, stop_id, stop_sequence) VALUES ('ONE_STOP', '08:00:00', '08:00:00', ?, 1)").run(ref.stop_id);
@@ -71,6 +74,11 @@ describe("quality audit", () => {
     expect(speed.meta.max_kmh).toBeGreaterThan(100);
 
     expect(byCode(audit, "stop_far_from_shape")).toBeDefined();
+    // …and 40 km from both its neighbours, which sit close together.
+    const outlier = byCode(audit, "stop_outlier");
+    expect(outlier.severity).toBe("warning");
+    expect(outlier.samples.some((s) => s.id === stopId)).toBe(true);
+    expect(outlier.samples[0].detail).toMatch(/km from/);
 
     // The demo feed models per-direction stops at the same coordinates
     // (info); the injected same-name copy turns the finding into a warning
@@ -95,6 +103,42 @@ describe("quality audit", () => {
 
     // Restore the moved stop for the following tests.
     db.prepare("UPDATE stops SET stop_lat = ? WHERE stop_id = ?").run(orig.stop_lat, stopId);
+    db.prepare("DELETE FROM stop_times WHERE trip_id = 'OUTLIER_TRIP'").run();
+    db.prepare("DELETE FROM trips WHERE trip_id = 'OUTLIER_TRIP'").run();
+  });
+
+  test("timetable holes and impossible transfers are detected", () => {
+    // A 3-hour hole in the S1 southbound weekday timetable.
+    const removed = db
+      .prepare("SELECT t.trip_id FROM trips t JOIN stop_times st ON st.trip_id = t.trip_id AND CAST(st.stop_sequence AS INTEGER) = 1 WHERE t.route_id = 'S1' AND t.direction_id = '0' AND t.service_id = 'WKD' AND st.departure_time BETWEEN '10:00:00' AND '12:59:59'")
+      .all()
+      .map((r) => r.trip_id);
+    expect(removed.length).toBeGreaterThan(3);
+    const backup = db.prepare(`SELECT * FROM stop_times WHERE trip_id IN (${removed.map(() => "?").join(",")})`).all(...removed);
+    db.prepare(`DELETE FROM stop_times WHERE trip_id IN (${removed.map(() => "?").join(",")})`).run(...removed);
+    // A 60 s transfer between stops 15 km apart, and a "timed" one 4 km apart.
+    db.prepare("INSERT INTO transfers (from_stop_id, to_stop_id, transfer_type, min_transfer_time) VALUES ('INW_S', 'WTC_S', '2', 60)").run();
+    db.prepare("INSERT INTO transfers (from_stop_id, to_stop_id, transfer_type, min_transfer_time) VALUES ('DOM', 'WTC_S', '1', NULL)").run();
+
+    const audit = runQualityAudit(db);
+    const gaps = byCode(audit, "irregular_headways");
+    expect(gaps).toBeDefined();
+    const s1 = gaps.samples.find((s) => s.id === "S1" && s.label.includes("direction 0"));
+    expect(s1).toBeDefined();
+    expect(s1.detail).toMatch(/no departure between 09:\d\d and 1[23]:\d\d/);
+    // (The demo feed's own transfers already ask for a brisk 6-minute
+    // kilometre between the ferry pier and the subway: those count too.)
+    const transfers = byCode(audit, "impossible_transfer");
+    expect(transfers.count).toBeGreaterThanOrEqual(2);
+    expect(transfers.samples.find((s) => s.id === "INW_S" && s.otherId === "WTC_S").detail).toMatch(/min_transfer_time 60 s/);
+    expect(transfers.samples.find((s) => s.id === "DOM").detail).toMatch(/timed transfer/);
+
+    // Restore.
+    db.prepare("DELETE FROM transfers WHERE (from_stop_id = 'INW_S' AND to_stop_id = 'WTC_S') OR (from_stop_id = 'DOM' AND to_stop_id = 'WTC_S')").run();
+    const cols = Object.keys(backup[0]);
+    const ins = db.prepare(`INSERT INTO stop_times (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`);
+    for (const r of backup) ins.run(cols.map((c) => r[c]));
+    expect(byCode(runQualityAudit(db), "irregular_headways")).toBeUndefined();
   });
 
   test("GET /quality_audit serves the audit and revalidates on edits", async () => {

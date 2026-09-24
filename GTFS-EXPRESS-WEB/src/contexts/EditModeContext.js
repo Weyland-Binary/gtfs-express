@@ -506,10 +506,12 @@ export function EditModeProvider({ children }) {
     }
   }, [showToast, t]);
 
-  const exportGTFS = useCallback(async () => {
+  const exportGTFS = useCallback(async ({ changelog = false } = {}) => {
     setError(null);
     try {
-      const res = await fetchWithSession(`${API_BASE_URL}/edit/export`);
+      // `changelog=1` ships the AI release notes generated in the preflight
+      // dialog as CHANGELOG.md inside the zip.
+      const res = await fetchWithSession(`${API_BASE_URL}/edit/export${changelog ? "?changelog=1" : ""}`);
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         setError(body.error || "Export failed.");

@@ -315,6 +315,29 @@ describe("chat agent loop", () => {
     expect(db.prepare("SELECT COUNT(*) AS n FROM stop_times").get().n).toBe(stopTimesBefore);
   });
 
+  test("plan_journey emits a journey card and a text summary for the model", async () => {
+    __script.push(
+      {
+        toolUses: [
+          { id: "tu1", name: "plan_journey", input: { from_stop_id: "INW_S", to_stop_id: "WTC_S", date: "20260415", time: "08:00" } },
+          { id: "tu2", name: "plan_journey", input: { from_stop_id: "INW_S", to_stop_id: "WTC_S", date: "20200101" } },
+          { id: "tu3", name: "plan_journey", input: { from_stop_id: "ghost", to_stop_id: "WTC_S" } },
+        ],
+      },
+      { text: "ok" },
+    );
+    const events = await runTurn(dbCtx, "peut-on aller de Inwood au WTC ?");
+    const journeys = byName(events, "journey");
+    expect(journeys).toHaveLength(2);
+    expect(journeys[0]).toMatchObject({ journeyId: "j1", reachable: true });
+    expect(journeys[0].itinerary.legs[0].route_id).toBe("S1");
+    expect(journeys[1]).toMatchObject({ journeyId: "j2", reachable: false, diagnostics: ["no_service_on_date"] });
+    const results = __captured[1].messages[__captured[1].messages.length - 1].content;
+    expect(results[0].content).toMatch(/Itinerary Inwood.*depart 08:\d\d:\d\d/);
+    expect(results[1].content).toMatch(/No itinerary/);
+    expect(results[2].is_error).toBe(true);
+  });
+
   test("history is flattened with the tool trace and roles alternate", () => {
     const { buildAnthropicMessages, flattenAssistantTurn } = nl2sqlChatService._internals;
     const flat = flattenAssistantTurn({

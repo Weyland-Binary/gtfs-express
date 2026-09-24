@@ -331,6 +331,12 @@ export default function ChatDrawer({
                   charts: [...(prev.charts || []), data],
                 }));
                 break;
+              case "journey":
+                updateTurn(assistantTurnId, (prev) => ({
+                  pendingTool: null,
+                  journeys: [...(prev.journeys || []), data],
+                }));
+                break;
               case "token":
                 updateTurn(assistantTurnId, (prev) => ({
                   pendingTool: null,

@@ -696,6 +696,7 @@ module.exports = {
   streamChatTurn,
   buildSessionContextBlock,
   resolveChatModel,
+  getClient,
   logChatUsage,
   // Exposed for tests.
   _internals: {

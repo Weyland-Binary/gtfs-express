@@ -36,6 +36,7 @@ import AutoFixHighIcon from "@mui/icons-material/AutoFixHigh";
 import CalendarMonthOutlinedIcon from "@mui/icons-material/CalendarMonthOutlined";
 import PlaceOutlinedIcon from "@mui/icons-material/PlaceOutlined";
 import TimelineIcon from "@mui/icons-material/Timeline";
+import RouteIcon from "@mui/icons-material/Route";
 import AttachFileIcon from "@mui/icons-material/AttachFile";
 import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 import { useLanguage } from "../../contexts/LanguageContext";
@@ -76,6 +77,7 @@ export default function ChatInputBar({
     { Icon: CalendarMonthOutlinedIcon, key: "chat.quick.calendar" },
     { Icon: PlaceOutlinedIcon, key: "chat.quick.stops" },
     { Icon: TimelineIcon, key: "chat.quick.headways" },
+    { Icon: RouteIcon, key: "chat.quick.journey" },
   ];
 
   useEffect(() => {

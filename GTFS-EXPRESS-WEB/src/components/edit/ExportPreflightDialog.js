@@ -33,6 +33,7 @@ import { useLanguage } from "../../contexts/LanguageContext";
 import { useEditMode } from "../../contexts/EditModeContext";
 import { useFeatures } from "../../utils/featuresApi";
 import { getRuleTitle } from "../validation/ruleCatalog";
+import AiSummaryCard from "../common/AiSummaryCard";
 
 // MUI Slide transition — direction up (like edit mode toasts)
 const SlideUp = React.forwardRef(function SlideUp(props, ref) {
@@ -167,6 +168,9 @@ function ExportPreflightDialog({ open, onClose, onConfirmExport, onReviewErrors 
   const [elapsed, setElapsed] = useState(0); // seconds since validatedAt
   const [riskAccepted, setRiskAccepted] = useState(false);
   const [showRiskConfirm, setShowRiskConfirm] = useState(false);
+  // AI release notes: generated on demand, optionally shipped in the zip.
+  const [changelogReady, setChangelogReady] = useState(false);
+  const [includeChangelog, setIncludeChangelog] = useState(true);
 
   const elapsedTimerRef = useRef(null);
 
@@ -282,8 +286,10 @@ function ExportPreflightDialog({ open, onClose, onConfirmExport, onReviewErrors 
   const hasErrors = report && errorCount > 0;
 
   // ── Handlers ──────────────────────────────────────────────────────────────────
+  const exportOptions = () => ({ changelog: changelogReady && includeChangelog });
+
   const handleExportNow = () => {
-    onConfirmExport("gtfs");
+    onConfirmExport("gtfs", exportOptions());
   };
 
   const handleExportNetex = () => {
@@ -296,7 +302,7 @@ function ExportPreflightDialog({ open, onClose, onConfirmExport, onReviewErrors 
 
   const handleConfirmRiskyExport = () => {
     if (!riskAccepted) return;
-    onConfirmExport("gtfs");
+    onConfirmExport("gtfs", exportOptions());
   };
 
   const handleReviewClick = () => {
@@ -722,6 +728,37 @@ function ExportPreflightDialog({ open, onClose, onConfirmExport, onReviewErrors 
                   sx={{ m: 0, alignItems: "flex-start" }}
                 />
               </Alert>
+            </Collapse>
+          </Box>
+        )}
+
+        {/* ── Release notes (AI) ────────────────────────────────────────────── */}
+        {!validating && report && (
+          <Box pt={1.5} data-testid="export-changelog">
+            <AiSummaryCard
+              kind="changelog"
+              dense
+              testId="export-changelog-card"
+              title={t("export.changelog.title")}
+              description={t("export.changelog.description")}
+              generateLabel={t("export.changelog.generate")}
+              onGenerated={() => setChangelogReady(true)}
+            />
+            <Collapse in={changelogReady}>
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    size="small"
+                    checked={includeChangelog}
+                    onChange={(e) => setIncludeChangelog(e.target.checked)}
+                    inputProps={{ "data-testid": "export-changelog-include" }}
+                  />
+                }
+                label={
+                  <Typography variant="body2">{t("export.changelog.include")}</Typography>
+                }
+                sx={{ m: 0, mt: 0.5 }}
+              />
             </Collapse>
           </Box>
         )}

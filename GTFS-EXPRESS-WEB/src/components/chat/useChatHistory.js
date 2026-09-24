@@ -21,6 +21,7 @@
  *     proposals?:   [{ proposalId, title, rationale, sql, preview, outcome? }]
  *     uiActions?:   [{ actionId, target, id, routeId, agencyId, label }]
  *     charts?:      [{ chartId, stepId, chartType, x, y, title, rows }]
+ *     journeys?:    [{ journeyId, from, to, date, time, reachable, itinerary, diagnostics }]
  *     followups?:   string[]
  *     pendingTool?: string | null   — tool announced but not finished
  *     error?:       { message, code? }
@@ -173,6 +174,7 @@ export default function useChatHistory() {
       proposals: [],
       uiActions: [],
       charts: [],
+      journeys: [],
       followups: [],
       pendingTool: null,
       startedAt: Date.now(),
