@@ -124,4 +124,22 @@ describe("operations", () => {
     const bad = normalizeSpec({ ...SPEC, operations: { cost_per_km: -1 } });
     expect(bad.blockers.some((b) => b.code === "invalid_operations")).toBe(true);
   });
+
+  test("each calendar counts within its own date range, annualised over the span the calendars cover", () => {
+    // An imported feed: two term calendars of the same weekdays that split a
+    // school year, instead of one calendar for the whole year.
+    const term = (id, start, end) => ({ calendar: { id, days: ["mon", "tue", "wed", "thu", "fri"], start_date: start, end_date: end }, periods: [{ from: "07:00", to: "19:00", headway_min: 30 }] });
+    const split = normalizeSpec({ ...SPEC, operations: undefined, feed: { start_date: "20260101", end_date: "20261231" }, lines: [{ ...SPEC.lines[0], services: [term("T1", "20260101", "20260630"), term("T2", "20260701", "20261231")] }] }).spec;
+    const whole = normalizeSpec({ ...SPEC, operations: undefined, feed: { start_date: "20260101", end_date: "20261231" }, lines: [{ ...SPEC.lines[0], services: [term("Y", "20260101", "20261231")] }] }).spec;
+    const a = ops.estimateOperations(split, GEOMETRY);
+    const b = ops.estimateOperations(whole, GEOMETRY);
+    // Same service, same kilometres: the split calendars are not each counted as a whole year.
+    expect(a.per_line[0].veh_km_year).toBe(b.per_line[0].veh_km_year);
+    expect(b.per_line[0].veh_km_year).toBe(Math.round(25 * 2 * 7.5 * 261));
+    // A feed covering half a year is annualised (× 365 / 181).
+    const half = normalizeSpec({ ...SPEC, operations: undefined, feed: { start_date: "20260101", end_date: "20260630" }, lines: [{ ...SPEC.lines[0], services: [term("H", "20260101", "20260630")] }] }).spec;
+    const h = ops.estimateOperations(half, GEOMETRY);
+    const weekdaysH1 = 129; // Mon–Fri from 1 January to 30 June 2026
+    expect(h.per_line[0].veh_km_year).toBe(Math.round(25 * 2 * 7.5 * weekdaysH1 * (365 / 181)));
+  });
 });

@@ -43,16 +43,20 @@ const stopIcon = (color, selected) =>
 
 const POI_COLOR = { school: "#F9A825", college: "#F57F17", hospital: "#D32F2F", civic: "#5E35B1", market: "#00897B", station: "#1E88E5", leisure: "#43A047", work: "#6D4C41" };
 
-export default function NetworkMap({ stops = [], lines = [], geometry = [], existingStops = [], pois = [], corridors = [], population = null, selectedStopId = null, placingStopId = null, onSelectStop = null, onMoveStop = null, onPlaceStop = null, onPickExistingStop = null, fitEpoch = 0, height = "100%" }) {
+export default function NetworkMap({ stops = [], lines = [], geometry = [], existingStops = [], pois = [], corridors = [], population = null, focusBbox = null, selectedStopId = null, placingStopId = null, onSelectStop = null, onMoveStop = null, onPlaceStop = null, onPickExistingStop = null, fitEpoch = 0, height = "100%" }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const [basemap] = useBasemap();
   const located = useMemo(() => stops.filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lon)), [stops]);
+  // Fit the plan when it has places; otherwise the territory being studied.
   const points = useMemo(() => {
     const pts = located.map((s) => [s.lat, s.lon]);
     for (const g of geometry) for (const p of g.points || []) pts.push(p);
+    if (!pts.length && Array.isArray(focusBbox) && focusBbox.length === 4 && focusBbox.every(Number.isFinite)) {
+      pts.push([focusBbox[0], focusBbox[1]], [focusBbox[2], focusBbox[3]]);
+    }
     return pts;
-  }, [located, geometry]);
+  }, [located, geometry, focusBbox]);
   const colorOfStop = useMemo(() => {
     const m = new Map();
     for (const line of lines) for (const d of line.directions || []) for (const id of d.stops || []) if (!m.has(id)) m.set(id, `#${line.color || "1E88E5"}`);

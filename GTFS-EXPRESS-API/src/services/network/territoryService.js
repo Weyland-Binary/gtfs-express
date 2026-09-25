@@ -126,11 +126,46 @@ const resolvePlace = async (query, fetchImpl) => {
   };
 };
 
+// Public Overpass instances give each IP two query slots and answer 429 when
+// they are taken, 504 when the server is busy. A query that meets either is
+// retried after a pause, on the next instance of OVERPASS_URL (a
+// comma-separated list: the main instance first, then mirrors).
+const OVERPASS_RETRY = { delaysMs: [1500, 4000], budgetMs: 60000 };
+const RETRYABLE = new Set([429, 502, 503, 504]);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const overpassUrls = () =>
+  String(config.OVERPASS_URL || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
 const overpass = async (ql, fetchImpl) => {
-  const res = await withTimeout(fetchImpl, config.OVERPASS_URL, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: `data=${encodeURIComponent(ql)}` }, TIMEOUT_MS + 10000);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const data = await res.json();
-  return Array.isArray(data?.elements) ? data.elements : [];
+  const urls = overpassUrls();
+  const delays = OVERPASS_RETRY.delaysMs;
+  let lastError = null;
+  for (let attempt = 0; attempt <= delays.length; attempt++) {
+    const url = urls[attempt % urls.length];
+    let res;
+    try {
+      res = await withTimeout(fetchImpl, url, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: `data=${encodeURIComponent(ql)}` }, TIMEOUT_MS + 10000);
+    } catch (err) {
+      lastError = err; // timeout or network: retryable
+    }
+    if (res) {
+      if (res.ok) {
+        const data = await res.json();
+        return Array.isArray(data?.elements) ? data.elements : [];
+      }
+      lastError = new Error(`HTTP ${res.status}`);
+      if (!RETRYABLE.has(res.status)) throw lastError;
+    }
+    if (attempt < delays.length) {
+      const retryAfterS = Number(res?.headers?.get?.("retry-after"));
+      await sleep(Number.isFinite(retryAfterS) && retryAfterS > 0 ? Math.min(10000, retryAfterS * 1000) : delays[attempt]);
+    }
+  }
+  // Every instance refused or failed: Overpass is unavailable for now.
+  throw Object.assign(lastError || new Error("unavailable"), { unavailable: true });
 };
 
 const bboxStr = (b) => `${b[0]},${b[1]},${b[2]},${b[3]}`;
@@ -367,11 +402,37 @@ const buildTerritory = async (query, { fetchImpl = null, force = false } = {}) =
   const place = await resolvePlace(q, doFetch);
   if (!place) throw Object.assign(new Error(`No place found for "${q}".`), { status: 404, code: "PLACE_NOT_FOUND" });
   const year = new Date().getFullYear();
-  const [stops, lines, pois, residential, tz, holidays, schoolHolidays] = await Promise.all([
-    soft("overpass stops", () => fetchStops(place.bbox, doFetch), []),
-    soft("overpass lines", () => fetchLines(place.bbox, doFetch), []),
-    soft("overpass pois", () => fetchPois(place.bbox, doFetch), { categories: {}, items: [] }),
-    soft("overpass residential", () => fetchResidential(place.bbox, doFetch), []),
+  // The Overpass queries run one after the other (the public instances allow
+  // two concurrent slots per IP), most useful first; the other sources run
+  // alongside them. Once Overpass is found unavailable (every instance
+  // refused after the retries) or the time budget is spent, the remaining
+  // queries are skipped: a partial dossier now beats a complete one in
+  // minutes.
+  const osm = async () => {
+    const deadline = Date.now() + OVERPASS_RETRY.budgetMs;
+    let down = false;
+    const step = async (label, fn, fallback) => {
+      if (down || Date.now() > deadline) {
+        warnings.push(`${label}: skipped (${down ? "Overpass unavailable" : "time budget"})`);
+        return fallback;
+      }
+      try {
+        return await fn();
+      } catch (err) {
+        warnings.push(`${label}: ${err.name === "AbortError" ? "timeout" : err.message}`);
+        if (err.unavailable) down = true;
+        return fallback;
+      }
+    };
+    const out = {};
+    out.stops = await step("overpass stops", () => fetchStops(place.bbox, doFetch), []);
+    out.pois = await step("overpass pois", () => fetchPois(place.bbox, doFetch), { categories: {}, items: [] });
+    out.residential = await step("overpass residential", () => fetchResidential(place.bbox, doFetch), []);
+    out.lines = await step("overpass lines", () => fetchLines(place.bbox, doFetch), []);
+    return out;
+  };
+  const [{ stops, lines, pois, residential }, tz, holidays, schoolHolidays] = await Promise.all([
+    osm(),
     soft("open-meteo", () => fetchTimezone(place.lat, place.lon, doFetch), { timezone: null, elevation_m: null }),
     place.country_code ? soft("nager", () => fetchHolidays(place.country_code, [year, year + 1], doFetch), []) : Promise.resolve([]),
     place.country_code ? soft("openholidays", () => fetchSchoolHolidays(place.country_code, `${year}-01-01`, `${year + 1}-12-31`, doFetch), []) : Promise.resolve([]),
@@ -504,4 +565,4 @@ const findStops = (d, query, near = null, limit = 8) => {
   return scored.slice(0, limit).map((x) => ({ ...x.s, distance_m: Math.round(haversineMeters(centre.lat, centre.lon, x.s.lat, x.s.lon)) }));
 };
 
-module.exports = { buildTerritory, getCachedTerritory, summarizeForModel, coverageOf, findStops, populationGrid, SOURCES, POI_CATEGORIES, _internals: { resolvePlace, fetchStops, fetchLines, fetchPois, fetchResidential, fetchHolidays, fetchSchoolHolidays, fetchTimezone, fetchPopulationWikidata, polygonAreaM2, pointInPolygon, _cache } };
+module.exports = { buildTerritory, getCachedTerritory, summarizeForModel, coverageOf, findStops, populationGrid, SOURCES, POI_CATEGORIES, _internals: { OVERPASS_RETRY, overpass, resolvePlace, fetchStops, fetchLines, fetchPois, fetchResidential, fetchHolidays, fetchSchoolHolidays, fetchTimezone, fetchPopulationWikidata, polygonAreaM2, pointInPolygon, _cache } };

@@ -32,6 +32,8 @@ import { useLanguage } from "../../contexts/LanguageContext";
 import { useFeatures } from "../../utils/featuresApi";
 import { validateSpec, estimateSpec, compileSpec, streamPlan, loadDraft, saveDraft, fetchCoverage, evaluateSpec, refineSpec } from "../../utils/networkStudioApi";
 import TerritoryPanel from "./TerritoryPanel";
+import MapLayers from "./MapLayers";
+import { soft } from "./StudioUI";
 import { QualityBadge, QualityCard, fmtMoney } from "./PlanCards";
 import NetworkMap from "./NetworkMap";
 import PlanChat from "./PlanChat";
@@ -461,9 +463,17 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
 
       {/* Body */}
       <Box sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: isMobile ? "column" : "row" }}>
-        <Box sx={{ width: isMobile ? "100%" : 440, flexShrink: 0, borderRight: isMobile ? "none" : `1px solid ${alpha(theme.palette.divider, 1)}`, background: theme.palette.background.paper, minHeight: isMobile ? 320 : 0, display: "flex", flexDirection: "column" }}>
-          <TerritoryPanel territory={territory} onTerritory={(d) => { setTerritory(d); setFitEpoch((e) => e + 1); }} layers={layers} onToggleLayer={(k) => setLayers((l) => ({ ...l, [k]: !l[k] }))} coverage={coverage} onUseExistingStops={useExistingStops} onRefineStops={refineStops} canRefine={Boolean(validation && (validation.spec?.lines || []).length) && !streaming} refining={refining} onImportedFeed={importedFeed} busy={streaming} />
-          <PlanChat turns={turns} streaming={streaming} pendingTool={pendingTool} onSend={runPlan} onStop={stopPlan} canPlan={canPlan} disabledReason={disabledReason} />
+        <Box sx={{ width: isMobile ? "100%" : 420, flexShrink: 0, borderRight: isMobile ? "none" : `1px solid ${theme.palette.divider}`, background: theme.palette.background.paper, minHeight: isMobile ? 360 : 0, display: "flex", flexDirection: "column" }}>
+          <PlanChat
+            turns={turns}
+            streaming={streaming}
+            pendingTool={pendingTool}
+            onSend={runPlan}
+            onStop={stopPlan}
+            canPlan={canPlan}
+            disabledReason={disabledReason}
+            header={<TerritoryPanel territory={territory} onTerritory={(d) => { setTerritory(d); setFitEpoch((e) => e + 1); }} coverage={coverage} onUseExistingStops={useExistingStops} onRefineStops={refineStops} canRefine={Boolean(validation && (validation.spec?.lines || []).length) && !streaming} refining={refining} onImportedFeed={importedFeed} busy={streaming} />}
+          />
         </Box>
         <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column" }}>
           <Box sx={{ display: "flex", alignItems: "center", px: 1.5, borderBottom: `1px solid ${alpha(theme.palette.divider, 1)}`, background: theme.palette.background.paper }}>
@@ -485,7 +495,8 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
           <Box sx={{ flex: 1, minHeight: 0, position: "relative", overflow: tab === "map" ? "hidden" : "auto", p: tab === "map" ? 0 : 1.5 }}>
             {tab === "map" && (
               <>
-                <NetworkMap stops={spec.stops || []} lines={validation?.spec?.lines || spec.lines || []} geometry={geometry} corridors={corridors} population={territory && layers.population ? territory.population_grid : null} existingStops={territory && layers.stops ? territory.existing_stops : []} pois={territory && layers.pois ? territory.pois.items : []} onPickExistingStop={(s) => { if (!(spec.stops || []).some((x) => x.id === s.id)) updateSpec({ ...spec, stops: [...(spec.stops || []), { id: s.id, name: s.name || s.kind, lat: s.lat, lon: s.lon, source: "osm" }] }); }} selectedStopId={selectedStopId} placingStopId={placingStopId} onSelectStop={setSelectedStopId} onMoveStop={(id, lat, lon) => updateSpec({ ...spec, stops: spec.stops.map((s) => (s.id === id ? { ...s, lat, lon } : s)) })} onPlaceStop={(id, lat, lon) => { updateSpec({ ...spec, stops: spec.stops.map((s) => (s.id === id ? { ...s, lat, lon } : s)) }); setPlacingStopId(null); }} fitEpoch={fitEpoch} />
+                <NetworkMap stops={spec.stops || []} lines={validation?.spec?.lines || spec.lines || []} geometry={geometry} corridors={corridors} population={territory && layers.population ? territory.population_grid : null} focusBbox={territory ? territory.place.bbox : null} existingStops={territory && layers.stops ? territory.existing_stops : []} pois={territory && layers.pois ? territory.pois.items : []} onPickExistingStop={(s) => { if (!(spec.stops || []).some((x) => x.id === s.id)) updateSpec({ ...spec, stops: [...(spec.stops || []), { id: s.id, name: s.name || s.kind, lat: s.lat, lon: s.lon, source: "osm" }] }); }} selectedStopId={selectedStopId} placingStopId={placingStopId} onSelectStop={setSelectedStopId} onMoveStop={(id, lat, lon) => updateSpec({ ...spec, stops: spec.stops.map((s) => (s.id === id ? { ...s, lat, lon } : s)) })} onPlaceStop={(id, lat, lon) => { updateSpec({ ...spec, stops: spec.stops.map((s) => (s.id === id ? { ...s, lat, lon } : s)) }); setPlacingStopId(null); }} fitEpoch={fitEpoch} />
+                <MapLayers territory={territory} layers={layers} onToggle={(k) => setLayers((l) => ({ ...l, [k]: !l[k] }))} />
                 {placingStopId && (
                   <Box sx={{ position: "absolute", top: 12, left: "50%", transform: "translateX(-50%)", zIndex: 1000, px: 1.5, py: 0.6, borderRadius: 99, background: theme.palette.warning.main, color: theme.palette.warning.contrastText, fontSize: "0.76rem", fontWeight: 700, boxShadow: 3 }}>
                     {t("network.placingHint", { name: (spec.stops || []).find((s) => s.id === placingStopId)?.name || "" })}
@@ -506,7 +517,7 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
           {/* Footer: estimate, issues, build */}
           <Box sx={{ borderTop: `1px solid ${alpha(theme.palette.divider, 1)}`, background: theme.palette.background.paper }}>
             <Collapse in={ready && !streaming && canBuild && compile.state !== "running"}>
-              <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 2, py: 0.75, background: alpha(theme.palette.success.main, 0.08), borderBottom: `1px solid ${alpha(theme.palette.success.main, 0.3)}` }} data-testid="network-ready">
+              <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 2, py: 0.75, background: alpha(theme.palette.success.main, theme.palette.mode === "dark" ? 0.14 : 0.08) }} data-testid="network-ready">
                 <CheckCircleOutlineIcon sx={{ fontSize: 16, color: "success.main" }} />
                 <Typography sx={{ fontSize: "0.78rem", fontWeight: 700, flex: 1 }}>{t("network.ready")}</Typography>
                 <Button size="small" variant="contained" color="success" disableElevation onClick={() => build({ auto: true })} data-testid="network-project-now" sx={{ textTransform: "none", fontWeight: 800 }}>
@@ -526,17 +537,28 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
                 ))}
               </Box>
             </Collapse>
-            <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 2, py: 1, flexWrap: "wrap" }}>
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, px: 2, py: 1, flexWrap: "wrap" }}>
               {estimate ? (
                 <>
-                  <Chip size="small" label={t("network.estimate.lines", { count: estimate.lines })} sx={{ height: 22, fontSize: "0.68rem" }} />
-                  <Chip size="small" label={t("network.estimate.stops", { count: estimate.stops })} color={estimate.stops_without_coordinates ? "warning" : "default"} sx={{ height: 22, fontSize: "0.68rem" }} />
-                  <Chip size="small" label={t("network.estimate.trips", { count: estimate.trips })} sx={{ height: 22, fontSize: "0.68rem" }} />
-                  {geometry.length > 0 && <Chip size="small" label={t("network.estimate.km", { km: Math.round(geometry.reduce((a, g) => a + (g.distance_km || 0), 0)) })} sx={{ height: 22, fontSize: "0.68rem" }} />}
+                  <Box data-testid="network-estimate" sx={{ display: "flex", alignItems: "center", flexWrap: "wrap", columnGap: 1, rowGap: 0.25, fontSize: "0.76rem", fontWeight: 600, color: "text.primary", "& > .sep": { color: "text.disabled", fontWeight: 400 } }}>
+                    <span>{t("network.estimate.lines", { count: estimate.lines })}</span>
+                    <span className="sep">·</span>
+                    <Box component="span" sx={{ color: estimate.stops_without_coordinates ? "warning.main" : "inherit" }}>
+                      {t("network.estimate.stops", { count: estimate.stops })}
+                    </Box>
+                    <span className="sep">·</span>
+                    <span>{t("network.estimate.trips", { count: estimate.trips })}</span>
+                    {geometry.length > 0 && (
+                      <>
+                        <span className="sep">·</span>
+                        <span>{t("network.estimate.km", { km: Math.round(geometry.reduce((a, g) => a + (g.distance_km || 0), 0)) })}</span>
+                      </>
+                    )}
+                  </Box>
                   <QualityBadge quality={quality} onClick={() => setQualityOpen(true)} />
                   {quality?.operations && quality.operations.fleet_total > 0 && (
                     <Tooltip title={t("network.ops.hint", { km: quality.operations.veh_km_year.toLocaleString(), hours: quality.operations.veh_h_year.toLocaleString() })}>
-                      <Chip size="small" icon={<DirectionsBusFilledOutlinedIcon sx={{ fontSize: 14 }} />} label={`${t("network.ops.fleet", { count: quality.operations.fleet_total })} · ${t("network.ops.cost", { cost: fmtMoney(quality.operations.cost_year, quality.operations.currency) })}`} onClick={() => setQualityOpen(true)} variant="outlined" data-testid="network-ops" sx={{ height: 22, fontSize: "0.68rem", fontWeight: 700 }} />
+                      <Chip size="small" icon={<DirectionsBusFilledOutlinedIcon sx={{ fontSize: 14 }} />} label={`${t("network.ops.fleet", { count: quality.operations.fleet_total })} · ${t("network.ops.cost", { cost: fmtMoney(quality.operations.cost_year, quality.operations.currency) })}`} onClick={() => setQualityOpen(true)} data-testid="network-ops" sx={{ height: 24, fontSize: "0.7rem", fontWeight: 700, background: soft(theme, 1.3), "&:hover": { background: soft(theme, 2.2) } }} />
                     </Tooltip>
                   )}
                   <Box component="button" type="button" onClick={() => setIssuesOpen((v) => !v)} data-testid="network-issues-toggle" sx={{ all: "unset", cursor: issues.length ? "pointer" : "default", display: "flex", alignItems: "center", gap: 0.5, fontSize: "0.74rem", fontWeight: 700, color: blockers.length ? "error.main" : warnings.length ? "warning.dark" : "success.main" }}>
@@ -549,7 +571,7 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
                 <Typography sx={{ fontSize: "0.76rem", color: "text.disabled" }}>{t("network.estimate.empty")}</Typography>
               )}
               <Box sx={{ flex: 1 }} />
-              <Button variant="contained" disableElevation disabled={!canBuild} onClick={() => build()} startIcon={compile.state === "running" ? <CircularProgress size={14} color="inherit" /> : <BuildCircleOutlinedIcon />} data-testid="network-build" sx={{ textTransform: "none", fontWeight: 800 }}>
+              <Button variant="contained" disableElevation disabled={!canBuild} onClick={() => build()} startIcon={compile.state === "running" ? <CircularProgress size={14} color="inherit" /> : <BuildCircleOutlinedIcon />} data-testid="network-build" sx={{ textTransform: "none", fontWeight: 700, py: 0.75, px: 2, borderRadius: "10px" }}>
                 {compile.state === "running" ? (compile.auto ? t("network.projecting") : t("network.building")) : t("network.build")}
               </Button>
             </Box>

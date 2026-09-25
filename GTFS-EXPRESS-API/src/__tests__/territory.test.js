@@ -117,6 +117,64 @@ describe("territory dossier", () => {
     expect(again.fromCache).toBe(true);
   });
 
+  test("Overpass queries run one at a time and a busy instance is retried on the mirror", async () => {
+    const config = require("../config");
+    const saved = config.OVERPASS_URL;
+    const savedDelays = territory._internals.OVERPASS_RETRY.delaysMs;
+    config.OVERPASS_URL = "https://overpass.main/api/interpreter,https://overpass.mirror/api/interpreter";
+    territory._internals.OVERPASS_RETRY.delaysMs = [0, 0];
+    let inFlight = 0;
+    let maxInFlight = 0;
+    let first = true;
+    const hosts = [];
+    const busy = jest.fn(async (url, init) => {
+      const u = String(url);
+      if (!u.includes("overpass")) return fakeFetch(url, init);
+      hosts.push(new URL(u).host);
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      inFlight -= 1;
+      if (first) {
+        first = false;
+        return { ok: false, status: 429, headers: { get: () => null }, json: async () => ({}) };
+      }
+      return fakeFetch(u.replace(/overpass\.(main|mirror)/, "overpass-api.de"), init);
+    });
+    try {
+      const d = await territory.buildTerritory("Vendôme", { fetchImpl: busy, force: true });
+      expect(d.warnings).toEqual([]);
+      expect(d.existing_stops).toHaveLength(4);
+      expect(d.pois.items.length).toBeGreaterThan(0);
+      expect(d.existing_lines).toHaveLength(1);
+      // Never two Overpass queries at once; the 429 was retried on the mirror.
+      expect(maxInFlight).toBe(1);
+      expect(hosts.slice(0, 2)).toEqual(["overpass.main", "overpass.mirror"]);
+      // A client error is not retried.
+      const bad = jest.fn(async () => ({ ok: false, status: 400, headers: { get: () => null }, json: async () => ({}) }));
+      await expect(territory._internals.overpass("[out:json];", bad)).rejects.toThrow("HTTP 400");
+      expect(bad).toHaveBeenCalledTimes(1);
+      // Overpass down (connections reset everywhere): the first query exhausts
+      // its retries, the other three are skipped without a call.
+      let overpassCalls = 0;
+      const down = jest.fn(async (url, init) => {
+        if (!String(url).includes("overpass")) return fakeFetch(url, init);
+        overpassCalls += 1;
+        throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } });
+      });
+      const partial = await territory.buildTerritory("Vendôme", { fetchImpl: down, force: true });
+      expect(overpassCalls).toBe(3);
+      expect(partial.existing_stops).toEqual([]);
+      expect(partial.warnings).toEqual(["overpass stops: fetch failed", "overpass pois: skipped (Overpass unavailable)", "overpass residential: skipped (Overpass unavailable)", "overpass lines: skipped (Overpass unavailable)"]);
+      // The rest of the dossier stands.
+      expect(partial.timezone).toBe("Europe/Paris");
+      expect(partial.holidays.length).toBeGreaterThan(0);
+    } finally {
+      config.OVERPASS_URL = saved;
+      territory._internals.OVERPASS_RETRY.delaysMs = savedDelays;
+    }
+  });
+
   test("a failing connector degrades to a warning; an unknown place is a 404", async () => {
     const flaky = jest.fn(async (url, init) => (String(url).includes("nager") ? { ok: false, status: 500, json: async () => ({}) } : fakeFetch(url, init)));
     const d = await territory.buildTerritory("Vendôme", { fetchImpl: flaky, force: true });

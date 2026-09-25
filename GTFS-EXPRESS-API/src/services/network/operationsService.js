@@ -13,8 +13,10 @@
  * intervals is the fleet the line needs (no interlining between lines, so
  * the network fleet is the sum — a conservative figure an operator can
  * beat). Kilometres and hours: trips per calendar day × the routed length
- * and running time of the direction, × the number of days of that calendar
- * in the feed window, scaled to a year. Cost: vehicle-km × a cost per km
+ * and running time of the direction, × the number of days that calendar
+ * runs within its own date range, annualised over the span the calendars
+ * cover (a feed of school-term calendars is not counted as a whole year per
+ * calendar). Cost: vehicle-km × a cost per km
  * (per-mode orders of magnitude, overridable in spec.operations) plus
  * vehicle-hours × a cost per hour when given. Everything is deterministic
  * and offline.
@@ -66,8 +68,23 @@ const estimateOperations = (spec, geometry = null, { layoverMin = null } = {}) =
   const geoDir = new Map();
   for (const l of geometry?.lines || []) for (const d of l.directions || []) if (d.routable && Number.isFinite(d.distance_km)) geoDir.set(`${l.id}_${d.id}`, d);
   const feedDays = daysByWeekday(spec.feed?.start_date, spec.feed?.end_date);
-  const feedDayCount = Object.values(feedDays).reduce((s, v) => s + v, 0) || 365;
-  const yearScale = 365 / feedDayCount;
+  // Each calendar runs on its own weekdays within its OWN date range (an
+  // imported feed has school-term, holiday and summer calendars of a few
+  // weeks each); the total is annualised over the span those calendars cover.
+  const calDays = new Map();
+  const runDaysOf = (cal) => {
+    if (!calDays.has(cal.id)) {
+      const wk = daysByWeekday(cal.start_date || spec.feed?.start_date, cal.end_date || spec.feed?.end_date);
+      calDays.set(cal.id, cal.days.reduce((s, d) => s + (wk[d] || 0), 0));
+    }
+    return calDays.get(cal.id);
+  };
+  const usedIds = new Set((spec.lines || []).flatMap((l) => (l.services || []).map((s) => s.calendar_id)));
+  const used = [...usedIds].map((id) => calendars.get(id)).filter(Boolean);
+  const starts = used.map((c) => c.start_date || spec.feed?.start_date).filter((d) => /^\d{8}$/.test(d || "")).sort();
+  const ends = used.map((c) => c.end_date || spec.feed?.end_date).filter((d) => /^\d{8}$/.test(d || "")).sort();
+  const spanDays = starts.length && ends.length ? Object.values(daysByWeekday(starts[0], ends[ends.length - 1])).reduce((s, v) => s + v, 0) : 0;
+  const yearScale = 365 / (spanDays || Object.values(feedDays).reduce((s, v) => s + v, 0) || 365);
 
   const perLine = [];
   let fleet = 0;
@@ -116,7 +133,7 @@ const estimateOperations = (spec, geometry = null, { layoverMin = null } = {}) =
     let lineKmYear = 0;
     let lineHYear = 0;
     for (const e of perCal.values()) {
-      const days = e.cal.days.reduce((s, d) => s + (feedDays[d] || 0), 0);
+      const days = runDaysOf(e.cal);
       lineKmYear += e.km * days * yearScale;
       lineHYear += e.hours * days * yearScale;
       if (!busiest || e.trips > busiest.trips) busiest = e;

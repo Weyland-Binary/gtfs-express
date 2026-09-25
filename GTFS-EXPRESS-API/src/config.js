@@ -145,7 +145,8 @@ module.exports = {
   // services/network/territoryService.js). Self-host Nominatim/Overpass for
   // production volumes; every source is attributed in the UI.
   NOMINATIM_URL: process.env.NOMINATIM_URL || "https://nominatim.openstreetmap.org",
-  OVERPASS_URL: process.env.OVERPASS_URL || "https://overpass-api.de/api/interpreter",
+  // Comma-separated: the main instance first, then mirrors tried on 429/504.
+  OVERPASS_URL: process.env.OVERPASS_URL || "https://overpass-api.de/api/interpreter,https://overpass.private.coffee/api/interpreter",
   WIKIDATA_SPARQL_URL: process.env.WIKIDATA_SPARQL_URL || "https://query.wikidata.org/sparql",
   NAGER_URL: process.env.NAGER_URL || "https://date.nager.at",
   OPENHOLIDAYS_URL: process.env.OPENHOLIDAYS_URL || "https://openholidaysapi.org",

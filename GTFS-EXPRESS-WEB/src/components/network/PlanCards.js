@@ -57,12 +57,12 @@ export function RequirementsCard({ requirements, onCorrect = null }) {
   const service = r.service ? [r.service.days, r.service.span, r.service.headways, r.service.holidays].filter(Boolean).join(" · ") : "";
   const openLow = (r.open_questions || []).filter((q) => q.impact !== "high");
   return (
-    <Box data-testid="plan-requirements" sx={{ mt: 1, borderRadius: 1.5, border: `1px solid ${alpha(theme.palette.info.main, 0.35)}`, background: alpha(theme.palette.info.main, 0.04), p: 1.25, display: "flex", flexDirection: "column", gap: 0.7 }}>
+    <Box data-testid="plan-requirements" sx={{ mt: 0.5, borderRadius: "12px", background: alpha(theme.palette.info.main, theme.palette.mode === "dark" ? 0.1 : 0.05), p: 1.5, display: "flex", flexDirection: "column", gap: 0.8 }}>
       <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
         <FactCheckOutlinedIcon sx={{ fontSize: 16, color: theme.palette.info.main }} />
         <Typography sx={{ fontSize: "0.8rem", fontWeight: 800, flex: 1 }}>{t("network.req.title")}</Typography>
         {onCorrect && (
-          <Chip size="small" icon={<EditOutlinedIcon sx={{ fontSize: 13 }} />} label={t("network.req.correct")} onClick={() => onCorrect(t("network.req.correctGeneric"))} variant="outlined" data-testid="plan-requirements-correct" sx={{ height: 22, fontSize: "0.66rem", fontWeight: 700 }} />
+          <Chip size="small" icon={<EditOutlinedIcon sx={{ fontSize: 13 }} />} label={t("network.req.correct")} onClick={() => onCorrect(t("network.req.correctGeneric"))} data-testid="plan-requirements-correct" sx={{ height: 24, fontSize: "0.68rem", fontWeight: 700, background: theme.palette.background.paper }} />
         )}
       </Box>
       {(r.operator || r.area) && (
@@ -102,7 +102,7 @@ export function RequirementsCard({ requirements, onCorrect = null }) {
           <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.4 }}>
             {r.assumptions.map((a, i) => (
               <Tooltip key={i} title={`${t(`network.req.confidence.${a.confidence || "medium"}`)}${a.reason ? ` — ${a.reason}` : ""}`}>
-                <Chip size="small" color={CONFIDENCE_COLOR[a.confidence] || "default"} variant="outlined" label={`${a.topic}: ${a.value}`} onClick={onCorrect ? () => onCorrect(t("network.req.correctPrefill", { topic: a.topic, value: a.value })) : undefined} data-testid="plan-assumption" sx={{ height: 20, fontSize: "0.66rem", maxWidth: "100%" }} />
+                <Chip size="small" label={`${a.topic}: ${a.value}`} onClick={onCorrect ? () => onCorrect(t("network.req.correctPrefill", { topic: a.topic, value: a.value })) : undefined} data-testid="plan-assumption" sx={{ height: 22, fontSize: "0.68rem", maxWidth: "100%", background: theme.palette.background.paper, "& .MuiChip-label": { display: "flex", alignItems: "center", gap: 0.6 }, "&::before": { content: '""', width: 6, height: 6, borderRadius: "50%", ml: 1, flexShrink: 0, background: theme.palette[CONFIDENCE_COLOR[a.confidence] || "info"].main } }} />
               </Tooltip>
             ))}
           </Box>
@@ -145,7 +145,7 @@ export function QualityCard({ quality, dense = false }) {
   if (!q) return null;
   const findings = (q.dimensions || []).flatMap((d) => d.findings.filter((x) => x.level !== "info").map((x) => ({ ...x, dimension: d.id }))).sort((a, b) => (a.level === "major" ? 0 : 1) - (b.level === "major" ? 0 : 1)).slice(0, dense ? 4 : 8);
   return (
-    <Box data-testid="plan-quality" sx={{ mt: dense ? 0 : 1, borderRadius: 1.5, border: `1px solid ${alpha(qualityColor(q.score, theme), 0.45)}`, background: alpha(qualityColor(q.score, theme), 0.04), p: 1.25, display: "flex", flexDirection: "column", gap: 0.9 }}>
+    <Box data-testid="plan-quality" sx={{ mt: dense ? 0 : 1, borderRadius: "12px", background: alpha(qualityColor(q.score, theme), theme.palette.mode === "dark" ? 0.1 : 0.06), p: 1.5, display: "flex", flexDirection: "column", gap: 1 }}>
       <Box sx={{ display: "flex", alignItems: "center", gap: 1.25 }}>
         <ScoreRing score={q.score} grade={q.grade} />
         <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -233,7 +233,7 @@ export function QualityBadge({ quality, onClick = null }) {
   const color = qualityColor(quality.score, theme);
   return (
     <Tooltip title={t("network.quality.open")}>
-      <Chip size="small" icon={<VerifiedOutlinedIcon sx={{ fontSize: 14, color: `${color} !important` }} />} label={`${t("network.quality.score", { score: quality.score })} · ${quality.grade || ""}`} onClick={onClick || undefined} variant="outlined" data-testid="quality-badge" sx={{ height: 22, fontSize: "0.68rem", fontWeight: 800, borderColor: alpha(color, 0.6), color }} />
+      <Chip size="small" icon={<VerifiedOutlinedIcon sx={{ fontSize: 14, color: `${color} !important` }} />} label={`${t("network.quality.score", { score: quality.score })} · ${quality.grade || ""}`} onClick={onClick || undefined} data-testid="quality-badge" sx={{ height: 24, fontSize: "0.7rem", fontWeight: 800, color, background: alpha(color, theme.palette.mode === "dark" ? 0.18 : 0.1), "&:hover": { background: alpha(color, theme.palette.mode === "dark" ? 0.26 : 0.16) } }} />
     </Tooltip>
   );
 }

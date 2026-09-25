@@ -2,15 +2,16 @@
  * TerritoryPanel — the ground the network is designed on: type a town or an
  * area, the server assembles the public-data dossier (OpenStreetMap stops,
  * lines and trip generators, Wikidata population, holidays, timezone) and
- * the studio shows it as facts, map layers and a coverage score. Every
- * source is attributed.
+ * the panel shows it as a few key figures, the generators by kind, the
+ * coverage of the plan, and the existing network to start from. The map
+ * layers live on the map; the sources sit behind an info button.
  */
 
 import React, { useCallback, useState } from "react";
-import { Box, Button, Chip, CircularProgress, Collapse, IconButton, Link, TextField, Tooltip, Typography, alpha, useTheme } from "@mui/material";
-import PublicIcon from "@mui/icons-material/Public";
+import { Box, CircularProgress, Collapse, IconButton, InputBase, Link, Popover, Tooltip, Typography, alpha, useTheme } from "@mui/material";
 import SearchIcon from "@mui/icons-material/Search";
-import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
+import ReportGmailerrorredOutlinedIcon from "@mui/icons-material/ReportGmailerrorredOutlined";
 import DirectionsBusFilledOutlinedIcon from "@mui/icons-material/DirectionsBusFilledOutlined";
 import PlaceOutlinedIcon from "@mui/icons-material/PlaceOutlined";
 import SchoolOutlinedIcon from "@mui/icons-material/SchoolOutlined";
@@ -22,48 +23,111 @@ import FactoryOutlinedIcon from "@mui/icons-material/FactoryOutlined";
 import AccountBalanceOutlinedIcon from "@mui/icons-material/AccountBalanceOutlined";
 import EventOutlinedIcon from "@mui/icons-material/EventOutlined";
 import GroupsOutlinedIcon from "@mui/icons-material/GroupsOutlined";
+import RouteOutlinedIcon from "@mui/icons-material/RouteOutlined";
+import AddLocationAltOutlinedIcon from "@mui/icons-material/AddLocationAltOutlined";
+import AutoFixHighOutlinedIcon from "@mui/icons-material/AutoFixHighOutlined";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { fetchTerritory } from "../../utils/networkStudioApi";
 import ExistingFeeds from "./ExistingFeeds";
+import { Meter, QuietButton, SectionHeader, Stat, compactNumber, soft } from "./StudioUI";
 
 export const CATEGORY_ICON = { school: SchoolOutlinedIcon, college: SchoolOutlinedIcon, hospital: LocalHospitalOutlinedIcon, civic: AccountBalanceOutlinedIcon, market: StorefrontOutlinedIcon, station: TrainOutlinedIcon, leisure: StadiumOutlinedIcon, work: FactoryOutlinedIcon };
 export const CATEGORY_COLOR = { school: "#F9A825", college: "#F57F17", hospital: "#D32F2F", civic: "#5E35B1", market: "#00897B", station: "#1E88E5", leisure: "#43A047", work: "#6D4C41" };
 
-const fmtNumber = (n) => (typeof n === "number" ? n.toLocaleString() : "—");
-
-export default function TerritoryPanel({ territory, onTerritory, layers, onToggleLayer, coverage, onUseExistingStops, onRefineStops = null, canRefine = false, refining = false, onImportedFeed = null, busy = false }) {
+function Sources({ sources }) {
   const { t } = useLanguage();
+  const [anchor, setAnchor] = useState(null);
+  if (!sources?.length) return null;
+  return (
+    <>
+      <Tooltip title={t("territory.sourcesTitle")}>
+        <IconButton size="small" onClick={(e) => setAnchor(e.currentTarget)} aria-label={t("territory.sourcesTitle")} data-testid="territory-sources" sx={{ color: "text.secondary" }}>
+          <InfoOutlinedIcon sx={{ fontSize: 17 }} />
+        </IconButton>
+      </Tooltip>
+      <Popover open={Boolean(anchor)} anchorEl={anchor} onClose={() => setAnchor(null)} anchorOrigin={{ vertical: "bottom", horizontal: "right" }} transformOrigin={{ vertical: "top", horizontal: "right" }} slotProps={{ paper: { sx: { p: 1.5, maxWidth: 300, borderRadius: 2 } } }}>
+        <Typography sx={{ fontSize: "0.72rem", fontWeight: 700, mb: 0.75 }}>{t("territory.sourcesTitle")}</Typography>
+        {sources.map((s) => (
+          <Box key={s.id} sx={{ fontSize: "0.74rem", lineHeight: 1.6 }}>
+            <Link href={s.url} target="_blank" rel="noreferrer" underline="hover">
+              {s.name}
+            </Link>
+            {s.license ? <Box component="span" sx={{ color: "text.secondary" }}>{` · ${s.license}`}</Box> : null}
+          </Box>
+        ))}
+      </Popover>
+    </>
+  );
+}
+
+export default function TerritoryPanel({ territory, onTerritory, coverage, onUseExistingStops, onRefineStops = null, canRefine = false, refining = false, onImportedFeed = null, busy = false }) {
+  const { t, language } = useLanguage();
   const theme = useTheme();
   const [query, setQuery] = useState(territory?.place?.query || "");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [open, setOpen] = useState(true);
 
-  const search = useCallback(async () => {
-    const q = query.trim();
-    if (q.length < 2 || loading) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const d = await fetchTerritory(q);
-      onTerritory(d);
-      setOpen(true);
-    } catch (err) {
-      setError(err.code === "PLACE_NOT_FOUND" ? t("territory.notFound") : err.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [query, loading, onTerritory, t]);
+  const run = useCallback(
+    async (q, force = false) => {
+      if (q.length < 2 || loading) return;
+      setLoading(true);
+      setError(null);
+      try {
+        const d = await fetchTerritory(q, force);
+        onTerritory(d);
+        setOpen(true);
+      } catch (err) {
+        setError(err.code === "PLACE_NOT_FOUND" ? t("territory.notFound") : err.message);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [loading, onTerritory, t],
+  );
+  const search = useCallback(() => run(query.trim()), [run, query]);
 
   const d = territory;
   const cats = d ? Object.entries(d.pois?.categories || {}).sort((a, b) => b[1] - a[1]) : [];
+  const grid = d?.population_grid?.cells?.length ? d.population_grid : null;
+  const hasNamedStops = Boolean(d && d.existing_stops.some((s) => s.name));
+  const meta = d ? [d.timezone, d.population ? t("territory.population", { count: compactNumber(d.population.value, language) }) : null, d.elevation_m != null ? `${Math.round(d.elevation_m)} m` : null].filter(Boolean).join(" · ") : "";
 
   return (
-    <Box data-testid="territory-panel" sx={{ borderBottom: `1px solid ${alpha(theme.palette.divider, 1)}`, background: alpha(theme.palette.info.main, 0.03) }}>
-      <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 1.5, pt: 1.25, pb: d ? 0.5 : 1.25 }}>
-        <PublicIcon sx={{ fontSize: 18, color: theme.palette.info.main }} />
-        <TextField
-          size="small"
+    <Box data-testid="territory-panel" sx={{ px: 2, pt: 1.5, pb: 1.75 }}>
+      <SectionHeader
+        label={t("territory.section")}
+        open={open}
+        onToggle={d ? () => setOpen((v) => !v) : null}
+        right={
+          d && !open ? (
+            <Typography sx={{ fontSize: "0.72rem", color: "text.secondary" }} noWrap>
+              {d.place.name} · {t("territory.stops", { count: d.existing_stops.length })}
+            </Typography>
+          ) : null
+        }
+      />
+
+      {/* Search */}
+      <Box
+        sx={{
+          mt: 0.75,
+          display: "flex",
+          alignItems: "center",
+          gap: 0.75,
+          pl: 1.25,
+          pr: 0.5,
+          height: 40,
+          borderRadius: "10px",
+          background: soft(theme),
+          border: "1px solid transparent",
+          transition: "background 120ms, border-color 120ms, box-shadow 120ms",
+          "&:hover": { background: soft(theme, 1.5) },
+          "&:focus-within": { background: theme.palette.background.paper, borderColor: alpha(theme.palette.primary.main, 0.55), boxShadow: `0 0 0 3px ${alpha(theme.palette.primary.main, 0.12)}` },
+        }}
+      >
+        <SearchIcon sx={{ fontSize: 18, color: "text.secondary" }} />
+        <InputBase
           fullWidth
           placeholder={t("territory.placeholder")}
           value={query}
@@ -74,102 +138,115 @@ export default function TerritoryPanel({ territory, onTerritory, layers, onToggl
               search();
             }
           }}
-          inputProps={{ "data-testid": "territory-query" }}
           disabled={loading}
+          inputProps={{ "data-testid": "territory-query", "aria-label": t("territory.placeholder") }}
+          sx={{ fontSize: "0.86rem" }}
         />
-        <Button size="small" variant={d ? "outlined" : "contained"} disableElevation onClick={search} disabled={loading || query.trim().length < 2} startIcon={loading ? <CircularProgress size={12} color="inherit" /> : <SearchIcon sx={{ fontSize: 16 }} />} data-testid="territory-search" sx={{ textTransform: "none", fontWeight: 700, whiteSpace: "nowrap", flexShrink: 0 }}>
-          {loading ? t("territory.loading") : t("territory.analyze")}
-        </Button>
-        {d && (
-          <IconButton size="small" onClick={() => setOpen((v) => !v)} aria-label={t("territory.toggle")}>
-            <ExpandMoreIcon sx={{ fontSize: 18, transform: open ? "rotate(180deg)" : "none", transition: "transform 160ms" }} />
-          </IconButton>
+        {loading ? (
+          <CircularProgress size={16} sx={{ mx: 1, flexShrink: 0 }} />
+        ) : (
+          <QuietButton onClick={search} disabled={query.trim().length < 2} data-testid="territory-search" sx={{ flexShrink: 0 }}>
+            {t("territory.analyzeShort")}
+          </QuietButton>
         )}
       </Box>
-      {error && <Typography sx={{ px: 1.5, pb: 1, fontSize: "0.74rem", color: "error.main" }}>{error}</Typography>}
-      {!d && !error && !loading && <Typography sx={{ px: 1.5, pb: 1.25, fontSize: "0.72rem", color: "text.secondary", lineHeight: 1.45 }}>{t("territory.hint")}</Typography>}
+      {loading && <Typography sx={{ mt: 0.75, fontSize: "0.72rem", color: "text.secondary" }}>{t("territory.loading")}</Typography>}
+      {error && <Typography sx={{ mt: 0.75, fontSize: "0.74rem", color: "error.main" }}>{error}</Typography>}
+      {!d && !error && !loading && <Typography sx={{ mt: 1, fontSize: "0.74rem", color: "text.secondary", lineHeight: 1.5 }}>{t("territory.hint")}</Typography>}
+
       {d && (
         <Collapse in={open}>
-          <Box sx={{ px: 1.5, pb: 1.25, display: "flex", flexDirection: "column", gap: 0.75 }} data-testid="territory-card">
+          <Box data-testid="territory-card" sx={{ mt: 1.5, display: "flex", flexDirection: "column", gap: 1.5 }}>
+            {/* Identity */}
             <Box>
-              <Typography sx={{ fontSize: "0.84rem", fontWeight: 800, lineHeight: 1.2 }} noWrap title={d.place.display_name}>
-                {d.place.name}
-                {d.place.country ? <Box component="span" sx={{ fontWeight: 500, color: "text.secondary" }}>{` · ${d.place.country}`}</Box> : null}
-              </Typography>
-              <Typography sx={{ fontSize: "0.7rem", color: "text.secondary" }}>
-                {d.timezone || "—"}
-                {d.population ? ` · ${t("territory.population", { count: fmtNumber(d.population.value) })}` : ""}
-                {d.elevation_m != null ? ` · ${Math.round(d.elevation_m)} m` : ""}
-              </Typography>
+              <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, minWidth: 0 }}>
+                <Typography sx={{ fontSize: "1.02rem", fontWeight: 800, lineHeight: 1.2 }} noWrap title={d.place.display_name}>
+                  {d.place.name}
+                </Typography>
+                {d.place.country && (
+                  <Typography sx={{ fontSize: "0.8rem", color: "text.secondary" }} noWrap>
+                    {d.place.country}
+                  </Typography>
+                )}
+                <Box sx={{ flex: 1 }} />
+                <Sources sources={d.sources} />
+              </Box>
+              {meta && <Typography sx={{ fontSize: "0.74rem", color: "text.secondary", mt: 0.25 }}>{meta}</Typography>}
             </Box>
-            <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
-              <Tooltip title={t("territory.layer.stopsHint")}>
-                <Chip size="small" icon={<DirectionsBusFilledOutlinedIcon sx={{ fontSize: 14 }} />} label={t("territory.stops", { count: d.existing_stops.length })} color={layers.stops ? "primary" : "default"} variant={layers.stops ? "filled" : "outlined"} onClick={() => onToggleLayer("stops")} data-testid="territory-layer-stops" sx={{ height: 22, fontSize: "0.66rem", fontWeight: 700 }} />
-              </Tooltip>
-              <Tooltip title={t("territory.layer.poisHint")}>
-                <Chip size="small" icon={<PlaceOutlinedIcon sx={{ fontSize: 14 }} />} label={t("territory.pois", { count: d.pois.items.length })} color={layers.pois ? "primary" : "default"} variant={layers.pois ? "filled" : "outlined"} onClick={() => onToggleLayer("pois")} data-testid="territory-layer-pois" sx={{ height: 22, fontSize: "0.66rem", fontWeight: 700 }} />
-              </Tooltip>
-              {d.population_grid?.cells?.length > 0 && (
-                <Tooltip title={t("territory.layer.populationHint", { km2: d.population_grid.residential_km2 })}>
-                  <Chip size="small" icon={<GroupsOutlinedIcon sx={{ fontSize: 14 }} />} label={`${t("territory.residents", { count: fmtNumber(d.population_grid.total) })}${d.population_grid.estimated ? " ≈" : ""}`} color={layers.population ? "primary" : "default"} variant={layers.population ? "filled" : "outlined"} onClick={() => onToggleLayer("population")} data-testid="territory-layer-population" sx={{ height: 22, fontSize: "0.66rem", fontWeight: 700 }} />
-                </Tooltip>
+
+            {/* Key figures */}
+            <Box sx={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 0.75 }}>
+              <Stat icon={DirectionsBusFilledOutlinedIcon} value={compactNumber(d.existing_stops.length, language)} label={t("territory.stat.stops")} muted={!d.existing_stops.length} testid="territory-stat-stops" />
+              <Stat icon={PlaceOutlinedIcon} value={compactNumber(d.pois.items.length, language)} label={t("territory.stat.pois")} muted={!d.pois.items.length} testid="territory-stat-pois" />
+              {grid ? (
+                <Stat icon={GroupsOutlinedIcon} value={`${compactNumber(grid.total, language)}${grid.estimated ? " ≈" : ""}`} label={t("territory.stat.residents")} hint={t("territory.layer.populationHint", { km2: grid.residential_km2 })} testid="territory-stat-residents" />
+              ) : (
+                <Stat icon={RouteOutlinedIcon} value={compactNumber(d.existing_lines.length, language)} label={t("territory.stat.lines")} muted={!d.existing_lines.length} testid="territory-stat-lines" />
               )}
-              {d.existing_lines.length > 0 && <Chip size="small" label={t("territory.lines", { count: d.existing_lines.length })} variant="outlined" sx={{ height: 22, fontSize: "0.66rem" }} />}
-              {d.holidays.length > 0 && <Chip size="small" icon={<EventOutlinedIcon sx={{ fontSize: 14 }} />} label={t("territory.holidays", { count: d.holidays.length })} variant="outlined" sx={{ height: 22, fontSize: "0.66rem" }} />}
-              {d.school_holidays.length > 0 && <Chip size="small" icon={<SchoolOutlinedIcon sx={{ fontSize: 14 }} />} label={t("territory.schoolHolidays", { count: d.school_holidays.length })} variant="outlined" sx={{ height: 22, fontSize: "0.66rem" }} />}
+              <Stat icon={EventOutlinedIcon} value={compactNumber(d.holidays.length, language)} label={t("territory.stat.holidays")} hint={d.school_holidays.length ? t("territory.schoolHolidays", { count: d.school_holidays.length }) : null} muted={!d.holidays.length} testid="territory-stat-holidays" />
             </Box>
+
+            {/* Generators by kind */}
             {cats.length > 0 && (
-              <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.4 }}>
+              <Box sx={{ display: "flex", flexWrap: "wrap", columnGap: 1.5, rowGap: 0.5 }}>
                 {cats.map(([c, n]) => {
                   const Icon = CATEGORY_ICON[c] || PlaceOutlinedIcon;
-                  return <Chip key={c} size="small" icon={<Icon sx={{ fontSize: 13, color: `${CATEGORY_COLOR[c]} !important` }} />} label={`${t(`territory.category.${c}`)} ${n}`} sx={{ height: 20, fontSize: "0.62rem", background: alpha(CATEGORY_COLOR[c] || theme.palette.text.secondary, 0.08) }} />;
+                  const label = `${t(`territory.category.${c}`)} ${n}`;
+                  return (
+                    <Tooltip key={c} title={t(`territory.category.${c}`)}>
+                      <Box aria-label={label} sx={{ display: "inline-flex", alignItems: "center", gap: 0.4, fontSize: "0.74rem", color: "text.secondary", fontVariantNumeric: "tabular-nums" }}>
+                        <Icon sx={{ fontSize: 15, color: CATEGORY_COLOR[c] || "text.secondary" }} />
+                        {n}
+                      </Box>
+                    </Tooltip>
+                  );
                 })}
               </Box>
             )}
-            {coverage && (coverage.pois_total > 0 || coverage.population) && (
-              <Box data-testid="territory-coverage" sx={{ display: "flex", alignItems: "center", gap: 1, px: 1, py: 0.6, borderRadius: 1.5, background: alpha(theme.palette.success.main, 0.06), border: `1px solid ${alpha(theme.palette.success.main, 0.3)}` }}>
-                <GroupsOutlinedIcon sx={{ fontSize: 16, color: theme.palette.success.main }} />
-                <Box sx={{ flex: 1, minWidth: 0 }}>
-                  <Typography sx={{ fontSize: "0.74rem", fontWeight: 700 }}>
-                    {t("territory.coverage", { pct: coverage.coverage_pct ?? 0, covered: coverage.pois_covered, total: coverage.pois_total })}
-                    {coverage.population && coverage.population.pct != null ? ` · ${t("territory.coverageResidents", { pct: coverage.population.pct })}` : ""}
-                  </Typography>
-                  <Typography sx={{ fontSize: "0.68rem", color: "text.secondary" }} noWrap>
-                    {t("territory.reused", { reused: coverage.existing_stops_reused, total: coverage.stops_planned })}
-                    {coverage.top_missed?.length ? ` · ${t("territory.missed", { name: coverage.top_missed[0].name })}` : ""}
-                  </Typography>
-                </Box>
+
+            {/* Partial dossier */}
+            {d.warnings.length > 0 && (
+              <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, pl: 1, pr: 0.25, py: 0.4, borderRadius: 1.5, background: alpha(theme.palette.warning.main, theme.palette.mode === "dark" ? 0.14 : 0.1) }}>
+                <ReportGmailerrorredOutlinedIcon sx={{ fontSize: 16, color: "warning.main" }} />
+                <Typography sx={{ flex: 1, fontSize: "0.72rem", color: "text.primary" }}>{t("territory.partial", { count: d.warnings.length })}</Typography>
+                <QuietButton onClick={() => run(d.place.query, true)} disabled={loading} data-testid="territory-retry" sx={{ color: "warning.dark" }}>
+                  {t("territory.retry")}
+                </QuietButton>
               </Box>
             )}
-            <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
-              {d.existing_stops.some((s) => s.name) && (
-                <Button size="small" variant="outlined" onClick={() => onUseExistingStops(d)} data-testid="territory-use-stops" sx={{ textTransform: "none", fontWeight: 600 }}>
+
+            {/* Coverage of the plan */}
+            {coverage && (coverage.pois_total > 0 || coverage.population) && (
+              <Box data-testid="territory-coverage" sx={{ display: "flex", flexDirection: "column", gap: 0.6 }}>
+                <Typography sx={{ fontSize: "0.74rem", fontWeight: 700 }}>{t("territory.coverageTitle")}</Typography>
+                {coverage.pois_total > 0 && <Meter label={t("territory.coveragePlaces")} pct={coverage.coverage_pct} />}
+                {coverage.population && coverage.population.pct != null && <Meter label={t("territory.coverageResidentsShort")} pct={coverage.population.pct} />}
+                <Typography sx={{ fontSize: "0.7rem", color: "text.secondary" }}>
+                  {t("territory.reused", { reused: coverage.existing_stops_reused, total: coverage.stops_planned })}
+                  {coverage.top_missed?.length ? ` · ${t("territory.missed", { name: coverage.top_missed[0].name })}` : ""}
+                </Typography>
+              </Box>
+            )}
+
+            {/* Actions on the plan */}
+            {hasNamedStops && (
+              <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.25, ml: -1 }}>
+                <QuietButton startIcon={<AddLocationAltOutlinedIcon sx={{ fontSize: "16px !important" }} />} onClick={() => onUseExistingStops(d)} data-testid="territory-use-stops">
                   {t("territory.useStops")}
-                </Button>
-              )}
-              {onRefineStops && canRefine && d.existing_stops.some((s) => s.name) && (
-                <Tooltip title={t("network.refineStopsHint")}>
-                  <span>
-                    <Button size="small" variant="outlined" color="secondary" disabled={refining} onClick={onRefineStops} startIcon={refining ? <CircularProgress size={12} color="inherit" /> : null} data-testid="territory-refine" sx={{ textTransform: "none", fontWeight: 600 }}>
-                      {t("network.refineStops")}
-                    </Button>
-                  </span>
-                </Tooltip>
-              )}
-              <Typography sx={{ fontSize: "0.62rem", color: "text.disabled", flex: 1 }}>
-                {t("territory.sources")}{" "}
-                {d.sources.map((s, i) => (
-                  <React.Fragment key={s.id}>
-                    {i > 0 ? ", " : ""}
-                    <Link href={s.url} target="_blank" rel="noreferrer" underline="hover" color="inherit">
-                      {s.name}
-                    </Link>
-                  </React.Fragment>
-                ))}
-              </Typography>
-            </Box>
+                </QuietButton>
+                {onRefineStops && canRefine && (
+                  <Tooltip title={t("network.refineStopsHint")}>
+                    <span>
+                      <QuietButton startIcon={refining ? <CircularProgress size={13} color="inherit" /> : <AutoFixHighOutlinedIcon sx={{ fontSize: "16px !important" }} />} disabled={refining} onClick={onRefineStops} data-testid="territory-refine">
+                        {t("network.refineStops")}
+                      </QuietButton>
+                    </span>
+                  </Tooltip>
+                )}
+              </Box>
+            )}
+
             {onImportedFeed && <ExistingFeeds key={d.place.query} place={d.place.query} onImported={onImportedFeed} disabled={busy} />}
-            {d.warnings.length > 0 && <Typography sx={{ fontSize: "0.66rem", color: "warning.dark" }}>{t("territory.partial", { count: d.warnings.length })}</Typography>}
           </Box>
         </Collapse>
       )}

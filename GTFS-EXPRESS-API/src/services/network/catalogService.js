@@ -116,17 +116,39 @@ const loadCatalog = async (fetchImpl, { force = false } = {}) => {
 const bboxArea = (b) => Math.max(0, b[2] - b[0]) * Math.max(0, b[3] - b[1]);
 const contains = (b, lat, lon) => lat >= b[0] && lat <= b[2] && lon >= b[1] && lon <= b[3];
 const intersects = (a, b) => !(a[2] < b[0] || b[2] < a[0] || a[3] < b[1] || b[3] < a[1]);
+// The catalog's boxes are extracted automatically and some are wrong: a
+// corner at (0, 0), inverted, or spanning a continent. Such a box "covers"
+// every town and would bury the real local network.
+const LOCAL_AREA_DEG2 = 2; // an urban or departmental network
+const REGIONAL_AREA_DEG2 = 30; // a region
+const MAX_AREA_DEG2 = 150; // beyond: continental or broken, unless named after the place
+const degenerateBox = (b) => (b[0] === 0 && b[1] === 0) || (b[2] === 0 && b[3] === 0) || b[2] <= b[0] || b[3] <= b[1] || b[0] < -90 || b[2] > 90 || b[1] < -180 || b[3] > 180;
+const scopeOf = (area) => (area <= LOCAL_AREA_DEG2 ? "local" : area <= REGIONAL_AREA_DEG2 ? "regional" : "national");
+const fold = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
 
-/** Feeds covering the territory, most local first. */
+/**
+ * Feeds covering the territory, most relevant first: those named after the
+ * place (provider, name or municipality), then those covering its centre,
+ * then the smallest areas. Only the territory's country, no broken boxes.
+ */
 const findFeeds = async (territory, { fetchImpl = null, force = false } = {}) => {
   const doFetch = fetchImpl || (typeof fetch === "function" ? fetch : null);
   if (!doFetch) throw Object.assign(new Error("No fetch implementation."), { status: 500 });
   const rows = await loadCatalog(doFetch, { force });
   const { lat, lon, bbox } = territory.place;
+  const country = String(territory.place.country_code || "").toUpperCase();
+  const placeName = fold(territory.place.name);
+  const named = (r) => placeName.length >= 3 && ` ${fold(`${r.provider} ${r.name} ${r.municipality}`)} `.includes(` ${placeName} `);
   const hits = rows
+    .filter((r) => !degenerateBox(r.bbox))
+    .filter((r) => !country || !r.country || r.country.toUpperCase() === country)
     .filter((r) => contains(r.bbox, lat, lon) || intersects(r.bbox, bbox))
-    .map((r) => ({ ...r, area_deg2: Math.round(bboxArea(r.bbox) * 1000) / 1000, covers_centre: contains(r.bbox, lat, lon) }))
-    .sort((a, b) => Number(b.covers_centre) - Number(a.covers_centre) || a.area_deg2 - b.area_deg2)
+    .map((r) => {
+      const area = bboxArea(r.bbox);
+      return { ...r, area_deg2: Math.round(area * 1000) / 1000, covers_centre: contains(r.bbox, lat, lon), named: named(r), scope: scopeOf(area) };
+    })
+    .filter((r) => r.area_deg2 <= MAX_AREA_DEG2 || r.named)
+    .sort((a, b) => Number(b.named) - Number(a.named) || Number(b.covers_centre) - Number(a.covers_centre) || a.area_deg2 - b.area_deg2)
     .slice(0, MAX_FEEDS);
   return hits;
 };
@@ -293,9 +315,17 @@ const specFromTables = (tables, { maxLines = LIMITS.lines, agencyFallback = "Exi
   }
   const stops = [...usedStops].map((id) => stopsById.get(id));
   if (tables._truncated) warnings.push("stop_times was truncated: some departures are missing.");
+  // The plan keeps the validity of the feed it comes from (its calendars'
+  // span), not today + one year: an expired feed stays visibly expired.
+  const usedCals = [...new Set(lines.flatMap((l) => l.services.map((s) => s.calendar.id)))].map((id) => calendars.get(id)).filter(Boolean);
+  const starts = usedCals.map((c) => c.start_date).filter((d) => /^\d{8}$/.test(d || "")).sort();
+  const ends = usedCals.map((c) => c.end_date).filter((d) => /^\d{8}$/.test(d || "")).sort();
+  const today = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  if (ends.length && ends[ends.length - 1] < today) warnings.push(`The feed expired on ${ends[ends.length - 1]}: its calendars are kept as they are.`);
   return {
     spec: {
       agency: { name: agency.agency_name || agencyFallback, url: agency.agency_url || "https://example.org", timezone: agency.agency_timezone || "UTC", lang: agency.agency_lang || undefined },
+      ...(starts.length && ends.length ? { feed: { start_date: starts[0], end_date: ends[ends.length - 1] } } : {}),
       stops,
       lines,
     },

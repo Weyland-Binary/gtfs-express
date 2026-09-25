@@ -201,6 +201,12 @@ const CATALOG_CSV = [
   "4,gtfs,Protégé,Clé,FR,,,https://feeds.example/key.zip,,,2,46.9,47.1,0.9,1.1,2026-01-01,",
   "5,gtfs-rt,Temps réel,RT,FR,,,https://feeds.example/rt,,,,46.9,47.1,0.9,1.1,2026-01-01,",
   "6,gtfs,Ancien,Old,FR,,Bourg,https://feeds.example/old.zip,,,,46.9,47.1,0.9,1.1,2020-01-01,deprecated",
+  // Broken boxes from the catalog: a corner at (0, 0), a continent-wide box; a foreign aggregate.
+  "7,gtfs,Somme,Scolaire,FR,Hauts-de-France,,https://feeds.example/somme.zip,,,,0,50.36,0,3.21,2026-01-01,",
+  "8,gtfs,Continental,Big,FR,,,https://feeds.example/big.zip,,,,42.4,51.0,-4.5,16.4,2026-01-01,",
+  "9,gtfs,OVapi,Netherlands aggregate,NL,,,https://feeds.example/nl.zip,,,,43.3,55.7,-0.13,21.0,2026-01-01,",
+  // Named after the place, regional box: ranks before the region.
+  "10,gtfs,Cars de Bourg,Interurbain,FR,Centre,,https://feeds.example/cars.zip,,,,46.0,48.0,0.0,2.0,2026-01-01,",
 ].join("\n");
 
 let zipBuffer;
@@ -223,8 +229,11 @@ beforeAll(async () => {
 describe("existing feeds", () => {
   test("the catalog lists the public GTFS feeds covering the territory, most local first", async () => {
     const feeds = await catalog.findFeeds(TERRITORY, { fetchImpl: fakeFetch, force: true });
-    expect(feeds.map((f) => f.provider)).toEqual(["Réseau Existant, SA", "Région"]);
-    expect(feeds[0]).toMatchObject({ name: "Urbain", url: "https://feeds.example/bourg-latest.zip", license: "CC-BY", covers_centre: true, municipality: "Bourg" });
+    // Broken boxes, other countries and continent-wide boxes are left out; the feeds named after the place come first.
+    expect(feeds.map((f) => f.provider)).toEqual(["Réseau Existant, SA", "Cars de Bourg", "Région"]);
+    expect(feeds[0]).toMatchObject({ name: "Urbain", url: "https://feeds.example/bourg-latest.zip", license: "CC-BY", covers_centre: true, municipality: "Bourg", named: true, scope: "local" });
+    expect(feeds[1]).toMatchObject({ named: true, scope: "regional" });
+    expect(feeds[2]).toMatchObject({ named: false, scope: "regional" });
     // Cached: no second catalog download.
     const calls = fakeFetch.mock.calls.length;
     await catalog.findFeeds(TERRITORY, { fetchImpl: fakeFetch });
@@ -235,6 +244,8 @@ describe("existing feeds", () => {
   test("a feed is reverse-compiled into a plan: dominant patterns, calendars, departures, frequencies", async () => {
     const r = await catalog.importFeed("https://feeds.example/bourg-latest.zip", { fetchImpl: fakeFetch });
     expect(r.stats).toMatchObject({ routes: 2, lines: 2, stops: 5, trips: 6 });
+    // The plan keeps the feed's own validity (its calendars' span).
+    expect(r.spec.feed).toEqual({ start_date: "20260101", end_date: "20261231" });
     const l1 = r.spec.lines.find((l) => l.id === "R1");
     expect(l1).toMatchObject({ short_name: "1", mode: "bus", color: "FF0000", round_trip: false });
     // Direction 0 keeps the 4-stop pattern (2 trips) over the 3-stop one (1 trip); direction 1 is explicit.
@@ -269,7 +280,7 @@ describe("existing feeds", () => {
     const result = await planner.planNetwork({ brief: "Améliore le réseau existant de Bourg.", language: "fr", rateKey: "t-precision", signal: new AbortController().signal, emit: (event, data) => events.push({ event, data }) });
     const names = events.map((e) => e.event);
     expect(names).toEqual(expect.arrayContaining(["feeds", "spec", "quality"]));
-    expect(events.find((e) => e.event === "feeds").data.feeds).toHaveLength(2);
+    expect(events.find((e) => e.event === "feeds").data.feeds).toHaveLength(3);
     const importStep = events.find((e) => e.event === "step" && e.data.kind === "import").data;
     expect(importStep).toMatchObject({ lines: 2, stops: 5 });
     expect(events.find((e) => e.event === "spec").data.imported).toBe(true);

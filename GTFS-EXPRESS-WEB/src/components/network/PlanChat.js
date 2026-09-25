@@ -1,18 +1,20 @@
 /**
- * PlanChat — the conversation with the planner: the brief (typed or
- * dropped as a text file), the planner's answers (markdown), the tool steps
- * it took, the requirements it understood (correctable), its questions
- * (answer with chips, free text, or accept the suggested answers), the
- * design quality report, and a composer to refine ("add a line to the
- * hospital", "every 10 minutes at peak").
+ * PlanChat — the side panel's conversation with the planner: whatever sits
+ * above it (the territory, via `header`) scrolls with the messages, the
+ * composer stays pinned at the bottom. The brief is typed or dropped as a
+ * text file; the planner answers in markdown with the steps it took, the
+ * requirements it understood (correctable), its questions (answer with
+ * chips, free text, or accept the suggested answers) and the design quality
+ * report; the same composer then refines the plan.
  */
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Box, Button, Chip, CircularProgress, IconButton, TextField, Tooltip, Typography, alpha, useTheme } from "@mui/material";
+import { Box, Button, ButtonBase, Chip, CircularProgress, IconButton, InputBase, TextField, Tooltip, Typography, alpha, useTheme } from "@mui/material";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
-import SendRoundedIcon from "@mui/icons-material/SendRounded";
-import StopCircleOutlinedIcon from "@mui/icons-material/StopCircleOutlined";
-import UploadFileOutlinedIcon from "@mui/icons-material/UploadFileOutlined";
+import ArrowUpwardRoundedIcon from "@mui/icons-material/ArrowUpwardRounded";
+import StopRoundedIcon from "@mui/icons-material/StopRounded";
+import AttachFileRoundedIcon from "@mui/icons-material/AttachFileRounded";
+import SubdirectoryArrowRightRoundedIcon from "@mui/icons-material/SubdirectoryArrowRightRounded";
 import PlaceOutlinedIcon from "@mui/icons-material/PlaceOutlined";
 import RuleOutlinedIcon from "@mui/icons-material/RuleOutlined";
 import RouteOutlinedIcon from "@mui/icons-material/RouteOutlined";
@@ -27,20 +29,34 @@ import MarkdownText from "../chat/MarkdownText";
 import GTFSAIIcon from "../chat/GTFSAIIcon";
 import { readBriefFile } from "../../utils/networkStudioApi";
 import { RequirementsCard, QualityCard, qualityColor } from "./PlanCards";
+import { SectionHeader, soft } from "./StudioUI";
 
 // Brief templates: a specification skeleton per typical situation, with the blanks to fill.
 const TEMPLATES = ["smallTown", "school", "city", "seasonal", "existing"];
+const EXAMPLES = ["network.brief.exampleA", "network.brief.exampleB", "network.brief.exampleC"];
 
 const STEP_ICON = { geocode: PlaceOutlinedIcon, spec: RuleOutlinedIcon, geometry: RouteOutlinedIcon, questions: HelpOutlineIcon, territory: PlaceOutlinedIcon, requirements: FactCheckOutlinedIcon, corridors: AltRouteOutlinedIcon, refine: AutoFixHighOutlinedIcon, quality: VerifiedOutlinedIcon, feeds: CloudDownloadOutlinedIcon, import: CloudDownloadOutlinedIcon };
+
+function AiAvatar({ size = 26 }) {
+  const theme = useTheme();
+  return (
+    <Box sx={{ width: size, height: size, flexShrink: 0, borderRadius: "8px", display: "flex", alignItems: "center", justifyContent: "center", color: theme.palette.ai.contrastText, background: `linear-gradient(135deg, ${theme.palette.ai.gradientStart}, ${theme.palette.ai.gradientEnd})` }}>
+      <GTFSAIIcon sx={{ fontSize: size * 0.6 }} />
+    </Box>
+  );
+}
 
 function StepChip({ step }) {
   const { t } = useLanguage();
   const theme = useTheme();
   const Icon = STEP_ICON[step.kind] || RuleOutlinedIcon;
   let label = t(`network.step.${step.kind}`);
-  let sx = {};
+  let color = theme.palette.text.secondary;
   if (step.kind === "geocode") label = t("network.step.geocodeResult", { found: step.found, total: step.queries });
-  if (step.kind === "spec") label = step.ok ? t("network.step.specOk") : t("network.step.specIssues", { count: step.blockers });
+  if (step.kind === "spec") {
+    label = step.ok ? t("network.step.specOk") : t("network.step.specIssues", { count: step.blockers });
+    if (!step.ok) color = theme.palette.warning.main;
+  }
   if (step.kind === "territory") label = t("network.step.territory", { place: step.place || "" });
   if (step.kind === "corridors") label = t("network.step.corridors", { count: step.corridors ?? 0 });
   if (step.kind === "refine") label = t("network.step.refine", { snapped: step.snapped ?? 0, inserted: step.inserted ?? 0 });
@@ -48,9 +64,15 @@ function StepChip({ step }) {
   if (step.kind === "import") label = t("network.step.import", { lines: step.lines ?? 0, stops: step.stops ?? 0 });
   if (step.kind === "quality") {
     label = t("network.step.quality", { score: step.score ?? "–" });
-    sx = { color: qualityColor(step.score, theme), borderColor: alpha(qualityColor(step.score, theme), 0.6) };
+    color = qualityColor(step.score, theme);
   }
-  return <Chip size="small" icon={<Icon sx={{ fontSize: 13, color: sx.color ? `${sx.color} !important` : undefined }} />} label={label} color={step.kind === "spec" && !step.ok ? "warning" : "default"} variant="outlined" sx={{ height: 20, fontSize: "0.64rem", fontWeight: 600, ...sx }} />;
+  const tinted = color !== theme.palette.text.secondary;
+  return (
+    <Box component="span" sx={{ display: "inline-flex", alignItems: "center", gap: 0.4, px: 0.75, py: 0.2, borderRadius: 99, fontSize: "0.66rem", fontWeight: 600, lineHeight: 1.5, color, background: tinted ? alpha(color, theme.palette.mode === "dark" ? 0.18 : 0.1) : soft(theme) }}>
+      <Icon sx={{ fontSize: 13 }} />
+      {label}
+    </Box>
+  );
 }
 
 function Questions({ questions, onAnswer, disabled }) {
@@ -61,28 +83,30 @@ function Questions({ questions, onAnswer, disabled }) {
   const hasDefaults = questions.some((q) => q.default);
   const send = (values) => onAnswer(questions.map((q) => `${q.question} → ${values[q.id]}`).join("\n"));
   return (
-    <Box data-testid="plan-questions" sx={{ mt: 1, borderRadius: 1.5, border: `1px solid ${alpha(theme.palette.warning.main, 0.5)}`, background: alpha(theme.palette.warning.main, 0.05), p: 1.25, display: "flex", flexDirection: "column", gap: 1 }}>
+    <Box data-testid="plan-questions" sx={{ mt: 1, borderRadius: "12px", background: alpha(theme.palette.warning.main, theme.palette.mode === "dark" ? 0.1 : 0.07), p: 1.5, display: "flex", flexDirection: "column", gap: 1.25 }}>
       {questions.map((q) => (
         <Box key={q.id}>
           <Typography sx={{ fontSize: "0.8rem", fontWeight: 700, mb: 0.25 }}>{q.question}</Typography>
           {q.why && <Typography sx={{ fontSize: "0.7rem", color: "text.secondary", mb: 0.5 }}>{q.why}</Typography>}
           {q.options && q.options.length > 0 && (
-            <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5, mb: 0.5 }}>
-              {q.options.map((o) => (
-                <Chip key={o} size="small" label={o} color={answers[q.id] === o ? "primary" : "default"} variant={!answers[q.id] && q.default === o ? "outlined" : "filled"} onClick={() => setAnswers((a) => ({ ...a, [q.id]: o }))} sx={{ height: 24, fontSize: "0.72rem", ...(q.default === o && !answers[q.id] ? { borderColor: theme.palette.primary.main, fontWeight: 700 } : {}) }} />
-              ))}
+            <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5, mb: 0.75 }}>
+              {q.options.map((o) => {
+                const selected = answers[q.id] === o;
+                const suggested = !answers[q.id] && q.default === o;
+                return <Chip key={o} size="small" label={o} color={selected ? "primary" : "default"} onClick={() => setAnswers((a) => ({ ...a, [q.id]: o }))} sx={{ height: 26, fontSize: "0.72rem", fontWeight: suggested || selected ? 700 : 500, ...(selected ? {} : { background: theme.palette.background.paper }), ...(suggested ? { boxShadow: `inset 0 0 0 1.5px ${theme.palette.primary.main}` } : {}) }} />;
+              })}
             </Box>
           )}
-          <TextField size="small" fullWidth placeholder={q.default ? t("network.questions.suggested", { value: q.default }) : t("network.answerPlaceholder")} value={answers[q.id] || ""} onChange={(e) => setAnswers((a) => ({ ...a, [q.id]: e.target.value }))} inputProps={{ "data-testid": `plan-answer-${q.id}` }} />
+          <TextField size="small" fullWidth placeholder={q.default ? t("network.questions.suggested", { value: q.default }) : t("network.answerPlaceholder")} value={answers[q.id] || ""} onChange={(e) => setAnswers((a) => ({ ...a, [q.id]: e.target.value }))} inputProps={{ "data-testid": `plan-answer-${q.id}` }} sx={{ "& .MuiOutlinedInput-root": { background: theme.palette.background.paper, fontSize: "0.8rem" } }} />
         </Box>
       ))}
       <Box sx={{ display: "flex", gap: 0.75, justifyContent: "flex-end", flexWrap: "wrap" }}>
         {hasDefaults && (
-          <Button size="small" variant="outlined" disabled={disabled} onClick={() => send(Object.fromEntries(questions.map((q) => [q.id, (answers[q.id] || "").trim() || q.default || "—"])))} data-testid="plan-answers-defaults" sx={{ textTransform: "none", fontWeight: 700 }}>
+          <Button size="small" variant="text" disabled={disabled} onClick={() => send(Object.fromEntries(questions.map((q) => [q.id, (answers[q.id] || "").trim() || q.default || "—"])))} data-testid="plan-answers-defaults" sx={{ textTransform: "none", fontWeight: 700, py: 0.5, px: 1.25 }}>
             {t("network.questions.useDefaults")}
           </Button>
         )}
-        <Button size="small" variant="contained" disableElevation disabled={!complete || disabled} onClick={() => send(answers)} data-testid="plan-answers-send" sx={{ textTransform: "none", fontWeight: 700 }}>
+        <Button size="small" variant="contained" disableElevation disabled={!complete || disabled} onClick={() => send(answers)} data-testid="plan-answers-send" sx={{ textTransform: "none", fontWeight: 700, py: 0.5, px: 1.5 }}>
           {t("network.sendAnswers")}
         </Button>
       </Box>
@@ -90,7 +114,41 @@ function Questions({ questions, onAnswer, disabled }) {
   );
 }
 
-export default function PlanChat({ turns, streaming, pendingTool, onSend, onStop, canPlan, disabledReason = null }) {
+function EmptyState({ onExample, onTemplate }) {
+  const { t } = useLanguage();
+  const theme = useTheme();
+  return (
+    <Box>
+      <SectionHeader label={t("network.assistant.section")} />
+      <Box sx={{ display: "flex", gap: 1.25, alignItems: "flex-start", mt: 0.75 }}>
+        <AiAvatar size={30} />
+        <Box sx={{ minWidth: 0 }}>
+          <Typography sx={{ fontWeight: 800, fontSize: "0.92rem", lineHeight: 1.3 }}>{t("network.brief.title")}</Typography>
+          <Typography sx={{ fontSize: "0.76rem", color: "text.secondary", lineHeight: 1.55, mt: 0.25 }}>{t("network.brief.intro")}</Typography>
+        </Box>
+      </Box>
+      <Typography sx={{ fontSize: "0.72rem", fontWeight: 700, color: "text.secondary", mt: 1.75, mb: 0.25 }}>{t("network.brief.examples")}</Typography>
+      <Box sx={{ display: "flex", flexDirection: "column" }}>
+        {EXAMPLES.map((k) => (
+          <ButtonBase key={k} onClick={() => onExample(t(k))} data-testid="plan-example" sx={{ justifyContent: "flex-start", alignItems: "flex-start", textAlign: "left", gap: 0.75, px: 1, py: 0.75, mx: -1, borderRadius: 1.5, fontSize: "0.76rem", lineHeight: 1.45, color: "text.primary", transition: "background 120ms", "&:hover": { background: soft(theme) } }}>
+            <SubdirectoryArrowRightRoundedIcon sx={{ fontSize: 15, mt: 0.2, color: "text.disabled", flexShrink: 0 }} />
+            <Box component="span" sx={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+              {t(k)}
+            </Box>
+          </ButtonBase>
+        ))}
+      </Box>
+      <Typography sx={{ fontSize: "0.72rem", fontWeight: 700, color: "text.secondary", mt: 1.5, mb: 0.75 }}>{t("network.templates.title")}</Typography>
+      <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
+        {TEMPLATES.map((k) => (
+          <Chip key={k} size="small" label={t(`network.templates.${k}.label`)} onClick={() => onTemplate(t(`network.templates.${k}.brief`))} data-testid="plan-template" sx={{ height: 26, fontSize: "0.72rem", fontWeight: 600, background: soft(theme, 1.3), "&:hover": { background: soft(theme, 2.2) } }} />
+        ))}
+      </Box>
+    </Box>
+  );
+}
+
+export default function PlanChat({ turns, streaming, pendingTool, onSend, onStop, canPlan, disabledReason = null, header = null }) {
   const { t } = useLanguage();
   const theme = useTheme();
   const [draft, setDraft] = useState("");
@@ -100,9 +158,10 @@ export default function PlanChat({ turns, streaming, pendingTool, onSend, onStop
   const inputRef = useRef(null);
   const empty = turns.length === 0;
 
+  // Follow the conversation, not the panel above it.
   useEffect(() => {
     const el = listRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (el && turns.length) el.scrollTop = el.scrollHeight;
   }, [turns, streaming]);
 
   const send = useCallback(() => {
@@ -136,106 +195,116 @@ export default function PlanChat({ turns, streaming, pendingTool, onSend, onStop
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
-      <Box ref={listRef} sx={{ flex: 1, overflowY: "auto", px: 2, py: 1.5, display: "flex", flexDirection: "column", gap: 1.25 }} data-testid="plan-chat">
-        {empty && (
-          <Box sx={{ mt: 1 }}>
-            <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.75 }}>
-              <Box sx={{ width: 34, height: 34, borderRadius: "10px", display: "flex", alignItems: "center", justifyContent: "center", background: `linear-gradient(135deg, ${theme.palette.ai.gradientStart}, ${theme.palette.ai.gradientEnd})`, color: theme.palette.ai.contrastText }}>
-                <GTFSAIIcon sx={{ fontSize: 20 }} />
-              </Box>
-              <Typography sx={{ fontWeight: 800, fontSize: "1rem" }}>{t("network.brief.title")}</Typography>
-            </Box>
-            <Typography sx={{ fontSize: "0.82rem", color: "text.secondary", lineHeight: 1.55, mb: 1 }}>{t("network.brief.intro")}</Typography>
-            <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
-              {["network.brief.exampleA", "network.brief.exampleB", "network.brief.exampleC"].map((k) => (
-                <Box key={k} component="button" type="button" onClick={() => setDraft(t(k))} data-testid="plan-example" sx={{ all: "unset", cursor: "pointer", fontSize: "0.76rem", lineHeight: 1.45, px: 1.25, py: 0.8, borderRadius: 1.5, border: `1px solid ${alpha(theme.palette.ai.main, 0.25)}`, background: alpha(theme.palette.ai.main, 0.04), "&:hover": { background: alpha(theme.palette.ai.main, 0.1) } }}>
-                  {t(k)}
-                </Box>
-              ))}
-            </Box>
-            <Typography sx={{ fontSize: "0.7rem", fontWeight: 700, color: "text.secondary", textTransform: "uppercase", letterSpacing: 0.3, mt: 1.25, mb: 0.5 }}>{t("network.templates.title")}</Typography>
-            <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
-              {TEMPLATES.map((k) => (
-                <Chip key={k} size="small" label={t(`network.templates.${k}.label`)} onClick={() => prefill(t(`network.templates.${k}.brief`))} data-testid="plan-template" variant="outlined" sx={{ height: 24, fontSize: "0.7rem", fontWeight: 600 }} />
-              ))}
-            </Box>
-          </Box>
-        )}
-        {turns.map((turn) => (
-          <Box key={turn.id} sx={{ alignSelf: turn.role === "user" ? "flex-end" : "stretch", maxWidth: turn.role === "user" ? "88%" : "100%" }}>
-            {turn.role === "user" ? (
-              <Box data-testid="plan-turn-user" sx={{ px: 1.5, py: 1, borderRadius: 2, background: alpha(theme.palette.primary.main, 0.1), fontSize: "0.82rem", whiteSpace: "pre-wrap", lineHeight: 1.5, maxHeight: 220, overflowY: "auto" }}>
+      <Box ref={listRef} sx={{ flex: 1, minHeight: 0, overflowY: "auto" }} data-testid="plan-chat">
+        {header}
+        <Box sx={{ px: 2, pt: header ? 1.5 : 2, pb: 2, display: "flex", flexDirection: "column", gap: 1.75, borderTop: header ? `1px solid ${theme.palette.divider}` : "none" }}>
+          {empty && <EmptyState onExample={prefill} onTemplate={prefill} />}
+          {!empty && <SectionHeader label={t("network.assistant.section")} />}
+          {turns.map((turn) =>
+            turn.role === "user" ? (
+              <Box key={turn.id} data-testid="plan-turn-user" sx={{ alignSelf: "flex-end", maxWidth: "88%", px: 1.5, py: 1, borderRadius: "14px 14px 4px 14px", background: alpha(theme.palette.primary.main, theme.palette.mode === "dark" ? 0.2 : 0.09), fontSize: "0.8rem", whiteSpace: "pre-wrap", lineHeight: 1.5, maxHeight: 220, overflowY: "auto" }}>
                 {turn.content}
               </Box>
             ) : (
-              <Box data-testid="plan-turn-assistant" sx={{ px: 1.5, py: 1, borderRadius: 2, border: `1px solid ${alpha(theme.palette.ai.main, 0.25)}`, background: alpha(theme.palette.ai.main, 0.03) }}>
-                {turn.steps && turn.steps.length > 0 && (
-                  <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5, mb: turn.content ? 0.75 : 0 }}>
-                    {turn.steps.map((s, i) => (
-                      <StepChip key={i} step={s} />
-                    ))}
-                  </Box>
-                )}
-                {turn.requirements && <RequirementsCard requirements={turn.requirements} onCorrect={canPlan && !streaming ? prefill : null} />}
-                {turn.content ? (
-                  <Box sx={{ fontSize: "0.82rem", mt: turn.requirements ? 1 : 0 }}>
-                    <MarkdownText text={turn.content} />
-                  </Box>
-                ) : turn.status === "streaming" ? (
-                  <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, fontSize: "0.76rem", color: "text.secondary", mt: turn.requirements ? 1 : 0 }}>
-                    <CircularProgress size={12} />
-                    {pendingTool ? t(`network.working.${pendingTool}`, {}) : t("network.working.thinking")}
-                  </Box>
-                ) : null}
-                {turn.quality && turn.status !== "streaming" && <QualityCard quality={turn.quality} />}
-                {turn.error && <Typography sx={{ fontSize: "0.76rem", color: "error.main", mt: 0.5 }}>{turn.error}</Typography>}
-                {turn.questions && turn.questions.length > 0 && turn.status !== "streaming" && !turn.answered && <Questions questions={turn.questions} disabled={streaming} onAnswer={(text) => onSend(text, { answersFor: turn.id })} />}
+              <Box key={turn.id} data-testid="plan-turn-assistant" sx={{ display: "flex", gap: 1, alignItems: "flex-start" }}>
+                <AiAvatar size={24} />
+                <Box sx={{ flex: 1, minWidth: 0 }}>
+                  {turn.steps && turn.steps.length > 0 && (
+                    <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5, mb: turn.content || turn.requirements ? 1 : 0 }}>
+                      {turn.steps.map((s, i) => (
+                        <StepChip key={i} step={s} />
+                      ))}
+                    </Box>
+                  )}
+                  {turn.requirements && <RequirementsCard requirements={turn.requirements} onCorrect={canPlan && !streaming ? prefill : null} />}
+                  {turn.content ? (
+                    <Box sx={{ fontSize: "0.8rem", lineHeight: 1.55, mt: turn.requirements ? 1 : 0 }}>
+                      <MarkdownText text={turn.content} />
+                    </Box>
+                  ) : turn.status === "streaming" ? (
+                    <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, fontSize: "0.76rem", color: "text.secondary", mt: turn.requirements ? 1 : 0.25 }}>
+                      <CircularProgress size={12} />
+                      {pendingTool ? t(`network.working.${pendingTool}`, {}) : t("network.working.thinking")}
+                    </Box>
+                  ) : null}
+                  {turn.quality && turn.status !== "streaming" && <QualityCard quality={turn.quality} />}
+                  {turn.error && <Typography sx={{ fontSize: "0.76rem", color: "error.main", mt: 0.5 }}>{turn.error}</Typography>}
+                  {turn.questions && turn.questions.length > 0 && turn.status !== "streaming" && !turn.answered && <Questions questions={turn.questions} disabled={streaming} onAnswer={(text) => onSend(text, { answersFor: turn.id })} />}
+                </Box>
               </Box>
+            ),
+          )}
+        </Box>
+      </Box>
+
+      {/* Composer */}
+      <Box sx={{ px: 1.5, pt: 1, pb: 1.5, borderTop: `1px solid ${theme.palette.divider}` }}>
+        {disabledReason && <Typography sx={{ fontSize: "0.74rem", color: "warning.dark", mb: 0.75, px: 0.5 }}>{disabledReason}</Typography>}
+        <Box
+          sx={{
+            borderRadius: "14px",
+            px: 1.5,
+            pt: 1.1,
+            pb: 0.6,
+            background: soft(theme, 1.2),
+            border: "1px solid transparent",
+            transition: "background 120ms, border-color 120ms, box-shadow 120ms",
+            "&:focus-within": { background: theme.palette.background.paper, borderColor: alpha(theme.palette.primary.main, 0.5), boxShadow: `0 0 0 3px ${alpha(theme.palette.primary.main, 0.1)}` },
+          }}
+        >
+          <InputBase
+            multiline
+            minRows={empty ? 3 : 1}
+            maxRows={10}
+            fullWidth
+            placeholder={empty ? t("network.brief.placeholder") : t("network.refinePlaceholder")}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value.slice(0, 60000))}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                send();
+              }
+            }}
+            inputRef={inputRef}
+            inputProps={{ "data-testid": "plan-brief", "aria-label": t("network.brief.placeholder") }}
+            disabled={!canPlan}
+            sx={{ fontSize: "0.84rem", lineHeight: 1.5, alignItems: "flex-start" }}
+          />
+          <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, mt: 0.5 }}>
+            <input ref={fileRef} type="file" accept=".txt,.md,.markdown,.csv,.json,.tsv,text/*" hidden onChange={(e) => onFile(e.target.files?.[0])} />
+            <Tooltip title={t("network.brief.attach")}>
+              <span>
+                <IconButton size="small" onClick={() => fileRef.current?.click()} disabled={!canPlan} aria-label={t("network.brief.attach")} sx={{ ml: -0.75, color: "text.secondary" }}>
+                  <AttachFileRoundedIcon sx={{ fontSize: 18, transform: "rotate(45deg)" }} />
+                </IconButton>
+              </span>
+            </Tooltip>
+            {fileError && <Typography sx={{ fontSize: "0.7rem", color: "error.main", lineHeight: 1.3, minWidth: 0 }}>{fileError}</Typography>}
+            <Box sx={{ flex: 1 }} />
+            {streaming ? (
+              <Button size="small" variant="text" color="inherit" startIcon={<StopRoundedIcon />} onClick={onStop} sx={{ textTransform: "none", fontWeight: 600, py: 0.4, px: 1.25, borderRadius: 99 }}>
+                {t("network.stop")}
+              </Button>
+            ) : (
+              <Tooltip title={t("network.sendHint")}>
+                <span>
+                  <Button
+                    size="small"
+                    variant="contained"
+                    disableElevation
+                    endIcon={empty ? <AutoAwesomeIcon sx={{ fontSize: "16px !important" }} /> : <ArrowUpwardRoundedIcon sx={{ fontSize: "16px !important" }} />}
+                    disabled={draft.trim().length < 3 || !canPlan}
+                    onClick={send}
+                    data-testid="plan-send"
+                    sx={{ textTransform: "none", fontWeight: 700, fontSize: "0.78rem", py: 0.5, px: 1.5, borderRadius: 99, flexShrink: 0, color: theme.palette.ai.contrastText, background: `linear-gradient(135deg, ${theme.palette.ai.gradientStart}, ${theme.palette.ai.gradientEnd})`, "&.Mui-disabled": { background: soft(theme, 2), color: "text.disabled" } }}
+                  >
+                    {empty ? t("network.plan") : t("network.refine")}
+                  </Button>
+                </span>
+              </Tooltip>
             )}
           </Box>
-        ))}
-      </Box>
-      <Box sx={{ borderTop: `1px solid ${alpha(theme.palette.divider, 1)}`, p: 1.25, display: "flex", flexDirection: "column", gap: 0.75 }}>
-        {disabledReason && <Typography sx={{ fontSize: "0.74rem", color: "warning.dark" }}>{disabledReason}</Typography>}
-        <TextField
-          multiline
-          minRows={empty ? 5 : 2}
-          maxRows={10}
-          fullWidth
-          size="small"
-          placeholder={empty ? t("network.brief.placeholder") : t("network.refinePlaceholder")}
-          value={draft}
-          onChange={(e) => setDraft(e.target.value.slice(0, 60000))}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-              e.preventDefault();
-              send();
-            }
-          }}
-          inputRef={inputRef}
-          inputProps={{ "data-testid": "plan-brief" }}
-          disabled={!canPlan}
-        />
-        <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
-          <input ref={fileRef} type="file" accept=".txt,.md,.markdown,.csv,.json,.tsv,text/*" hidden onChange={(e) => onFile(e.target.files?.[0])} />
-          <Tooltip title={t("network.brief.attach")}>
-            <span>
-              <IconButton size="small" onClick={() => fileRef.current?.click()} disabled={!canPlan} aria-label={t("network.brief.attach")}>
-                <UploadFileOutlinedIcon sx={{ fontSize: 18 }} />
-              </IconButton>
-            </span>
-          </Tooltip>
-          {fileError && <Typography sx={{ fontSize: "0.72rem", color: "error.main" }}>{fileError}</Typography>}
-          <Box sx={{ flex: 1 }} />
-          {streaming ? (
-            <Button size="small" variant="outlined" color="inherit" startIcon={<StopCircleOutlinedIcon />} onClick={onStop} sx={{ textTransform: "none" }}>
-              {t("network.stop")}
-            </Button>
-          ) : (
-            <Button size="small" variant="contained" disableElevation startIcon={empty ? <AutoAwesomeIcon /> : <SendRoundedIcon />} disabled={draft.trim().length < 3 || !canPlan} onClick={send} data-testid="plan-send" sx={{ textTransform: "none", fontWeight: 700, background: `linear-gradient(135deg, ${theme.palette.ai.gradientStart}, ${theme.palette.ai.gradientEnd})` }}>
-              {empty ? t("network.plan") : t("network.refine")}
-            </Button>
-          )}
         </Box>
       </Box>
     </Box>
