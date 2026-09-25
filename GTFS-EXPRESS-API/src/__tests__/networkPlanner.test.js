@@ -28,7 +28,7 @@ jest.mock("@anthropic-ai/sdk", () => {
         yield { type: "message_delta", usage: { output_tokens: 7 } };
       },
       async finalMessage() {
-        return { content, stop_reason: next.toolUses && next.toolUses.length ? "tool_use" : "end_turn", usage: { input_tokens: 50, output_tokens: 7 } };
+        return { content, stop_reason: next.stop || (next.toolUses && next.toolUses.length ? "tool_use" : "end_turn"), usage: { input_tokens: 50, output_tokens: 7 } };
       },
     };
   };
@@ -132,6 +132,29 @@ describe("network planner", () => {
     expect(result.text).toMatch(/Dites-moi/);
     // The closing call carries no tools.
     expect(__captured[__captured.length - 1].tools).toEqual([]);
+  });
+
+  test("a set_spec cut off at the output limit is not run: the model resends it, then the plan completes", async () => {
+    const valid = { ...SPEC_WITH_NAMES, stops: [...SPEC_WITH_NAMES.stops.slice(0, 2), { name: "Hôpital", lat: 47.8, lon: 1.06 }] };
+    __script.push(
+      { stop: "max_tokens", toolUses: [{ id: "c1", name: "set_spec", input: { spec: { agency: { name: "Vendôme" } } } }] },
+      { toolUses: [{ id: "c2", name: "set_spec", input: { spec: valid } }] },
+      { text: "Ligne A prête." },
+    );
+    const { events, result } = await runPlan({});
+    // The partial call never reached the spec; the complete one did.
+    expect(events.filter((e) => e.event === "spec")).toHaveLength(1);
+    const cut = __captured[__captured.length - 2].messages.at(-1).content[0];
+    expect(cut).toMatchObject({ tool_use_id: "c1", is_error: true });
+    expect(cut.content).toMatch(/output limit/);
+    expect(events.at(-1).data).toMatchObject({ reason: "complete", specOk: true });
+    expect(result.text).toBe("Ligne A prête.");
+  });
+
+  test("a turn that ends with nothing to show says so ('empty'), never a silent blank", async () => {
+    __script.push({ stop: "max_tokens", toolUses: [{ id: "e1", name: "set_spec", input: {} }] }, { stop: "max_tokens", toolUses: [{ id: "e2", name: "set_spec", input: {} }] }, { stop: "max_tokens", toolUses: [{ id: "e3", name: "set_spec", input: {} }] });
+    const { events } = await runPlan({});
+    expect(events.at(-1).data).toMatchObject({ reason: "empty", specOk: false, asked: false });
   });
 
   test("refining an existing spec puts it in the message; history alternates", () => {

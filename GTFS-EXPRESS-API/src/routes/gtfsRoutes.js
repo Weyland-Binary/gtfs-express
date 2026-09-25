@@ -366,6 +366,10 @@ router.post("/realtime/validate", express.raw({ type: ["application/x-protobuf",
 
 const { planNetworkTurn } = require("../services/network/networkPlanController");
 router.post("/network/plan", chatAccessGate, planNetworkTurn);
+// The specification documents the planner reads (PDF, Word, OpenDocument, text).
+const briefDocuments = require("../services/network/briefDocumentService");
+router.post("/network/documents", chatAccessGate, briefDocuments.postDocument);
+router.delete("/network/documents/:id", briefDocuments.deleteDocument);
 
 // One-shot AI summaries (release notes from the edit log, diff explanation):
 // gated like the chat (beta code or free trial).

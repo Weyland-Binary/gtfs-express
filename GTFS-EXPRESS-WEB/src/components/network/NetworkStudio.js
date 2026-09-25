@@ -30,7 +30,9 @@ import LockOutlinedIcon from "@mui/icons-material/LockOutlined";
 import DirectionsBusFilledOutlinedIcon from "@mui/icons-material/DirectionsBusFilledOutlined";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { useFeatures } from "../../utils/featuresApi";
-import { validateSpec, estimateSpec, compileSpec, streamPlan, loadDraft, saveDraft, fetchCoverage, evaluateSpec, refineSpec } from "../../utils/networkStudioApi";
+import { validateSpec, estimateSpec, compileSpec, streamPlan, loadDraft, saveDraft, fetchCoverage, evaluateSpec, refineSpec, uploadBriefDocument, deleteBriefDocument } from "../../utils/networkStudioApi";
+import JourneySteps from "./JourneySteps";
+import StudioWelcome from "./StudioWelcome";
 import TerritoryPanel from "./TerritoryPanel";
 import MapLayers from "./MapLayers";
 import { soft } from "./StudioUI";
@@ -44,6 +46,14 @@ import { PRICING_EVENT } from "../PricingDialog";
 
 const EMPTY_SPEC = { agency: { name: "", url: "", timezone: "" }, stops: [], lines: [] };
 const AUTO_PROJECT_KEY = "gtfs:network-autoproject";
+const MAX_DOCUMENTS = 5;
+// Move the focus to a control of the side panel (journey steps, welcome actions).
+const focusTestId = (id) => {
+  const el = typeof document !== "undefined" ? document.querySelector(`[data-testid="${id}"]`) : null;
+  if (!el) return;
+  el.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+  el.focus?.();
+};
 const newId = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
 const readAutoProject = () => {
   try {
@@ -90,7 +100,8 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
   const [restored, setRestored] = useState(false);
   const [shared, setShared] = useState(false);
   const [territory, setTerritory] = useState(null);
-  const [layers, setLayers] = useState({ stops: true, pois: true, population: true });
+  const [layers, setLayers] = useState({ stops: true, pois: true, population: true, works: true });
+  const [documents, setDocuments] = useState([]); // specification documents: { id, name, kind, pages, size, status: uploading|ready|error|expired }
   const [coverage, setCoverage] = useState(null);
   const [requirements, setRequirements] = useState(null);
   const [quality, setQuality] = useState(null);
@@ -117,13 +128,41 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
     }
     if (draft && draft.territory) setTerritory(draft.territory);
     if (draft && draft.requirements) setRequirements(draft.requirements);
+    if (draft && Array.isArray(draft.documents)) setDocuments(draft.documents.filter((d) => d && d.id && d.status === "ready"));
     setRestored(true);
   }, [open, restored]);
   useEffect(() => {
     if (!restored) return;
-    const hasContent = (spec.lines || []).length > 0 || (spec.stops || []).length > 0 || turns.length > 0 || territory;
-    saveDraft(hasContent ? { spec, turns: turns.slice(-12).map((x) => ({ ...x, quality: undefined })), requirements, territory: territory ? { ...territory, existing_stops: territory.existing_stops.slice(0, 300), pois: { ...territory.pois, items: territory.pois.items.slice(0, 200) }, population_grid: territory.population_grid ? { ...territory.population_grid, cells: territory.population_grid.cells.slice(0, 600) } : null } : null } : null);
-  }, [spec, turns, restored, territory, requirements]);
+    const readyDocs = documents.filter((d) => d.status === "ready");
+    const hasContent = (spec.lines || []).length > 0 || (spec.stops || []).length > 0 || turns.length > 0 || territory || readyDocs.length > 0;
+    saveDraft(hasContent ? { spec, turns: turns.slice(-12).map((x) => ({ ...x, quality: undefined })), requirements, documents: readyDocs, territory: territory ? { ...territory, existing_stops: territory.existing_stops.slice(0, 300), pois: { ...territory.pois, items: territory.pois.items.slice(0, 200) }, population_grid: territory.population_grid ? { ...territory.population_grid, cells: territory.population_grid.cells.slice(0, 600) } : null } : null } : null);
+  }, [spec, turns, restored, territory, requirements, documents]);
+
+  // Specification documents: uploaded once, referenced by id in every planner turn.
+  const attachDocuments = useCallback(
+    (files) => {
+      const room = Math.max(0, MAX_DOCUMENTS - documents.filter((d) => d.status !== "error").length);
+      if (!room) {
+        setNotice(t("network.docs.max", { max: MAX_DOCUMENTS }));
+        return;
+      }
+      for (const file of files.slice(0, room)) {
+        const tempId = `tmp-${newId()}`;
+        setDocuments((prev) => [...prev, { tempId, name: file.name, size: file.size, status: "uploading" }]);
+        uploadBriefDocument(file)
+          .then((d) => setDocuments((prev) => prev.map((x) => (x.tempId === tempId ? { ...d, status: "ready" } : x))))
+          .catch((err) => {
+            const message = err.code === "DOCUMENT_TOO_LARGE" ? t("network.docs.tooLarge") : err.code === "DOCUMENT_TOO_LONG" ? err.message : err.code === "UNSUPPORTED_DOCUMENT" ? t("network.docs.unsupported") : err.message;
+            setDocuments((prev) => prev.map((x) => (x.tempId === tempId ? { ...x, status: "error", error: message } : x)));
+          });
+      }
+    },
+    [documents, t],
+  );
+  const removeDocument = useCallback((doc) => {
+    setDocuments((prev) => prev.filter((x) => (doc.id ? x.id !== doc.id : x.tempId !== doc.tempId)));
+    if (doc.id) deleteBriefDocument(doc.id);
+  }, []);
 
   useEffect(() => {
     try {
@@ -249,6 +288,7 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
           language,
           near,
           territory: territory ? { place: territory.place.query } : null,
+          documents: documents.filter((d) => d.status === "ready").map((d) => d.id),
           requirements,
           signal: abort.signal,
           onEvent: (event, data) => {
@@ -274,6 +314,8 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
                 break;
               case "step":
                 patch((x) => ({ steps: [...x.steps, data] }));
+                // Documents the server no longer holds (two hours): the user re-attaches them.
+                if (data.kind === "documents" && data.missing?.length) setDocuments((prev) => prev.map((d) => (data.missing.includes(d.id) ? { ...d, status: "expired" } : d)));
                 break;
               case "spec":
                 setSpec(editableFromNormalized(data.spec));
@@ -305,7 +347,7 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
                 patch(() => ({ error: data.message || data.code, status: "error" }));
                 break;
               case "done":
-                patch((x) => ({ status: x.status === "error" ? "error" : "complete" }));
+                patch((x) => ({ status: x.status === "error" ? "error" : "complete", ...(data.reason === "empty" && !x.error ? { error: t("network.plan.empty") } : {}) }));
                 if (data.ready) {
                   setReady(true);
                   // The plan is complete: project it into the application (exploration mode).
@@ -324,7 +366,7 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
         setPendingTool(null);
       }
     },
-    [streaming, turns, spec, language, near, territory, requirements, t, validation],
+    [streaming, turns, spec, language, near, territory, requirements, documents, t, validation],
   );
 
   const stopPlan = useCallback(() => abortRef.current?.abort(), []);
@@ -396,6 +438,10 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
     setQuality(null);
     setCorridors([]);
     setReady(false);
+    setDocuments((prev) => {
+      for (const d of prev) if (d.id) deleteBriefDocument(d.id);
+      return [];
+    });
     saveDraft(null);
   }, []);
 
@@ -428,6 +474,26 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
     return { errors, warnings: counts.warnings ?? 0 };
   };
 
+  // The journey: territory → specification → design → projection.
+  const readyDocCount = documents.filter((d) => d.status === "ready").length;
+  const hasLines = (spec.lines || []).length > 0;
+  const journeyDone = { territory: Boolean(territory), brief: readyDocCount > 0 || Boolean(requirements) || turns.some((x) => x.role === "user"), design: Boolean(validation?.ok && hasLines), projection: false };
+  const onJourneyStep = (step) => {
+    if (step === "territory") focusTestId("territory-query");
+    else if (step === "brief") {
+      if (readyDocCount) focusTestId("plan-brief");
+      else document.querySelector('[data-testid="plan-file"]')?.click();
+    } else if (step === "design") {
+      if (hasLines) setTab("lines");
+      else focusTestId("plan-brief");
+    } else if (step === "projection") {
+      if (canBuild) build({ auto: true });
+      else setIssuesOpen(true);
+    }
+  };
+  const mapEmpty = !(spec.stops || []).some((s) => Number.isFinite(s.lat));
+  const showWelcome = mapEmpty && !territory && !turns.length && !documents.length;
+
   return (
     <Dialog open={open} onClose={onClose} fullScreen PaperProps={{ sx: { background: theme.palette.background.default } }} data-testid="network-studio">
       {/* Header */}
@@ -435,12 +501,17 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
         <Box sx={{ width: 34, height: 34, borderRadius: "10px", display: "flex", alignItems: "center", justifyContent: "center", background: `linear-gradient(135deg, ${theme.palette.ai.gradientStart}, ${theme.palette.ai.gradientEnd})`, color: theme.palette.ai.contrastText }}>
           <BuildCircleOutlinedIcon sx={{ fontSize: 20 }} />
         </Box>
-        <Box sx={{ flex: 1, minWidth: 0 }}>
+        <Box sx={{ flex: isMobile ? 1 : "0 1 auto", minWidth: 0 }}>
           <Typography sx={{ fontWeight: 800, fontSize: "1rem", lineHeight: 1.2 }}>{t("network.title")}</Typography>
-          <Typography sx={{ fontSize: "0.74rem", color: "text.secondary" }} noWrap>
+          <Typography sx={{ fontSize: "0.74rem", color: "text.secondary", maxWidth: 360 }} noWrap title={t("network.subtitle")}>
             {t("network.subtitle")}
           </Typography>
         </Box>
+        {!isMobile && (
+          <Box sx={{ flex: 1, display: "flex", justifyContent: "center", minWidth: 0, overflow: "hidden" }}>
+            <JourneySteps done={journeyDone} onStep={onJourneyStep} />
+          </Box>
+        )}
         {plan && plan.max_lines != null && plan.name === "free" && (
           <Tooltip title={t("network.plan.freeHint", { max: plan.max_lines })}>
             <Chip size="small" icon={<LockOutlinedIcon sx={{ fontSize: 13 }} />} label={t("network.plan.free", { max: plan.max_lines })} color={plan.over_limit ? "warning" : "default"} onClick={() => window.dispatchEvent(new CustomEvent(PRICING_EVENT, { detail: { reason: plan.over_limit ? "network_limit" : null } }))} data-testid="network-plan-chip" sx={{ height: 22, fontSize: "0.66rem", fontWeight: 700 }} />
@@ -472,6 +543,10 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
             onStop={stopPlan}
             canPlan={canPlan}
             disabledReason={disabledReason}
+            documents={documents}
+            onAttach={attachDocuments}
+            onRemoveDocument={removeDocument}
+            propose={territory && !hasLines ? { place: territory.place.name } : null}
             header={<TerritoryPanel territory={territory} onTerritory={(d) => { setTerritory(d); setFitEpoch((e) => e + 1); }} coverage={coverage} onUseExistingStops={useExistingStops} onRefineStops={refineStops} canRefine={Boolean(validation && (validation.spec?.lines || []).length) && !streaming} refining={refining} onImportedFeed={importedFeed} busy={streaming} />}
           />
         </Box>
@@ -495,17 +570,24 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
           <Box sx={{ flex: 1, minHeight: 0, position: "relative", overflow: tab === "map" ? "hidden" : "auto", p: tab === "map" ? 0 : 1.5 }}>
             {tab === "map" && (
               <>
-                <NetworkMap stops={spec.stops || []} lines={validation?.spec?.lines || spec.lines || []} geometry={geometry} corridors={corridors} population={territory && layers.population ? territory.population_grid : null} focusBbox={territory ? territory.place.bbox : null} existingStops={territory && layers.stops ? territory.existing_stops : []} pois={territory && layers.pois ? territory.pois.items : []} onPickExistingStop={(s) => { if (!(spec.stops || []).some((x) => x.id === s.id)) updateSpec({ ...spec, stops: [...(spec.stops || []), { id: s.id, name: s.name || s.kind, lat: s.lat, lon: s.lon, source: "osm" }] }); }} selectedStopId={selectedStopId} placingStopId={placingStopId} onSelectStop={setSelectedStopId} onMoveStop={(id, lat, lon) => updateSpec({ ...spec, stops: spec.stops.map((s) => (s.id === id ? { ...s, lat, lon } : s)) })} onPlaceStop={(id, lat, lon) => { updateSpec({ ...spec, stops: spec.stops.map((s) => (s.id === id ? { ...s, lat, lon } : s)) }); setPlacingStopId(null); }} fitEpoch={fitEpoch} />
+                <NetworkMap stops={spec.stops || []} lines={validation?.spec?.lines || spec.lines || []} geometry={geometry} corridors={corridors} population={territory && layers.population ? territory.population_grid : null} focusBbox={territory ? territory.place.bbox : null} works={territory && layers.works ? territory.works?.items || [] : []} existingStops={territory && layers.stops ? territory.existing_stops : []} pois={territory && layers.pois ? territory.pois.items : []} onPickExistingStop={(s) => { if (!(spec.stops || []).some((x) => x.id === s.id)) updateSpec({ ...spec, stops: [...(spec.stops || []), { id: s.id, name: s.name || s.kind, lat: s.lat, lon: s.lon, source: "osm" }] }); }} selectedStopId={selectedStopId} placingStopId={placingStopId} onSelectStop={setSelectedStopId} onMoveStop={(id, lat, lon) => updateSpec({ ...spec, stops: spec.stops.map((s) => (s.id === id ? { ...s, lat, lon } : s)) })} onPlaceStop={(id, lat, lon) => { updateSpec({ ...spec, stops: spec.stops.map((s) => (s.id === id ? { ...s, lat, lon } : s)) }); setPlacingStopId(null); }} fitEpoch={fitEpoch} />
                 <MapLayers territory={territory} layers={layers} onToggle={(k) => setLayers((l) => ({ ...l, [k]: !l[k] }))} />
                 {placingStopId && (
                   <Box sx={{ position: "absolute", top: 12, left: "50%", transform: "translateX(-50%)", zIndex: 1000, px: 1.5, py: 0.6, borderRadius: 99, background: theme.palette.warning.main, color: theme.palette.warning.contrastText, fontSize: "0.76rem", fontWeight: 700, boxShadow: 3 }}>
                     {t("network.placingHint", { name: (spec.stops || []).find((s) => s.id === placingStopId)?.name || "" })}
                   </Box>
                 )}
-                {!(spec.stops || []).some((s) => Number.isFinite(s.lat)) && !territory && (
-                  <Box sx={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none", zIndex: 900 }}>
-                    <Typography sx={{ px: 2, py: 1, borderRadius: 2, background: alpha(theme.palette.background.paper, 0.9), fontSize: "0.82rem", color: "text.secondary", maxWidth: 360, textAlign: "center" }}>{t("network.map.empty")}</Typography>
+                {showWelcome ? (
+                  <Box sx={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", zIndex: 900, background: alpha(theme.palette.background.default, 0.35) }}>
+                    <StudioWelcome onTerritory={() => focusTestId("territory-query")} onAttach={attachDocuments} onDescribe={() => focusTestId("plan-brief")} canAttach={canPlan} />
                   </Box>
+                ) : (
+                  mapEmpty &&
+                  !territory && (
+                    <Box sx={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none", zIndex: 900 }}>
+                      <Typography sx={{ px: 2, py: 1, borderRadius: 2, background: alpha(theme.palette.background.paper, 0.9), fontSize: "0.82rem", color: "text.secondary", maxWidth: 360, textAlign: "center" }}>{t("network.map.empty")}</Typography>
+                    </Box>
+                  )
                 )}
               </>
             )}

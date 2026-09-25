@@ -44,13 +44,18 @@ const { haversineMeters } = require("../../utils/geoUtils");
 
 const MAX_ROUNDS = 20;
 const MAX_CONSECUTIVE_ERRORS = 4;
-const MAX_TOKENS = 6000;
+// A whole network goes out in one set_spec call: room for a few dozen lines and their stops.
+const MAX_TOKENS = 32000;
+// A call cut off at the output limit is not run; the model resends it (compactly) at most this often.
+const MAX_TRUNCATIONS = 2;
+const TRUNCATED_CALL = "Not run: your reply reached the output limit before this call was complete. Send it again, more compactly: no prose before the call, and leave out the fields that keep their default value.";
 const MAX_BRIEF_CHARS = 60000;
 const MAX_HISTORY = 20;
 const LANG_NAMES = { en: "English", fr: "French", es: "Spanish", de: "German", pt: "Portuguese", zh: "Chinese", ar: "Arabic", hi: "Hindi" };
 
 // Injectable for tests (no network).
 const catalogService = require("./catalogService");
+const briefDocuments = require("./briefDocumentService");
 const deps = { geocode: geocoderModule.geocode, createRouter: roadRouter.createRouter, buildTerritory: territoryService.buildTerritory, findFeeds: (territory) => catalogService.findFeeds(territory), importFeed: (url, opts) => catalogService.importFeed(url, opts) };
 
 const clip = (s, n) => (typeof s === "string" && s.length > n ? `${s.slice(0, n)}…` : s);
@@ -75,6 +80,7 @@ You NEVER write GTFS rows yourself. You produce a Network Spec through the set_s
   } ],
   "holidays"?: ["YYYYMMDD"], "holiday_service"?: "sunday"|"none",
   "transfers"?: [ { "from", "to", "min_minutes" } ],
+  "weekend"?: ["fri","sat"],   // local weekly rest days (default sat+sun): "weekday" and "weekend" calendars follow them
   "sync"?: { "stop": stop id or name, "minute"?: 0 },   // pulse timetable: every headway service reaches this hub at that minute (mod its headway); services[].sync overrides or opts out (false)
   "operations"?: { "currency"?: "EUR", "cost_per_km"?: number | {mode: number}, "cost_per_hour"?, "layover_min"?, "max_vehicles"?, "max_cost_year"? }
 }
@@ -83,11 +89,12 @@ Limits: ≤ ${LIMITS.lines} lines, ≤ ${LIMITS.stops} stops, ≤ ${LIMITS.stops
 # Method: four phases, each grounded by a tool
 
 ## 1. Understand (set_requirements, ask_user)
+Attached documents (PDF, Word, text: a tender, a study, a cahier des charges) ARE the specification. Read them entirely — text, tables, maps' captions, annexes — before anything else: lines and stops requested, service levels by period, hours, days, calendars and school periods, fleet, budget, accessibility, deadlines, priorities, what must be kept. Put each requirement in set_requirements (cite the page or section in the reason when you can). When a document and the chat disagree, the latest chat message wins; when two parts of a document disagree, ask.
 On a NEW brief (no [Current spec] block), your FIRST call is set_requirements: what the brief states (operator, area, lines with termini and vias, modes, service days and hours, headways, holidays, budget or fleet constraints, must-serve places), what you ASSUME with a confidence level, and the OPEN QUESTIONS with their impact. Everything the brief states is law; do not "improve" it silently. On a refinement, call set_requirements again only when the request changes the scope (new lines, new area, new service policy).
 An open question has impact "high" when two plausible answers give materially different networks: which town when the name is ambiguous, the termini or the order of stops of a requested line, whether existing lines must be kept, a fleet or budget cap, school-only service. Then call ask_user with those questions (1–3, each with options and a default), end your turn, and continue with the answers next time. Everything else gets a sensible default (below), listed as an assumption the user can contest.
 
 ## 2. Ground (get_territory, suggest_corridors)
-Real networks start from the ground: call get_territory with the town or area (once; the dossier is cached) unless a [Territory] block is already in the message. It gives the timezone, the population, the EXISTING stops and stations from OpenStreetMap (reuse their names, coordinates and ids — passengers know them), the existing transit lines (do not duplicate a line that already runs; connect to it), the trip generators that the lines must serve, and the holidays for the calendars.
+Real networks start from the ground: call get_territory with the town or area (once; the dossier is cached) unless a [Territory] block is already in the message. It gives the timezone, the population, the EXISTING stops and stations from OpenStreetMap (reuse their names, coordinates and ids — passengers know them), the existing transit lines (do not duplicate a line that already runs; connect to it), the trip generators that the lines must serve, and the holidays for the calendars. It also gives the country context (currency, language, the usual weekend days, driving side, income level) and the works and projects under way (new neighbourhoods and facilities being built are tomorrow's demand: serve them; roads under construction are not usable until they open; connect to planned tram, metro or rail lines). The application is used worldwide: follow local practice, never assume a European week, currency or language.
 When the brief does not name the lines precisely ("a bus network for the town", "3 lines serving the essentials"), call suggest_corridors: it computes the demand hubs and the strongest corridors between them from the generators and the population. Use them as skeletons; keep the brief's own lines first.
 When the brief asks to improve, extend or restructure the EXISTING network, or when the territory lists existing transit lines and the brief does not say to start from scratch: call find_existing_feeds, then import_existing_network on the most local feed. It loads the network that runs today as the current spec (its score is the baseline); design your changes on it and quote the before/after score in the summary.
 
@@ -99,6 +106,9 @@ When the brief asks to improve, extend or restructure the EXISTING network, or w
 ## 4. Evaluate (evaluate_plan, coverage_score)
 Call evaluate_plan: the design quality report (coverage of the generators and residents, stop spacing, directness, service level for the population, connectivity, plausibility, compliance) with a score out of 100, the operations bill, the accessibility of the main places (share of residents reaching the station, the hospital, the centre within 30/45/60 min at 08:00) and recommendations. Fix the MAJOR findings unless the brief imposes them, then evaluate again (at most two rounds). Aim for a score ≥ 70 with no major finding. coverage_score gives the detail of the unserved places when you need it.
 
+## Designing from scratch
+When the user asks to propose a network for the territory without naming lines, you design it end to end from the data: suggest_corridors for the skeleton, the population grid for where people live, the generators for where they go, the works for where the city grows, the existing network to connect to. Size it for the population (rules of thumb, adapt to density and the budget): under 10 000 inhabitants, 1–2 lines or a shuttle; 10 000–50 000, 2–5 radial lines through the centre with a pulse; 50 000–150 000, 5–12 lines with one or two frequent trunks (10 min at peak); 150 000–500 000, 10–25 lines with a frequent grid of trunks (5–8 min); above, a trunk mode (tram or BRT) plus a feeder grid. Keep the number of lines within the plan's limit. Ask at most the essential questions (budget or fleet cap, service span, priorities) with suggested answers; otherwise state your assumptions and deliver a complete plan.
+
 ## 5. Deliver
 Answer in markdown, in the user's language, briefly: the network (lines, stops, service) in a few lines, the **quality score** and what limits it, the ASSUMPTIONS as a bullet list, what the user should check on the map. When the plan is ready (spec ok, no missing coordinates), say it can be projected into the application. Do not repeat the requirements card; the UI shows it.
 
@@ -106,7 +116,8 @@ Answer in markdown, in the user's language, briefly: the network (lines, stops, 
 - Service: weekday 06:00–21:00, peak (07:00–09:00, 16:30–19:00) headway 15 min, off-peak 30 min; saturday 08:00–20:00 every 30 min; sunday 09:00–19:00 every 60 min. Shuttles/school lines: explicit departures.
 - Modes and speeds: the compiler knows commercial speeds per mode; set speed_kmh only when the brief implies express or slow service.
 - Feed dates: today → +1 year. Holidays: the territory's public holidays (dates from get_territory) with holiday_service "sunday" unless the brief says otherwise; when school holidays matter (school lines, reduced summer service) build a second calendar with days and dates.
-- Agency timezone: the territory's timezone.
+- Agency timezone: the territory's timezone; agency.lang: the country's first language; operations.currency: leave it out (costs are then estimated in the local currency at the local price level) unless the brief gives figures.
+- Week: set spec.weekend to the country's usual weekend when it is not Saturday–Sunday; "weekday" then means the local working days and "weekend" the rest days; name saturday/sunday calendars only where they make sense locally.
 - Colours: one distinct colour per line; keep the brief's colours when given.
 - Stop naming: proper case, no codes; termini names as headsigns.
 - Ids: short and stable (line short name; stop slug); the compiler slugs missing ids.
@@ -498,7 +509,7 @@ const runRound = async ({ client, model, messages, tools, signal, emit }) => {
   return { content, toolUses: content.filter((b) => b.type === "tool_use"), stopReason: finalMessage?.stop_reason || null, usage };
 };
 
-const buildMessages = ({ history, brief, spec, language, near, territoryBlock = "", requirements = null }) => {
+const buildMessages = ({ history, brief, spec, language, near, territoryBlock = "", requirements = null, documents = [] }) => {
   const msgs = [];
   for (const h of (history || []).slice(-MAX_HISTORY)) {
     if (!h || (h.role !== "user" && h.role !== "assistant")) continue;
@@ -508,6 +519,7 @@ const buildMessages = ({ history, brief, spec, language, near, territoryBlock = 
     else msgs.push({ role: h.role, content: text });
   }
   const blocks = [`[UI language: ${LANG_NAMES[language] || "English"}]`];
+  if (documents.length) blocks.push(`[Attached documents] ${documents.map((d) => `"${d.name}"${d.pages ? ` (${d.pages} pages)` : ""}${d.truncated ? " (truncated)" : ""}`).join(", ")} — the specification: read them entirely before designing.`);
   if (near) blocks.push(`[Area hint] lat ${near.lat}, lon ${near.lon}`);
   if (territoryBlock) blocks.push(territoryBlock);
   if (requirements) blocks.push(`[Requirements as recorded]\n${clip(JSON.stringify(requirements), 6000)}`);
@@ -517,11 +529,16 @@ const buildMessages = ({ history, brief, spec, language, near, territoryBlock = 
   if (msgs.length && msgs[msgs.length - 1].role === "user") msgs[msgs.length - 1].content += `\n\n${text}`;
   else msgs.push({ role: "user", content: text });
   if (msgs[0].role !== "user") msgs.shift();
+  // Documents go before the question, as document blocks the model reads natively.
+  if (documents.length) {
+    const last = msgs[msgs.length - 1];
+    last.content = [...briefDocuments.toContentBlocks(documents), { type: "text", text: last.content }];
+  }
   return msgs;
 };
 
 /** The planner turn. Emits SSE-style events through `emit`. */
-const planNetwork = async ({ brief, spec = null, history = [], language = "en", near = null, territoryPlace = null, requirements = null, maxLines = null, freeTier = false, rateKey, aiLimits = {}, signal, emit, req = null }) => {
+const planNetwork = async ({ brief, spec = null, history = [], language = "en", near = null, territoryPlace = null, requirements = null, documentIds = [], maxLines = null, freeTier = false, rateKey, aiLimits = {}, signal, emit, req = null }) => {
   const text = String(brief || "").trim();
   if (text.length < 3) throw Object.assign(new Error("brief is required (≥ 3 characters)."), { code: "INVALID_INPUT", status: 400 });
   if (text.length > MAX_BRIEF_CHARS) throw Object.assign(new Error(`brief is too long (max ${MAX_BRIEF_CHARS} characters).`), { code: "INVALID_INPUT", status: 400 });
@@ -544,12 +561,16 @@ const planNetwork = async ({ brief, spec = null, history = [], language = "en", 
     }
   }
   const tools = createTools(ctx);
-  const messages = buildMessages({ history, brief: text, spec: ctx.spec, language, near: ctx.near, territoryBlock, requirements: ctx.requirements });
+  // The specification documents attached to the conversation (uploaded once, referenced by id).
+  const docs = briefDocuments.getDocuments(documentIds);
+  if (docs.found.length || docs.missing.length) emit("step", { kind: "documents", count: docs.found.length, names: docs.found.map((d) => d.name), missing: docs.missing });
+  const messages = buildMessages({ history, brief: text, spec: ctx.spec, language, near: ctx.near, territoryBlock, requirements: ctx.requirements, documents: docs.found });
   emit("meta", { model, mode: "planner" });
   const usageTotals = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
   let rounds = 0;
   let toolCalls = 0;
   let consecutiveErrors = 0;
+  let truncations = 0;
   let finalText = "";
   try {
     for (;;) {
@@ -561,6 +582,13 @@ const planNetwork = async ({ brief, spec = null, history = [], language = "en", 
       rounds += 1;
       if (round.usage) for (const k of Object.keys(usageTotals)) usageTotals[k] += Number(round.usage[k]) || 0;
       finalText += round.content.filter((b) => b.type === "text").map((b) => b.text).join("");
+      // A tool call cut off at the output limit has partial input: answer it without running it.
+      if (round.stopReason === "max_tokens" && round.toolUses.length && truncations < MAX_TRUNCATIONS && rounds < MAX_ROUNDS) {
+        truncations += 1;
+        messages.push({ role: "assistant", content: round.content });
+        messages.push({ role: "user", content: round.toolUses.map((tu) => ({ type: "tool_result", tool_use_id: tu.id, content: TRUNCATED_CALL, is_error: true })) });
+        continue;
+      }
       if (round.toolUses.length === 0 || round.stopReason !== "tool_use") break;
       messages.push({ role: "assistant", content: round.content });
       const results = [];
@@ -600,7 +628,9 @@ const planNetwork = async ({ brief, spec = null, history = [], language = "en", 
     // Ready: the plan can be projected (valid spec, every stop located, within the plan).
     const ready = Boolean(ctx.specOk && ctx.spec && !ctx.asked && !ctx.spec.stops.some((s) => s.lat == null) && (!Number.isFinite(ctx.maxLines) || ctx.spec.lines.length <= ctx.maxLines));
     const quality = ctx.quality ? { score: ctx.quality.score, grade: ctx.quality.grade, majors: ctx.quality.majors } : null;
-    emit("done", { reason: "complete", specOk: ctx.specOk, asked: ctx.asked, ready, quality });
+    // Nothing to show (no text, no plan, no question): the studio says so instead of an empty turn.
+    const empty = !finalText.trim() && !ctx.spec && !ctx.asked;
+    emit("done", { reason: empty ? "empty" : "complete", specOk: ctx.specOk, asked: ctx.asked, ready, quality });
     recordEvent("network.plan", { ...(req ? extractReqMeta(req) : {}), model, rounds, toolCalls, specOk: ctx.specOk, asked: ctx.asked, ready, score: quality?.score ?? null, durationMs: Date.now() - startedAt, anon: freeTier });
     return { text: finalText, spec: ctx.spec, specOk: ctx.specOk, ready, quality: ctx.quality, requirements: ctx.requirements };
   } catch (err) {

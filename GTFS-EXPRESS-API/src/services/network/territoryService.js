@@ -28,12 +28,14 @@
 
 const config = require("../../config");
 const { haversineMeters } = require("../../utils/geoUtils");
+const { countryContext, summarizeCountry } = require("./countryService");
 
 const TIMEOUT_MS = 20000;
 const CACHE_TTL_MS = 60 * 60 * 1000;
 const MAX_STOPS = 800;
 const MAX_LINES = 150;
 const MAX_POIS = 400;
+const MAX_WORKS = 120;
 const MAX_BBOX_SIDE_KM = 30;
 const COVERAGE_RADIUS_M = 400;
 const REUSE_RADIUS_M = 40;
@@ -339,12 +341,65 @@ const populationGrid = (polygons, total, { cellM = GRID_CELL_M } = {}) => {
   return { cell_m: cellM, total: Math.round(pop), estimated, residential_km2: Math.round((totalArea / 1e6) * 100) / 100, cells: cells.slice(0, MAX_GRID_CELLS) };
 };
 
-const fetchPopulationWikidata = async (qid, fetchImpl) => {
+/** Population (P1082) and area in km² (P2046, normalised to km²) of a Wikidata item. */
+const fetchPlaceStatsWikidata = async (qid, fetchImpl) => {
   if (!qid || !/^Q\d+$/.test(qid)) return null;
-  const query = `SELECT ?pop WHERE { wd:${qid} wdt:P1082 ?pop } LIMIT 1`;
+  const query = `SELECT ?pop ?area ?unit WHERE { OPTIONAL { wd:${qid} wdt:P1082 ?pop } OPTIONAL { wd:${qid} p:P2046/psv:P2046 [ wikibase:quantityAmount ?area; wikibase:quantityUnit ?unit ] } } LIMIT 1`;
   const data = await getJson(fetchImpl, `${config.WIKIDATA_SPARQL_URL}?format=json&query=${encodeURIComponent(query)}`);
-  const v = num(data?.results?.bindings?.[0]?.pop?.value);
-  return v != null ? Math.round(v) : null;
+  const b = data?.results?.bindings?.[0] || {};
+  const pop = num(b.pop?.value);
+  let area = num(b.area?.value);
+  // Q712226 = km², Q35852 = hectare, Q25343 = m².
+  const unit = String(b.unit?.value || "");
+  if (area != null && unit.endsWith("Q35852")) area /= 100;
+  else if (area != null && unit.endsWith("Q25343")) area /= 1e6;
+  return { population: pop != null ? Math.round(pop) : null, area_km2: area != null && area > 0 ? Math.round(area * 100) / 100 : null };
+};
+
+const fetchPopulationWikidata = async (qid, fetchImpl) => {
+  const s = await fetchPlaceStatsWikidata(qid, fetchImpl);
+  return s ? s.population : null;
+};
+
+// Works and projects: what will change the ground during the network's life
+// (roads, rail and tram under construction or planned, new neighbourhoods and
+// facilities being built). OpenStreetMap tags them worldwide.
+const WORK_KIND = (tags) => {
+  if (tags.highway === "construction" || tags.highway === "proposed") return "road";
+  if (/^(construction|proposed)$/.test(tags.railway || "")) return /tram|light_rail|subway/.test(`${tags.construction || ""}${tags.proposed || ""}`) ? "transit" : "rail";
+  if (tags.type === "route" || tags.route) return "transit";
+  if (tags.landuse === "construction" || /^(residential|commercial|retail|industrial|school|hospital|university|college)$/.test(tags.construction || "")) return "development";
+  return "site";
+};
+
+const isWork = (tags) => /^(construction|proposed)$/.test(tags.highway || "") || /^(construction|proposed)$/.test(tags.railway || "") || tags.state === "proposed" || tags.landuse === "construction" || tags.building === "construction";
+
+const fetchWorks = async (bbox, fetchImpl) => {
+  const b = bboxStr(bbox);
+  const ql = `[out:json][timeout:25];(way["highway"~"^(construction|proposed)$"](${b});way["railway"~"^(construction|proposed)$"](${b});relation["route"~"^(tram|light_rail|subway|train|bus|trolleybus)$"]["state"="proposed"](${b});nwr["landuse"="construction"](${b});nwr["building"="construction"]["construction"~"^(residential|apartments|commercial|retail|school|hospital|university|college|train_station)$"](${b}););out center tags ${MAX_WORKS * 2};`;
+  const elements = await overpass(ql, fetchImpl);
+  const items = [];
+  const counts = {};
+  const seen = new Set();
+  for (const e of elements) {
+    const tags = e.tags || {};
+    const lat = e.lat ?? e.center?.lat;
+    const lon = e.lon ?? e.center?.lon;
+    if (!Number.isFinite(lat) || !Number.isFinite(lon) || !isWork(tags)) continue;
+    const kind = WORK_KIND(tags);
+    const status = tags.highway === "proposed" || tags.railway === "proposed" || tags.state === "proposed" ? "proposed" : "construction";
+    const name = tags.name || tags.ref || null;
+    // Many consecutive road segments share one name: keep one per name and kind.
+    const key = name ? `${kind}|${name}` : `${e.type}/${e.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    counts[kind] = (counts[kind] || 0) + 1;
+    if (items.length < MAX_WORKS) items.push({ id: `osm:${e.type}/${e.id}`, kind, status, name, detail: tags.construction || tags.proposed || tags.route || null, opening_date: tags.opening_date || tags["opening_date:estimated"] || null, lat, lon });
+  }
+  // Developments first (future demand), then transit, rail, roads.
+  const rank = { development: 0, transit: 1, rail: 2, road: 3, site: 4 };
+  items.sort((a, b) => rank[a.kind] - rank[b.kind] || Number(Boolean(b.name)) - Number(Boolean(a.name)));
+  return { counts, items };
 };
 
 const fetchHolidays = async (countryCode, years, fetchImpl) => {
@@ -381,6 +436,7 @@ const fetchTimezone = async (lat, lon, fetchImpl) => {
 // ── Dossier ────────────────────────────────────────────────────────────────
 
 const cacheKey = (q) => q.trim().toLowerCase();
+const uniqueSources = (list) => [...new Map(list.map((s) => [s.id, s])).values()];
 
 const buildTerritory = async (query, { fetchImpl = null, force = false } = {}) => {
   const q = String(query || "").trim();
@@ -429,19 +485,21 @@ const buildTerritory = async (query, { fetchImpl = null, force = false } = {}) =
     out.pois = await step("overpass pois", () => fetchPois(place.bbox, doFetch), { categories: {}, items: [] });
     out.residential = await step("overpass residential", () => fetchResidential(place.bbox, doFetch), []);
     out.lines = await step("overpass lines", () => fetchLines(place.bbox, doFetch), []);
+    out.works = await step("overpass works", () => fetchWorks(place.bbox, doFetch), { counts: {}, items: [] });
     return out;
   };
-  const [{ stops, lines, pois, residential }, tz, holidays, schoolHolidays] = await Promise.all([
+  const [{ stops, lines, pois, residential, works }, tz, holidays, schoolHolidays, wdStats, country] = await Promise.all([
     osm(),
     soft("open-meteo", () => fetchTimezone(place.lat, place.lon, doFetch), { timezone: null, elevation_m: null }),
     place.country_code ? soft("nager", () => fetchHolidays(place.country_code, [year, year + 1], doFetch), []) : Promise.resolve([]),
     place.country_code ? soft("openholidays", () => fetchSchoolHolidays(place.country_code, `${year}-01-01`, `${year + 1}-12-31`, doFetch), []) : Promise.resolve([]),
+    place.wikidata ? soft("wikidata", () => fetchPlaceStatsWikidata(place.wikidata, doFetch), null) : Promise.resolve(null),
+    place.country_code ? countryContext(place.country_code, { fetchImpl: doFetch }).catch(() => null) : Promise.resolve(null),
   ]);
   let population = place.population_osm != null ? { value: Math.round(place.population_osm), source: "osm" } : null;
-  if (!population && place.wikidata) {
-    const v = await soft("wikidata", () => fetchPopulationWikidata(place.wikidata, doFetch), null);
-    if (v != null) population = { value: v, source: "wikidata" };
-  }
+  if (!population && wdStats?.population != null) population = { value: wdStats.population, source: "wikidata" };
+  const areaKm2 = wdStats?.area_km2 ?? null;
+  const stats = { area_km2: areaKm2, density_per_km2: areaKm2 && population ? Math.round(population.value / areaKm2) : null };
   const grid = populationGrid(residential, population ? population.value : null);
   const dossier = {
     place: { query: place.query, name: place.name, display_name: place.display_name, country_code: place.country_code, country: place.country, lat: place.lat, lon: place.lon, bbox: place.bbox, wikidata: place.wikidata, osm: place.osm_type && place.osm_id ? `${place.osm_type}/${place.osm_id}` : null },
@@ -449,12 +507,15 @@ const buildTerritory = async (query, { fetchImpl = null, force = false } = {}) =
     elevation_m: tz.elevation_m,
     population,
     population_grid: grid,
+    stats,
+    country,
     existing_stops: stops,
     existing_lines: lines,
     pois,
+    works,
     holidays,
     school_holidays: schoolHolidays,
-    sources: [SOURCES.osm, SOURCES.nominatim, SOURCES.overpass, ...(population?.source === "wikidata" ? [SOURCES.wikidata] : []), ...(holidays.length ? [SOURCES.nager] : []), ...(schoolHolidays.length ? [SOURCES.openholidays] : []), ...(tz.timezone ? [SOURCES.openmeteo] : [])],
+    sources: uniqueSources([SOURCES.osm, SOURCES.nominatim, SOURCES.overpass, ...(population?.source === "wikidata" || areaKm2 ? [SOURCES.wikidata] : []), ...(holidays.length ? [SOURCES.nager] : []), ...(schoolHolidays.length ? [SOURCES.openholidays] : []), ...(tz.timezone ? [SOURCES.openmeteo] : []), ...(country?.sources || [])]),
     warnings,
     generatedAt: new Date().toISOString(),
   };
@@ -472,11 +533,13 @@ const getCachedTerritory = (query) => {
 const TOP_STOPS_FOR_MODEL = 80;
 const TOP_POIS_FOR_MODEL = 45;
 const TOP_LINES_FOR_MODEL = 30;
+const TOP_WORKS_FOR_MODEL = 15;
 
 const summarizeForModel = (d) => {
   const lines = [];
   lines.push(`[Territory] ${d.place.display_name} (country ${d.place.country_code || "?"}; centre ${d.place.lat.toFixed(4)}, ${d.place.lon.toFixed(4)}; box S${d.place.bbox[0].toFixed(3)} W${d.place.bbox[1].toFixed(3)} N${d.place.bbox[2].toFixed(3)} E${d.place.bbox[3].toFixed(3)})`);
-  lines.push(`Timezone: ${d.timezone || "unknown"}. Population: ${d.population ? `${d.population.value} (${d.population.source})` : "unknown"}.`);
+  lines.push(`Timezone: ${d.timezone || "unknown"}. Population: ${d.population ? `${d.population.value} (${d.population.source})` : "unknown"}.${d.stats?.area_km2 ? ` Area ${d.stats.area_km2} km²${d.stats.density_per_km2 ? `, density ${d.stats.density_per_km2} inhabitants/km²` : ""}.` : ""}`);
+  if (d.country) lines.push(summarizeCountry(d.country));
   if (d.population_grid) {
     const g = d.population_grid;
     lines.push(`Residents on a ${g.cell_m} m grid over ${g.residential_km2} km² of residential land (${g.estimated ? "estimated from a default density" : "scaled to the known population"}; ${g.cells.length} cells). Densest areas: ${g.cells.slice(0, 6).map((c) => `~${c.pop} at ${c.lat.toFixed(4)},${c.lon.toFixed(4)}`).join("; ")}. Lines must pass through them; coverage_score reports the share of residents within 400 m of a stop.`);
@@ -500,6 +563,11 @@ const summarizeForModel = (d) => {
   for (const p of d.pois.items.slice(0, TOP_POIS_FOR_MODEL)) lines.push(`- ${p.category}: ${p.name} ${p.lat.toFixed(5)},${p.lon.toFixed(5)}`);
   if (d.holidays.length) lines.push(`Public holidays (${d.place.country_code}): ${d.holidays.map((h) => `${h.date} ${h.name}`).join(", ")}`);
   if (d.school_holidays.length) lines.push(`School holidays: ${d.school_holidays.filter((h) => h.nationwide).slice(0, 12).map((h) => `${h.name} ${h.start}–${h.end}`).join("; ")}${d.school_holidays.some((h) => !h.nationwide) ? " (regional periods exist; ask the user for their zone if it matters)" : ""}`);
+  if (d.works?.items?.length) {
+    const c = d.works.counts || {};
+    lines.push(`Works and projects (OpenStreetMap): ${Object.entries(c).map(([k, v]) => `${v} ${k}`).join(", ")}. New developments bring future residents and jobs: serve them; do not route a line on a road under construction unless it opens before the feed starts; plan transfers with proposed transit. Main ones:`);
+    for (const w of d.works.items.slice(0, TOP_WORKS_FOR_MODEL)) lines.push(`- ${w.status} ${w.kind}${w.name ? ` "${w.name}"` : ""}${w.detail ? ` (${w.detail})` : ""}${w.opening_date ? `, opening ${w.opening_date}` : ""} ${w.lat.toFixed(5)},${w.lon.toFixed(5)}`);
+  }
   if (d.warnings.length) lines.push(`Data gaps: ${d.warnings.join("; ")}.`);
   return lines.join("\n");
 };
@@ -565,4 +633,4 @@ const findStops = (d, query, near = null, limit = 8) => {
   return scored.slice(0, limit).map((x) => ({ ...x.s, distance_m: Math.round(haversineMeters(centre.lat, centre.lon, x.s.lat, x.s.lon)) }));
 };
 
-module.exports = { buildTerritory, getCachedTerritory, summarizeForModel, coverageOf, findStops, populationGrid, SOURCES, POI_CATEGORIES, _internals: { OVERPASS_RETRY, overpass, resolvePlace, fetchStops, fetchLines, fetchPois, fetchResidential, fetchHolidays, fetchSchoolHolidays, fetchTimezone, fetchPopulationWikidata, polygonAreaM2, pointInPolygon, _cache } };
+module.exports = { buildTerritory, getCachedTerritory, summarizeForModel, coverageOf, findStops, populationGrid, SOURCES, POI_CATEGORIES, _internals: { OVERPASS_RETRY, overpass, resolvePlace, fetchStops, fetchLines, fetchPois, fetchResidential, fetchWorks, fetchPlaceStatsWikidata, fetchHolidays, fetchSchoolHolidays, fetchTimezone, fetchPopulationWikidata, polygonAreaM2, pointInPolygon, _cache } };

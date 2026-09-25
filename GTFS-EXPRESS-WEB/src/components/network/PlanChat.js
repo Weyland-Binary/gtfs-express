@@ -24,10 +24,15 @@ import AltRouteOutlinedIcon from "@mui/icons-material/AltRouteOutlined";
 import AutoFixHighOutlinedIcon from "@mui/icons-material/AutoFixHighOutlined";
 import VerifiedOutlinedIcon from "@mui/icons-material/VerifiedOutlined";
 import CloudDownloadOutlinedIcon from "@mui/icons-material/CloudDownloadOutlined";
+import PictureAsPdfOutlinedIcon from "@mui/icons-material/PictureAsPdfOutlined";
+import DescriptionOutlinedIcon from "@mui/icons-material/DescriptionOutlined";
+import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
+import CloudUploadOutlinedIcon from "@mui/icons-material/CloudUploadOutlined";
+import CheckRoundedIcon from "@mui/icons-material/CheckRounded";
 import { useLanguage } from "../../contexts/LanguageContext";
 import MarkdownText from "../chat/MarkdownText";
 import GTFSAIIcon from "../chat/GTFSAIIcon";
-import { readBriefFile } from "../../utils/networkStudioApi";
+import { BRIEF_ACCEPT } from "../../utils/networkStudioApi";
 import { RequirementsCard, QualityCard, qualityColor } from "./PlanCards";
 import { SectionHeader, soft } from "./StudioUI";
 
@@ -35,7 +40,90 @@ import { SectionHeader, soft } from "./StudioUI";
 const TEMPLATES = ["smallTown", "school", "city", "seasonal", "existing"];
 const EXAMPLES = ["network.brief.exampleA", "network.brief.exampleB", "network.brief.exampleC"];
 
-const STEP_ICON = { geocode: PlaceOutlinedIcon, spec: RuleOutlinedIcon, geometry: RouteOutlinedIcon, questions: HelpOutlineIcon, territory: PlaceOutlinedIcon, requirements: FactCheckOutlinedIcon, corridors: AltRouteOutlinedIcon, refine: AutoFixHighOutlinedIcon, quality: VerifiedOutlinedIcon, feeds: CloudDownloadOutlinedIcon, import: CloudDownloadOutlinedIcon };
+const STEP_ICON = { geocode: PlaceOutlinedIcon, spec: RuleOutlinedIcon, geometry: RouteOutlinedIcon, questions: HelpOutlineIcon, territory: PlaceOutlinedIcon, requirements: FactCheckOutlinedIcon, corridors: AltRouteOutlinedIcon, refine: AutoFixHighOutlinedIcon, quality: VerifiedOutlinedIcon, feeds: CloudDownloadOutlinedIcon, import: CloudDownloadOutlinedIcon, documents: DescriptionOutlinedIcon };
+
+// The planner's four phases, and what tells us each one has started.
+const PHASES = ["understand", "ground", "design", "evaluate"];
+const PHASE_OF_TOOL = { set_requirements: 0, ask_user: 0, get_territory: 1, suggest_corridors: 1, find_existing_feeds: 1, import_existing_network: 1, find_existing_stops: 2, geocode_stops: 2, set_spec: 2, refine_stops: 2, estimate_routes: 2, evaluate_plan: 3, coverage_score: 3 };
+const PHASE_OF_STEP = { documents: 0, requirements: 0, questions: 0, territory: 1, corridors: 1, feeds: 1, import: 1, geocode: 2, spec: 2, refine: 2, geometry: 2, quality: 3 };
+
+/** Live progress of a planner turn: done, current and upcoming phases. */
+function PhaseTracker({ steps, pendingTool }) {
+  const { t } = useLanguage();
+  const theme = useTheme();
+  const reached = Math.max(-1, ...steps.map((s) => PHASE_OF_STEP[s.kind] ?? -1), pendingTool && PHASE_OF_TOOL[pendingTool] != null ? PHASE_OF_TOOL[pendingTool] : -1);
+  const current = Math.max(0, reached);
+  return (
+    <Box data-testid="plan-phases" sx={{ display: "flex", alignItems: "center", gap: 0.5, mb: 1 }}>
+      {PHASES.map((p, i) => {
+        const done = i < current;
+        const now = i === current;
+        const color = done ? theme.palette.success.main : now ? theme.palette.primary.main : theme.palette.text.disabled;
+        return (
+          <React.Fragment key={p}>
+            {i > 0 && <Box sx={{ flex: 1, minWidth: 8, height: 2, borderRadius: 1, background: i <= current ? alpha(theme.palette.success.main, 0.5) : soft(theme, 2) }} />}
+            <Box data-phase={p} data-state={done ? "done" : now ? "current" : "todo"} sx={{ display: "flex", alignItems: "center", gap: 0.5, flexShrink: 0 }}>
+              <Box sx={{ width: 16, height: 16, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", background: done ? alpha(color, 0.16) : now ? alpha(color, 0.14) : "transparent", border: done || now ? "none" : `1.5px solid ${alpha(color, 0.5)}` }}>
+                {done ? <CheckRoundedIcon sx={{ fontSize: 12, color }} /> : now ? <CircularProgress size={10} thickness={6} sx={{ color }} /> : null}
+              </Box>
+              <Typography component="span" sx={{ fontSize: "0.68rem", fontWeight: now ? 700 : 600, color: now ? "text.primary" : "text.secondary" }}>
+                {t(`network.phase.${p}`)}
+              </Typography>
+            </Box>
+          </React.Fragment>
+        );
+      })}
+    </Box>
+  );
+}
+
+const fmtSize = (bytes) => (bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`);
+
+/** An attached specification document in the composer. */
+function DocumentChip({ doc, onRemove }) {
+  const { t } = useLanguage();
+  const theme = useTheme();
+  const isPdf = doc.kind === "pdf" || /\.pdf$/i.test(doc.name);
+  const Icon = isPdf ? PictureAsPdfOutlinedIcon : DescriptionOutlinedIcon;
+  const failed = doc.status === "error" || doc.status === "expired";
+  const meta = doc.status === "uploading" ? t("network.docs.uploading") : doc.status === "expired" ? t("network.docs.expired") : doc.status === "error" ? doc.error : [doc.pages ? t("network.docs.pages", { count: doc.pages }) : null, doc.size ? fmtSize(doc.size) : null].filter(Boolean).join(" · ");
+  return (
+    <Box data-testid="plan-document" data-status={doc.status} sx={{ display: "flex", alignItems: "center", gap: 0.75, pl: 0.75, pr: 0.25, py: 0.5, borderRadius: "10px", maxWidth: "100%", background: failed ? alpha(theme.palette.error.main, 0.08) : theme.palette.background.paper, boxShadow: failed ? "none" : `0 0 0 1px ${theme.palette.divider}` }}>
+      <Box sx={{ width: 26, height: 26, flexShrink: 0, borderRadius: "7px", display: "flex", alignItems: "center", justifyContent: "center", color: isPdf ? "#D32F2F" : theme.palette.primary.main, background: alpha(isPdf ? "#D32F2F" : theme.palette.primary.main, 0.1) }}>
+        {doc.status === "uploading" ? <CircularProgress size={13} color="inherit" /> : <Icon sx={{ fontSize: 16 }} />}
+      </Box>
+      <Box sx={{ minWidth: 0, flex: 1 }}>
+        <Typography sx={{ fontSize: "0.74rem", fontWeight: 700, lineHeight: 1.25 }} noWrap title={doc.name}>
+          {doc.name}
+        </Typography>
+        <Typography sx={{ fontSize: "0.66rem", lineHeight: 1.25, color: failed ? "error.main" : "text.secondary" }} noWrap title={meta}>
+          {meta}
+        </Typography>
+      </Box>
+      <IconButton size="small" onClick={() => onRemove(doc)} aria-label={t("network.docs.remove")} sx={{ color: "text.secondary", p: 0.5 }}>
+        <CloseRoundedIcon sx={{ fontSize: 15 }} />
+      </IconButton>
+    </Box>
+  );
+}
+
+/** From scratch: one click to have the assistant design for the analysed territory. */
+function ProposeCard({ place, disabled, onPropose }) {
+  const { t } = useLanguage();
+  const theme = useTheme();
+  return (
+    <Box data-testid="plan-propose-card" sx={{ p: 1.5, borderRadius: "12px", background: `linear-gradient(135deg, ${alpha(theme.palette.ai.gradientStart, 0.12)}, ${alpha(theme.palette.ai.gradientEnd, 0.1)})`, display: "flex", flexDirection: "column", gap: 0.75 }}>
+      <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+        <AiAvatar size={26} />
+        <Typography sx={{ fontSize: "0.88rem", fontWeight: 800, lineHeight: 1.25, minWidth: 0 }}>{t("network.propose.title", { place })}</Typography>
+      </Box>
+      <Typography sx={{ fontSize: "0.74rem", color: "text.secondary", lineHeight: 1.5 }}>{t("network.propose.hint")}</Typography>
+      <Button size="small" variant="contained" disableElevation disabled={disabled} onClick={onPropose} endIcon={<AutoAwesomeIcon sx={{ fontSize: "16px !important" }} />} data-testid="plan-propose" sx={{ alignSelf: "flex-start", textTransform: "none", fontWeight: 700, fontSize: "0.78rem", py: 0.5, px: 1.75, borderRadius: 99, color: theme.palette.ai.contrastText, background: `linear-gradient(135deg, ${theme.palette.ai.gradientStart}, ${theme.palette.ai.gradientEnd})`, "&.Mui-disabled": { background: soft(theme, 2), color: "text.disabled" } }}>
+        {t("network.propose.action")}
+      </Button>
+    </Box>
+  );
+}
 
 function AiAvatar({ size = 26 }) {
   const theme = useTheme();
@@ -62,6 +150,10 @@ function StepChip({ step }) {
   if (step.kind === "refine") label = t("network.step.refine", { snapped: step.snapped ?? 0, inserted: step.inserted ?? 0 });
   if (step.kind === "feeds") label = t("network.step.feeds", { count: step.count ?? 0 });
   if (step.kind === "import") label = t("network.step.import", { lines: step.lines ?? 0, stops: step.stops ?? 0 });
+  if (step.kind === "documents") {
+    label = t("network.step.documents", { count: step.count ?? 0 });
+    if (step.missing?.length) color = theme.palette.warning.main;
+  }
   if (step.kind === "quality") {
     label = t("network.step.quality", { score: step.score ?? "–" });
     color = qualityColor(step.score, theme);
@@ -114,12 +206,17 @@ function Questions({ questions, onAnswer, disabled }) {
   );
 }
 
-function EmptyState({ onExample, onTemplate }) {
+function EmptyState({ onExample, onTemplate, propose = null, onPropose = null, canPropose = false }) {
   const { t } = useLanguage();
   const theme = useTheme();
   return (
     <Box>
       <SectionHeader label={t("network.assistant.section")} />
+      {propose && onPropose && (
+        <Box sx={{ mt: 0.75, mb: 1.75 }}>
+          <ProposeCard place={propose.place} disabled={!canPropose} onPropose={onPropose} />
+        </Box>
+      )}
       <Box sx={{ display: "flex", gap: 1.25, alignItems: "flex-start", mt: 0.75 }}>
         <AiAvatar size={30} />
         <Box sx={{ minWidth: 0 }}>
@@ -148,15 +245,17 @@ function EmptyState({ onExample, onTemplate }) {
   );
 }
 
-export default function PlanChat({ turns, streaming, pendingTool, onSend, onStop, canPlan, disabledReason = null, header = null }) {
+export default function PlanChat({ turns, streaming, pendingTool, onSend, onStop, canPlan, disabledReason = null, header = null, documents = [], onAttach = null, onRemoveDocument = null, propose = null }) {
   const { t } = useLanguage();
   const theme = useTheme();
   const [draft, setDraft] = useState("");
-  const [fileError, setFileError] = useState(null);
+  const [dragging, setDragging] = useState(0);
   const fileRef = useRef(null);
   const listRef = useRef(null);
   const inputRef = useRef(null);
   const empty = turns.length === 0;
+  const readyDocs = documents.filter((d) => d.status === "ready");
+  const uploading = documents.some((d) => d.status === "uploading");
 
   // Follow the conversation, not the panel above it.
   useEffect(() => {
@@ -164,12 +263,37 @@ export default function PlanChat({ turns, streaming, pendingTool, onSend, onStop
     if (el && turns.length) el.scrollTop = el.scrollHeight;
   }, [turns, streaming]);
 
+  // A document alone is a brief: the assistant designs what it describes.
+  const canSend = canPlan && !streaming && !uploading && (draft.trim().length >= 3 || readyDocs.length > 0);
   const send = useCallback(() => {
-    const text = draft.trim();
-    if (text.length < 3 || streaming || !canPlan) return;
+    if (!canSend) return;
+    const text = draft.trim() || t("network.docs.defaultBrief");
     onSend(text);
     setDraft("");
-  }, [draft, streaming, canPlan, onSend]);
+  }, [canSend, draft, onSend, t]);
+
+  const attach = (files) => {
+    const list = Array.from(files || []).filter(Boolean);
+    if (list.length && onAttach) onAttach(list);
+  };
+  const dragHandlers = onAttach
+    ? {
+        onDragEnter: (e) => {
+          if (!Array.from(e.dataTransfer?.types || []).includes("Files")) return;
+          e.preventDefault();
+          setDragging((n) => n + 1);
+        },
+        onDragOver: (e) => {
+          if (Array.from(e.dataTransfer?.types || []).includes("Files")) e.preventDefault();
+        },
+        onDragLeave: () => setDragging((n) => Math.max(0, n - 1)),
+        onDrop: (e) => {
+          e.preventDefault();
+          setDragging(0);
+          if (canPlan) attach(e.dataTransfer?.files);
+        },
+      }
+    : {};
 
   const prefill = useCallback((text) => {
     setDraft(text);
@@ -182,23 +306,19 @@ export default function PlanChat({ turns, streaming, pendingTool, onSend, onStop
     }, 0);
   }, []);
 
-  const onFile = async (file) => {
-    if (!file) return;
-    setFileError(null);
-    try {
-      const text = await readBriefFile(file);
-      setDraft((d) => (d ? `${d}\n\n${text}` : text));
-    } catch (err) {
-      setFileError(err.code === "UNSUPPORTED_FILE" ? t("network.brief.unsupported") : err.code === "FILE_TOO_LARGE" ? t("network.brief.tooLarge") : err.message);
-    }
-  };
-
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+    <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, position: "relative" }} {...dragHandlers}>
+      {dragging > 0 && (
+        <Box data-testid="plan-dropzone" sx={{ position: "absolute", inset: 8, zIndex: 5, borderRadius: "14px", border: `2px dashed ${theme.palette.primary.main}`, background: alpha(theme.palette.background.paper, 0.94), display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 0.75, pointerEvents: "none", textAlign: "center", px: 3 }}>
+          <CloudUploadOutlinedIcon sx={{ fontSize: 36, color: "primary.main" }} />
+          <Typography sx={{ fontSize: "0.92rem", fontWeight: 800 }}>{t("network.docs.drop")}</Typography>
+          <Typography sx={{ fontSize: "0.74rem", color: "text.secondary" }}>{t("network.docs.dropHint")}</Typography>
+        </Box>
+      )}
       <Box ref={listRef} sx={{ flex: 1, minHeight: 0, overflowY: "auto" }} data-testid="plan-chat">
         {header}
         <Box sx={{ px: 2, pt: header ? 1.5 : 2, pb: 2, display: "flex", flexDirection: "column", gap: 1.75, borderTop: header ? `1px solid ${theme.palette.divider}` : "none" }}>
-          {empty && <EmptyState onExample={prefill} onTemplate={prefill} />}
+          {empty && <EmptyState onExample={prefill} onTemplate={prefill} propose={propose} canPropose={canPlan && !streaming && !uploading} onPropose={propose ? () => onSend(t("network.propose.brief", { place: propose.place })) : null} />}
           {!empty && <SectionHeader label={t("network.assistant.section")} />}
           {turns.map((turn) =>
             turn.role === "user" ? (
@@ -209,6 +329,7 @@ export default function PlanChat({ turns, streaming, pendingTool, onSend, onStop
               <Box key={turn.id} data-testid="plan-turn-assistant" sx={{ display: "flex", gap: 1, alignItems: "flex-start" }}>
                 <AiAvatar size={24} />
                 <Box sx={{ flex: 1, minWidth: 0 }}>
+                  {turn.status === "streaming" && <PhaseTracker steps={turn.steps || []} pendingTool={pendingTool} />}
                   {turn.steps && turn.steps.length > 0 && (
                     <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5, mb: turn.content || turn.requirements ? 1 : 0 }}>
                       {turn.steps.map((s, i) => (
@@ -252,12 +373,19 @@ export default function PlanChat({ turns, streaming, pendingTool, onSend, onStop
             "&:focus-within": { background: theme.palette.background.paper, borderColor: alpha(theme.palette.primary.main, 0.5), boxShadow: `0 0 0 3px ${alpha(theme.palette.primary.main, 0.1)}` },
           }}
         >
+          {documents.length > 0 && (
+            <Box data-testid="plan-documents" sx={{ display: "grid", gridTemplateColumns: documents.length > 1 ? "1fr 1fr" : "1fr", gap: 0.75, mb: 1 }}>
+              {documents.map((d) => (
+                <DocumentChip key={d.id || d.name} doc={d} onRemove={(doc) => onRemoveDocument && onRemoveDocument(doc)} />
+              ))}
+            </Box>
+          )}
           <InputBase
             multiline
             minRows={empty ? 3 : 1}
             maxRows={10}
             fullWidth
-            placeholder={empty ? t("network.brief.placeholder") : t("network.refinePlaceholder")}
+            placeholder={readyDocs.length && !draft ? t("network.docs.placeholder") : empty ? t("network.brief.placeholder") : t("network.refinePlaceholder")}
             value={draft}
             onChange={(e) => setDraft(e.target.value.slice(0, 60000))}
             onKeyDown={(e) => {
@@ -272,15 +400,26 @@ export default function PlanChat({ turns, streaming, pendingTool, onSend, onStop
             sx={{ fontSize: "0.84rem", lineHeight: 1.5, alignItems: "flex-start" }}
           />
           <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, mt: 0.5 }}>
-            <input ref={fileRef} type="file" accept=".txt,.md,.markdown,.csv,.json,.tsv,text/*" hidden onChange={(e) => onFile(e.target.files?.[0])} />
-            <Tooltip title={t("network.brief.attach")}>
+            <input
+              ref={fileRef}
+              type="file"
+              multiple
+              accept={BRIEF_ACCEPT}
+              hidden
+              data-testid="plan-file"
+              onChange={(e) => {
+                attach(e.target.files);
+                e.target.value = "";
+              }}
+            />
+            <Tooltip title={`${t("network.docs.attach")} — ${t("network.docs.dropHint")}`}>
               <span>
-                <IconButton size="small" onClick={() => fileRef.current?.click()} disabled={!canPlan} aria-label={t("network.brief.attach")} sx={{ ml: -0.75, color: "text.secondary" }}>
+                <IconButton size="small" onClick={() => fileRef.current?.click()} disabled={!canPlan || !onAttach} aria-label={t("network.docs.attach")} data-testid="plan-attach" sx={{ ml: -0.75, color: "text.secondary" }}>
                   <AttachFileRoundedIcon sx={{ fontSize: 18, transform: "rotate(45deg)" }} />
                 </IconButton>
               </span>
             </Tooltip>
-            {fileError && <Typography sx={{ fontSize: "0.7rem", color: "error.main", lineHeight: 1.3, minWidth: 0 }}>{fileError}</Typography>}
+            {!documents.length && <Typography sx={{ fontSize: "0.68rem", color: "text.disabled" }} noWrap>{t("network.docs.hint")}</Typography>}
             <Box sx={{ flex: 1 }} />
             {streaming ? (
               <Button size="small" variant="text" color="inherit" startIcon={<StopRoundedIcon />} onClick={onStop} sx={{ textTransform: "none", fontWeight: 600, py: 0.4, px: 1.25, borderRadius: 99 }}>
@@ -294,7 +433,7 @@ export default function PlanChat({ turns, streaming, pendingTool, onSend, onStop
                     variant="contained"
                     disableElevation
                     endIcon={empty ? <AutoAwesomeIcon sx={{ fontSize: "16px !important" }} /> : <ArrowUpwardRoundedIcon sx={{ fontSize: "16px !important" }} />}
-                    disabled={draft.trim().length < 3 || !canPlan}
+                    disabled={!canSend}
                     onClick={send}
                     data-testid="plan-send"
                     sx={{ textTransform: "none", fontWeight: 700, fontSize: "0.78rem", py: 0.5, px: 1.5, borderRadius: 99, flexShrink: 0, color: theme.palette.ai.contrastText, background: `linear-gradient(135deg, ${theme.palette.ai.gradientStart}, ${theme.palette.ai.gradientEnd})`, "&.Mui-disabled": { background: soft(theme, 2), color: "text.disabled" } }}

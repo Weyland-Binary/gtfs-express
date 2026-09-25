@@ -58,6 +58,7 @@ const NAMED_CALENDARS = {
   weekday: { id: "WKD", days: ["mon", "tue", "wed", "thu", "fri"] },
   weekdays: { id: "WKD", days: ["mon", "tue", "wed", "thu", "fri"] },
   monfri: { id: "WKD", days: ["mon", "tue", "wed", "thu", "fri"] },
+  workdays: { id: "WKD", days: ["mon", "tue", "wed", "thu", "fri"] },
   saturday: { id: "SAT", days: ["sat"] },
   sunday: { id: "SUN", days: ["sun"] },
   weekend: { id: "WKE", days: ["sat", "sun"] },
@@ -241,6 +242,11 @@ const normalizeSpec = (raw) => {
     const ed = str(c.end_date).replace(/-/g, "") || feed.end_date;
     if (DATE_RE.test(sd) && DATE_RE.test(ed) && sd <= ed) calendars.set(id, { id, days, start_date: sd, end_date: ed });
   });
+  // The week follows local practice: spec.weekend (e.g. ["fri", "sat"]) makes
+  // "weekday" the other five days and "weekend" these ones.
+  const weekendDays = parseDays(input.weekend);
+  const weekend = weekendDays && weekendDays.length && weekendDays.length < 7 ? weekendDays : ["sat", "sun"];
+  const localDays = (named) => (named.id === "WKD" ? DAY_KEYS.filter((d) => !weekend.includes(d)) : named.id === "WKE" ? weekend : named.days);
   const resolveCalendar = (raw, path) => {
     if (typeof raw === "string" || raw == null) {
       if (raw && calendars.has(str(raw))) return calendars.get(str(raw));
@@ -250,7 +256,7 @@ const normalizeSpec = (raw) => {
         err("unknown_calendar", path, `Unknown calendar "${raw}" (use weekday, saturday, sunday, weekend, daily, monsat or {days:[…]}).`);
         return null;
       }
-      if (!calendars.has(named.id)) calendars.set(named.id, { id: named.id, days: named.days, start_date: feed.start_date, end_date: feed.end_date });
+      if (!calendars.has(named.id)) calendars.set(named.id, { id: named.id, days: localDays(named), start_date: feed.start_date, end_date: feed.end_date });
       return calendars.get(named.id);
     }
     if (typeof raw !== "object") return null;
@@ -452,7 +458,7 @@ const normalizeSpec = (raw) => {
       }
     } else costPerKm = nonNeg(o.cost_per_km, "operations.cost_per_km");
     operations = {
-      currency: /^[A-Z]{3}$/.test(currency) ? currency : "EUR",
+      currency: /^[A-Z]{3}$/.test(currency) ? currency : undefined,
       cost_per_km: costPerKm,
       cost_per_hour: nonNeg(o.cost_per_hour, "operations.cost_per_hour"),
       layover_min: nonNeg(o.layover_min, "operations.layover_min"),
@@ -479,6 +485,7 @@ const normalizeSpec = (raw) => {
     holidays,
     holiday_service: holidayService,
     transfers,
+    ...(weekend.join() !== "sat,sun" ? { weekend } : {}),
     ...(sync ? { sync } : {}),
     ...(operations ? { operations } : {}),
   };

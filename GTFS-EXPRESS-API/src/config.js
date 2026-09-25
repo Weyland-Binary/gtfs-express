@@ -151,6 +151,10 @@ module.exports = {
   NAGER_URL: process.env.NAGER_URL || "https://date.nager.at",
   OPENHOLIDAYS_URL: process.env.OPENHOLIDAYS_URL || "https://openholidaysapi.org",
   OPEN_METEO_URL: process.env.OPEN_METEO_URL || "https://api.open-meteo.com",
+  // Country context (currency, languages, driving side from Wikidata; region,
+  // income and price level from the World Bank; EUR rates): public, keyless.
+  WORLD_BANK_URL: process.env.WORLD_BANK_URL || "https://api.worldbank.org/v2",
+  EXCHANGE_RATE_URL: process.env.EXCHANGE_RATE_URL || "https://open.er-api.com/v6",
   // The Mobility Database catalog (CSV, public): the existing GTFS feeds of
   // the world, to start a design from the network that already runs.
   MOBILITY_CATALOG_URL: process.env.MOBILITY_CATALOG_URL || "https://storage.googleapis.com/storage/v1/b/mdb-csv/o/sources.csv?alt=media",

@@ -146,6 +146,10 @@ describe("evaluatePlan", () => {
     expect(byId.service.findings.some((x) => x.line === "B" && /runs 4.7 h/.test(x.message))).toBe(true);
     expect(byId.service.findings.some((x) => x.line === "B" && /peak headway 40 min/.test(x.message))).toBe(true);
     expect(byId.service.findings.some((x) => x.line === "A" && /peak headway/.test(x.message))).toBe(false);
+    // Every finding shown to the user carries a code and its values: the studio translates it.
+    expect(byId.service.findings.find((x) => x.line === "B" && x.code === "short_span").params).toMatchObject({ line: "B", hours: 4.7 });
+    expect(byId.service.findings.find((x) => x.line === "B" && /^peak_headway/.test(x.code)).params).toMatchObject({ headway: 40, target: 15 });
+    for (const d of r.dimensions) for (const x of d.findings) if (x.level !== "info") expect(x.code).toMatch(/^[a-z_]+$/);
     // Connectivity: both lines meet at the centre.
     expect(byId.connectivity.score).toBe(100);
     // Plausibility: B at 33 km/h is plausible; A at 15.8 km/h too.

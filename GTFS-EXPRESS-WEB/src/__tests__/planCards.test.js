@@ -17,6 +17,7 @@ vi.mock("../components/edit/BetaGateDialog", () => ({ BETA_CODE_STORAGE_KEY: "be
 
 import PlanChat from "../components/network/PlanChat";
 import NetworkReportDialog from "../components/network/NetworkReportDialog";
+import { findingText } from "../components/network/PlanCards";
 
 const theme = createTheme({ palette: { ai: { main: "#7c4dff", gradientStart: "#7c4dff", gradientEnd: "#00bcd4", contrastText: "#fff" } } });
 const withTheme = (ui) => <ThemeProvider theme={theme}>{ui}</ThemeProvider>;
@@ -99,5 +100,28 @@ describe("NetworkReportDialog", () => {
     expect(onRefine).toHaveBeenCalled();
     fireEvent.click(screen.getByTestId("report-explore"));
     expect(onClose).toHaveBeenCalled();
+  });
+});
+
+describe("findingText — quality findings in the reader's language", () => {
+  const DICT = {
+    "network.finding.detour": "Ligne {line}, sens {dir} : {routed} km pour {straight} km (×{ratio}).",
+    "network.finding.detour.hint": "Réordonnez les arrêts.",
+    "network.finding.unserved_place": "{name} ({category}) n'est pas desservi.",
+    "territory.category.college": "Enseignement supérieur",
+  };
+  const t = (key, params = {}) => Object.entries(params).reduce((acc, [k, v]) => acc.replace(`{${k}}`, String(v)), DICT[key] || key);
+
+  it("translates by code with numbers in the reader's format, and the category label", () => {
+    const x = { level: "major", code: "detour", params: { line: "1", dir: "0", routed: 11.2, straight: 5.3, ratio: 2.1 }, message: "Line 1 direction 0 detours", hint: "Straighten" };
+    expect(findingText(x, t, "fr")).toEqual({ message: "Ligne 1, sens 0 : 11,2 km pour 5,3 km (×2,1).", hint: "Réordonnez les arrêts." });
+    const y = { level: "minor", code: "unserved_place", params: { name: "Agro Campus", category: "college", radius: 400 }, message: "Agro Campus (college) is not served.", hint: "Route a line via Agro Campus." };
+    // No translated hint: the server's hint stays.
+    expect(findingText(y, t, "fr")).toEqual({ message: "Agro Campus (Enseignement supérieur) n'est pas desservi.", hint: "Route a line via Agro Campus." });
+  });
+
+  it("falls back to the server's text for an unknown or missing code", () => {
+    expect(findingText({ code: "new_rule", message: "Something new.", hint: "Do this." }, t, "fr")).toEqual({ message: "Something new.", hint: "Do this." });
+    expect(findingText({ message: "Legacy." }, t, "fr")).toEqual({ message: "Legacy.", hint: undefined });
   });
 });

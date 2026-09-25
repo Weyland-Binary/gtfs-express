@@ -18,6 +18,7 @@ export default function MapLayers({ territory, layers, onToggle }) {
     { key: "stops", label: t("network.layers.stops"), count: territory.existing_stops.length, color: isDark ? "#cbd5e1" : "#475569" },
     { key: "pois", label: t("network.layers.pois"), count: territory.pois.items.length, color: "#F9A825" },
     ...(territory.population_grid?.cells?.length ? [{ key: "population", label: t("network.layers.population"), count: territory.population_grid.total, color: isDark ? "#fbbf24" : "#7c3aed" }] : []),
+    ...(territory.works?.items?.length ? [{ key: "works", label: t("network.layers.works"), count: territory.works.items.length, color: "#EF6C00" }] : []),
   ];
   return (
     <Box data-testid="map-layers" sx={{ position: "absolute", top: 12, right: 12, zIndex: 1000, minWidth: 190, p: 0.5, borderRadius: "12px", background: alpha(theme.palette.background.paper, 0.94), backdropFilter: "blur(8px)", boxShadow: isDark ? "0 8px 24px rgba(0,0,0,0.45)" : "0 8px 24px rgba(15,23,42,0.12)" }}>

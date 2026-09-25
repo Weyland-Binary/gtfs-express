@@ -165,7 +165,7 @@ describe("territory dossier", () => {
       const partial = await territory.buildTerritory("Vendôme", { fetchImpl: down, force: true });
       expect(overpassCalls).toBe(3);
       expect(partial.existing_stops).toEqual([]);
-      expect(partial.warnings).toEqual(["overpass stops: fetch failed", "overpass pois: skipped (Overpass unavailable)", "overpass residential: skipped (Overpass unavailable)", "overpass lines: skipped (Overpass unavailable)"]);
+      expect(partial.warnings).toEqual(["overpass stops: fetch failed", "overpass pois: skipped (Overpass unavailable)", "overpass residential: skipped (Overpass unavailable)", "overpass lines: skipped (Overpass unavailable)", "overpass works: skipped (Overpass unavailable)"]);
       // The rest of the dossier stands.
       expect(partial.timezone).toBe("Europe/Paris");
       expect(partial.holidays.length).toBeGreaterThan(0);

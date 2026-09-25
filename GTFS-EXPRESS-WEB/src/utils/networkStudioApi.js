@@ -71,10 +71,38 @@ export const fetchNetworkReport = async () => {
 };
 
 /** Stream a planner turn; resolves at `done`. Mid-stream errors arrive as `error` events. */
-export async function streamPlan({ brief, spec = null, messages = [], language = "en", near = null, territory = null, requirements = null, signal, onEvent }) {
+/** The file types the planner reads as a specification. */
+export const BRIEF_ACCEPT = ".pdf,.docx,.odt,.txt,.md,.markdown,.csv,.tsv,.json,application/pdf,text/*";
+export const BRIEF_MAX_BYTES = 20 * 1024 * 1024;
+
+/** Upload a specification document (PDF, Word, OpenDocument, text) → { id, name, kind, pages, chars, size, expiresAt }. */
+export const uploadBriefDocument = async (file) => {
+  if (file.size > BRIEF_MAX_BYTES) {
+    const err = new Error("FILE_TOO_LARGE");
+    err.code = "DOCUMENT_TOO_LARGE";
+    throw err;
+  }
+  const form = new FormData();
+  form.append("file", file, file.name);
+  const headers = betaHeaders();
+  delete headers["Content-Type"]; // the browser sets the multipart boundary
+  const res = await fetch(`${API_BASE_URL}/network/documents`, { method: "POST", headers, body: form });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(data.message || data.error || `HTTP ${res.status}`);
+    err.code = data.error || `HTTP_${res.status}`;
+    err.status = res.status;
+    throw err;
+  }
+  return data;
+};
+
+export const deleteBriefDocument = (id) => fetch(`${API_BASE_URL}/network/documents/${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => {});
+
+export async function streamPlan({ brief, spec = null, messages = [], language = "en", near = null, territory = null, requirements = null, documents = [], signal, onEvent }) {
   let response;
   try {
-    response = await fetch(`${API_BASE_URL}/network/plan`, { method: "POST", headers: betaHeaders(), body: JSON.stringify({ brief, spec, messages, language, near, territory, requirements }), signal });
+    response = await fetch(`${API_BASE_URL}/network/plan`, { method: "POST", headers: betaHeaders(), body: JSON.stringify({ brief, spec, messages, language, near, territory, requirements, documents }), signal });
   } catch (err) {
     const e = new Error(err.name === "AbortError" ? "aborted" : err.message || "Network error");
     e.code = err.name === "AbortError" ? "ABORTED" : "NETWORK_ERROR";

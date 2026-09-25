@@ -53,15 +53,19 @@ const daysByWeekday = (start, end) => {
   return out;
 };
 
-const estimateOperations = (spec, geometry = null, { layoverMin = null } = {}) => {
+const estimateOperations = (spec, geometry = null, { layoverMin = null, country = null } = {}) => {
   const ops = spec.operations || {};
   const layover = Number.isFinite(layoverMin) ? layoverMin : Number.isFinite(ops.layover_min) ? ops.layover_min : DEFAULT_LAYOVER_MIN;
-  const currency = ops.currency || "EUR";
+  // Without figures from the brief, costs follow the country: EUR costs at
+  // French prices × the local price level, converted to the local currency.
+  const local = !ops.currency && country && country.currency && Number.isFinite(country.cost_factor) ? country : null;
+  const currency = ops.currency || (local ? local.currency.code : "EUR");
   const costPerHour = Number.isFinite(ops.cost_per_hour) ? ops.cost_per_hour : 0;
   const costPerKm = (mode) => {
     if (typeof ops.cost_per_km === "number") return ops.cost_per_km;
     if (ops.cost_per_km && typeof ops.cost_per_km === "object" && Number.isFinite(ops.cost_per_km[mode])) return ops.cost_per_km[mode];
-    return DEFAULT_COST_PER_KM[mode] ?? DEFAULT_COST_PER_KM.bus;
+    const base = DEFAULT_COST_PER_KM[mode] ?? DEFAULT_COST_PER_KM.bus;
+    return local ? Math.round(base * local.cost_factor * 100) / 100 : base;
   };
   const byId = new Map((spec.stops || []).map((s) => [s.id, s]));
   const calendars = new Map((spec.calendars || []).map((c) => [c.id, c]));
@@ -176,7 +180,7 @@ const estimateOperations = (spec, geometry = null, { layoverMin = null } = {}) =
   if (Number.isFinite(ops.max_cost_year)) limits.max_cost_year = ops.max_cost_year;
   return {
     currency,
-    assumptions: { layover_min: layover, cost_per_hour: costPerHour, cost_per_km_default: DEFAULT_COST_PER_KM, no_interlining: true },
+    assumptions: { layover_min: layover, cost_per_hour: costPerHour, cost_per_km_default: DEFAULT_COST_PER_KM, no_interlining: true, cost_basis: ops.cost_per_km !== undefined ? "brief" : local ? `country:${local.code}` : "eur_france", cost_factor: local ? local.cost_factor : null },
     per_line: perLine,
     fleet_total: fleet,
     veh_km_year: Math.round(kmYear),

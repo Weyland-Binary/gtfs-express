@@ -26,6 +26,10 @@ import GroupsOutlinedIcon from "@mui/icons-material/GroupsOutlined";
 import RouteOutlinedIcon from "@mui/icons-material/RouteOutlined";
 import AddLocationAltOutlinedIcon from "@mui/icons-material/AddLocationAltOutlined";
 import AutoFixHighOutlinedIcon from "@mui/icons-material/AutoFixHighOutlined";
+import ConstructionOutlinedIcon from "@mui/icons-material/ConstructionOutlined";
+import ApartmentOutlinedIcon from "@mui/icons-material/ApartmentOutlined";
+import TramOutlinedIcon from "@mui/icons-material/TramOutlined";
+import AddRoadOutlinedIcon from "@mui/icons-material/AddRoadOutlined";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { fetchTerritory } from "../../utils/networkStudioApi";
 import ExistingFeeds from "./ExistingFeeds";
@@ -33,6 +37,27 @@ import { Meter, QuietButton, SectionHeader, Stat, compactNumber, soft } from "./
 
 export const CATEGORY_ICON = { school: SchoolOutlinedIcon, college: SchoolOutlinedIcon, hospital: LocalHospitalOutlinedIcon, civic: AccountBalanceOutlinedIcon, market: StorefrontOutlinedIcon, station: TrainOutlinedIcon, leisure: StadiumOutlinedIcon, work: FactoryOutlinedIcon };
 export const CATEGORY_COLOR = { school: "#F9A825", college: "#F57F17", hospital: "#D32F2F", civic: "#5E35B1", market: "#00897B", station: "#1E88E5", leisure: "#43A047", work: "#6D4C41" };
+export const WORK_COLOR = "#EF6C00";
+export const WORK_ICON = { development: ApartmentOutlinedIcon, transit: TramOutlinedIcon, rail: TrainOutlinedIcon, road: AddRoadOutlinedIcon, site: ConstructionOutlinedIcon };
+
+// Localised short weekday name for "mon" … "sun" (1 January 2024 was a Monday).
+const DAY_INDEX = { mon: 0, tue: 1, wed: 2, thu: 3, fri: 4, sat: 5, sun: 6 };
+const dayName = (d, locale) => {
+  try {
+    return new Intl.DateTimeFormat(locale, { weekday: "short", timeZone: "UTC" }).format(new Date(Date.UTC(2024, 0, 1 + (DAY_INDEX[d] ?? 0))));
+  } catch {
+    return d;
+  }
+};
+
+// Language name in the reader's language ("fr" → "français"), the code when unsupported.
+const languageName = (code, locale) => {
+  try {
+    return new Intl.DisplayNames([locale], { type: "language" }).of(code) || code;
+  } catch {
+    return code;
+  }
+};
 
 function Sources({ sources }) {
   const { t } = useLanguage();
@@ -91,7 +116,10 @@ export default function TerritoryPanel({ territory, onTerritory, coverage, onUse
   const cats = d ? Object.entries(d.pois?.categories || {}).sort((a, b) => b[1] - a[1]) : [];
   const grid = d?.population_grid?.cells?.length ? d.population_grid : null;
   const hasNamedStops = Boolean(d && d.existing_stops.some((s) => s.name));
-  const meta = d ? [d.timezone, d.population ? t("territory.population", { count: compactNumber(d.population.value, language) }) : null, d.elevation_m != null ? `${Math.round(d.elevation_m)} m` : null].filter(Boolean).join(" · ") : "";
+  const meta = d ? [d.timezone, d.population ? t("territory.population", { count: compactNumber(d.population.value, language) }) : null, d.stats?.density_per_km2 ? t("territory.density", { count: compactNumber(d.stats.density_per_km2, language) }) : null, d.elevation_m != null ? `${Math.round(d.elevation_m)} m` : null].filter(Boolean).join(" · ") : "";
+  const c = d?.country;
+  const countryLine = c ? [c.currency ? `${c.currency.code} ${c.currency.symbol && c.currency.symbol !== c.currency.code ? `(${c.currency.symbol})` : ""}`.trim() : null, c.weekend?.length ? t("territory.weekend", { days: c.weekend.map((x) => dayName(x, language)).join("–") }) : null, c.languages?.length ? c.languages.slice(0, 3).map((l) => languageName(l, language)).join(", ") : null, c.driving_side ? t(`territory.drives.${c.driving_side}`) : null].filter(Boolean).join(" · ") : "";
+  const works = d?.works?.items?.length ? d.works : null;
 
   return (
     <Box data-testid="territory-panel" sx={{ px: 2, pt: 1.5, pb: 1.75 }}>
@@ -172,6 +200,13 @@ export default function TerritoryPanel({ territory, onTerritory, coverage, onUse
                 <Sources sources={d.sources} />
               </Box>
               {meta && <Typography sx={{ fontSize: "0.74rem", color: "text.secondary", mt: 0.25 }}>{meta}</Typography>}
+              {countryLine && (
+                <Tooltip title={c.gdp_per_capita_usd ? t("territory.countryHint", { gdp: compactNumber(c.gdp_per_capita_usd, language), urban: c.urban_pct ?? "—" }) : ""}>
+                  <Typography data-testid="territory-country" sx={{ fontSize: "0.72rem", color: "text.secondary", mt: 0.25 }}>
+                    {countryLine}
+                  </Typography>
+                </Tooltip>
+              )}
             </Box>
 
             {/* Key figures */}
@@ -196,6 +231,28 @@ export default function TerritoryPanel({ territory, onTerritory, coverage, onUse
                     <Tooltip key={c} title={t(`territory.category.${c}`)}>
                       <Box aria-label={label} sx={{ display: "inline-flex", alignItems: "center", gap: 0.4, fontSize: "0.74rem", color: "text.secondary", fontVariantNumeric: "tabular-nums" }}>
                         <Icon sx={{ fontSize: 15, color: CATEGORY_COLOR[c] || "text.secondary" }} />
+                        {n}
+                      </Box>
+                    </Tooltip>
+                  );
+                })}
+              </Box>
+            )}
+
+            {/* Works and projects: where the territory is changing */}
+            {works && (
+              <Box data-testid="territory-works" sx={{ display: "flex", alignItems: "center", flexWrap: "wrap", columnGap: 1.5, rowGap: 0.5 }}>
+                <Typography sx={{ fontSize: "0.74rem", fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 0.5 }}>
+                  <ConstructionOutlinedIcon sx={{ fontSize: 15, color: WORK_COLOR }} />
+                  {t("territory.works", { count: works.items.length })}
+                </Typography>
+                {Object.entries(works.counts || {}).map(([k, n]) => {
+                  const Icon = WORK_ICON[k] || ConstructionOutlinedIcon;
+                  const top = works.items.filter((w) => w.kind === k && w.name).slice(0, 4).map((w) => w.name);
+                  return (
+                    <Tooltip key={k} title={`${t(`territory.work.${k}`)}${top.length ? ` — ${top.join(", ")}` : ""}`}>
+                      <Box aria-label={`${t(`territory.work.${k}`)} ${n}`} sx={{ display: "inline-flex", alignItems: "center", gap: 0.4, fontSize: "0.74rem", color: "text.secondary", fontVariantNumeric: "tabular-nums" }}>
+                        <Icon sx={{ fontSize: 15, color: WORK_COLOR }} />
                         {n}
                       </Box>
                     </Tooltip>

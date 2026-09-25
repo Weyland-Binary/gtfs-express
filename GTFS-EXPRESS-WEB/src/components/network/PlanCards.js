@@ -36,15 +36,40 @@ export const fmtMoney = (v, currency = "EUR") => {
   return `${s} ${currency}`;
 };
 
+/**
+ * A quality finding in the reader's language: its code picks the translation
+ * (numbers in the reader's format), the server's English text is the fallback.
+ */
+export const findingText = (x, t, language) => {
+  const key = x.code ? `network.finding.${x.code}` : null;
+  const message = key ? t(key) : key;
+  if (!key || message === key) return { message: x.message, hint: x.hint };
+  let nf = null;
+  try {
+    nf = new Intl.NumberFormat(language, { maximumFractionDigits: 2 });
+  } catch {
+    nf = null;
+  }
+  const params = {};
+  for (const [k, v] of Object.entries(x.params || {})) params[k] = typeof v === "number" && nf ? nf.format(v) : String(v);
+  if (x.params?.category) {
+    const label = t(`territory.category.${x.params.category}`);
+    if (label !== `territory.category.${x.params.category}`) params.category = label;
+  }
+  const hint = t(`${key}.hint`, params);
+  return { message: t(key, params), hint: hint === `${key}.hint` ? x.hint : hint };
+};
+
 const CONFIDENCE_COLOR = { high: "success", medium: "warning", low: "error" };
 const LEVEL_ICON = { major: ErrorOutlineIcon, minor: WarningAmberIcon, info: InfoOutlinedIcon };
 const LEVEL_COLOR = { major: "error.main", minor: "warning.dark", info: "text.secondary" };
 
+// Label above its content: the side panel is narrow and labels are long in some languages.
 function Row({ label, children }) {
   return (
-    <Box sx={{ display: "flex", gap: 1, alignItems: "flex-start", fontSize: "0.76rem", lineHeight: 1.45 }}>
-      <Typography sx={{ fontSize: "0.7rem", fontWeight: 700, color: "text.secondary", minWidth: 78, pt: 0.1, textTransform: "uppercase", letterSpacing: 0.3 }}>{label}</Typography>
-      <Box sx={{ flex: 1, minWidth: 0 }}>{children}</Box>
+    <Box sx={{ fontSize: "0.76rem", lineHeight: 1.45, minWidth: 0 }}>
+      <Typography sx={{ fontSize: "0.64rem", fontWeight: 700, color: "text.secondary", textTransform: "uppercase", letterSpacing: 0.4, mb: 0.25 }}>{label}</Typography>
+      <Box sx={{ minWidth: 0, overflowWrap: "anywhere" }}>{children}</Box>
     </Box>
   );
 }
@@ -75,7 +100,7 @@ export function RequirementsCard({ requirements, onCorrect = null }) {
         <Row label={t("network.req.objectives")}>
           <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.4 }}>
             {r.objectives.map((o, i) => (
-              <Chip key={i} size="small" label={o} sx={{ height: 20, fontSize: "0.66rem" }} />
+              <Chip key={i} size="small" label={o} sx={{ height: "auto", minHeight: 20, py: 0.2, fontSize: "0.66rem", maxWidth: "100%", "& .MuiChip-label": { whiteSpace: "normal", lineHeight: 1.35 } }} />
             ))}
           </Box>
         </Row>
@@ -102,7 +127,7 @@ export function RequirementsCard({ requirements, onCorrect = null }) {
           <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.4 }}>
             {r.assumptions.map((a, i) => (
               <Tooltip key={i} title={`${t(`network.req.confidence.${a.confidence || "medium"}`)}${a.reason ? ` — ${a.reason}` : ""}`}>
-                <Chip size="small" label={`${a.topic}: ${a.value}`} onClick={onCorrect ? () => onCorrect(t("network.req.correctPrefill", { topic: a.topic, value: a.value })) : undefined} data-testid="plan-assumption" sx={{ height: 22, fontSize: "0.68rem", maxWidth: "100%", background: theme.palette.background.paper, "& .MuiChip-label": { display: "flex", alignItems: "center", gap: 0.6 }, "&::before": { content: '""', width: 6, height: 6, borderRadius: "50%", ml: 1, flexShrink: 0, background: theme.palette[CONFIDENCE_COLOR[a.confidence] || "info"].main } }} />
+                <Chip size="small" label={`${a.topic}: ${a.value}`} onClick={onCorrect ? () => onCorrect(t("network.req.correctPrefill", { topic: a.topic, value: a.value })) : undefined} data-testid="plan-assumption" sx={{ height: "auto", minHeight: 22, py: 0.25, fontSize: "0.68rem", maxWidth: "100%", background: theme.palette.background.paper, "& .MuiChip-label": { display: "flex", alignItems: "center", gap: 0.6, whiteSpace: "normal", lineHeight: 1.35 }, "&::before": { content: '""', width: 6, height: 6, borderRadius: "50%", ml: 1, flexShrink: 0, background: theme.palette[CONFIDENCE_COLOR[a.confidence] || "info"].main } }} />
               </Tooltip>
             ))}
           </Box>
@@ -139,7 +164,7 @@ function ScoreRing({ score, grade, size = 54 }) {
 }
 
 export function QualityCard({ quality, dense = false }) {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const theme = useTheme();
   const q = quality;
   if (!q) return null;
@@ -208,12 +233,13 @@ export function QualityCard({ quality, dense = false }) {
         <Box sx={{ display: "flex", flexDirection: "column", gap: 0.35 }}>
           {findings.map((x, i) => {
             const Icon = LEVEL_ICON[x.level] || InfoOutlinedIcon;
+            const text = findingText(x, t, language);
             return (
               <Box key={i} sx={{ display: "flex", alignItems: "flex-start", gap: 0.5, fontSize: "0.72rem", lineHeight: 1.4, color: LEVEL_COLOR[x.level] }} data-testid="quality-finding">
                 <Icon sx={{ fontSize: 13, mt: 0.25, flexShrink: 0 }} />
                 <span>
-                  {x.message}
-                  {x.hint && !dense ? <span style={{ color: theme.palette.text.secondary }}>{` ${x.hint}`}</span> : null}
+                  {text.message}
+                  {text.hint && !dense ? <span style={{ color: theme.palette.text.secondary }}>{` ${text.hint}`}</span> : null}
                 </span>
               </Box>
             );

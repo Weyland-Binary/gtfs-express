@@ -43,7 +43,9 @@ const stopIcon = (color, selected) =>
 
 const POI_COLOR = { school: "#F9A825", college: "#F57F17", hospital: "#D32F2F", civic: "#5E35B1", market: "#00897B", station: "#1E88E5", leisure: "#43A047", work: "#6D4C41" };
 
-export default function NetworkMap({ stops = [], lines = [], geometry = [], existingStops = [], pois = [], corridors = [], population = null, focusBbox = null, selectedStopId = null, placingStopId = null, onSelectStop = null, onMoveStop = null, onPlaceStop = null, onPickExistingStop = null, fitEpoch = 0, height = "100%" }) {
+const WORK_COLORS = { development: "#EF6C00", transit: "#8E24AA", rail: "#6D4C41", road: "#F9A825", site: "#EF6C00" };
+
+export default function NetworkMap({ stops = [], lines = [], geometry = [], existingStops = [], pois = [], corridors = [], works = [], population = null, focusBbox = null, selectedStopId = null, placingStopId = null, onSelectStop = null, onMoveStop = null, onPlaceStop = null, onPickExistingStop = null, fitEpoch = 0, height = "100%" }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const [basemap] = useBasemap();
@@ -87,6 +89,11 @@ export default function NetworkMap({ stops = [], lines = [], geometry = [], exis
         {pois.map((p) => (
           <CircleMarker key={p.id} center={[p.lat, p.lon]} radius={3 + Math.min(3, p.weight || 1)} pathOptions={{ color: POI_COLOR[p.category] || "#888", fillColor: POI_COLOR[p.category] || "#888", fillOpacity: 0.55, weight: 1 }}>
             <LeafletTooltip direction="top" offset={[0, -4]}>{`${p.name}`}</LeafletTooltip>
+          </CircleMarker>
+        ))}
+        {works.map((w) => (
+          <CircleMarker key={w.id} center={[w.lat, w.lon]} radius={w.kind === "development" ? 8 : 6} pathOptions={{ color: WORK_COLORS[w.kind] || WORK_COLORS.site, fillColor: WORK_COLORS[w.kind] || WORK_COLORS.site, fillOpacity: 0.18, weight: 2, dashArray: w.status === "proposed" ? "3 3" : null }}>
+            <LeafletTooltip direction="top" offset={[0, -6]}>{[w.name || w.detail || w.kind, w.detail && w.name ? w.detail : null, w.opening_date].filter(Boolean).join(" · ")}</LeafletTooltip>
           </CircleMarker>
         ))}
         {existingStops.map((s) => (

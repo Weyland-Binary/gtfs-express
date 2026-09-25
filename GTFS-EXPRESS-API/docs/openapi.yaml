@@ -1074,6 +1074,46 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "503":
           $ref: "#/components/responses/BadRequest"
+  /gtfs/network/documents:
+    post:
+      tags:
+        - Network Studio
+      summary: "Upload a specification document for the planner (PDF read natively; Word .docx and OpenDocument .odt reduced to text; text, Markdown, CSV, JSON). Kept two hours; the plan request references it by id."
+      security: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "201":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "413":
+          $ref: "#/components/responses/BadRequest"
+        "415":
+          $ref: "#/components/responses/BadRequest"
+  /gtfs/network/documents/{id}:
+    delete:
+      tags:
+        - Network Studio
+      summary: Forget an uploaded specification document.
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
   /gtfs/network/plan:
     post:
       tags:
