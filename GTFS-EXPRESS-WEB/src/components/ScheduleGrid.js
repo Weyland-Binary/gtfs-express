@@ -566,22 +566,19 @@ const ScheduleGrid = ({
         iconComponent = <DirectionsBusIcon className="schedule-icon" />;
       }
     }
-    // Dwell: show the departure next to the arrival when they differ so a
-    // 08:15 › 08:17 stop is readable at a glance instead of hidden behind
-    // the popover.
+    // One time per cell keeps the columns aligned; a dwell (departure later
+    // than arrival) stays readable on hover and in the stop-time popover.
     const departure = timeInfo.departure_time;
     const hasDwell =
       Boolean(arrival_time) && Boolean(departure) && departure !== arrival_time;
     return (
-      <div className="schedule-cell">
+      <div
+        className="schedule-cell"
+        title={hasDwell ? `${formatTime(arrival_time, showSeconds)} → ${formatTime(departure, showSeconds)}` : undefined}
+      >
         <span className="schedule-time">
           {formatTime(arrival_time || departure, showSeconds)}
         </span>
-        {hasDwell && (
-          <span className="schedule-time schedule-time-departure">
-            ›{formatTime(departure, showSeconds)}
-          </span>
-        )}
         {showIcon && iconComponent}
       </div>
     );
