@@ -82,12 +82,15 @@ const integrityOf = (db, model = null) => {
  * Run the plan on a sandbox and describe the result. `opts.validate`
  * (async function(db) → report) runs the canonical validator on both sides.
  */
-const previewPlan = async (db, plan, { sessionId = null, dataVersion = null, validate = null, territory = null, tables = null } = {}) => {
+const previewPlan = async (db, plan, { sessionId = null, dataVersion = null, validate = null, territory = null, tables = null, router = null } = {}) => {
   prune();
   const ops = (Array.isArray(plan?.operations) ? plan.operations : []).slice(0, MAX_OPERATIONS);
   const weekend = Array.isArray(plan?.weekend) && plan.weekend.length ? plan.weekend : ["sat", "sun"];
   const before = buildFeedModel(db, { weekend });
   const sandbox = sandboxOf(db);
+  // Facts from outside (road geometry) are gathered by resolve(), which may
+  // be async; apply() stays synchronous and deterministic.
+  const road = router || require("../network/roadRouter").createRouter({ mode: "straight" });
   let model = before;
   const steps = [];
   const touched = new Set();
@@ -100,7 +103,7 @@ const previewPlan = async (db, plan, { sessionId = null, dataVersion = null, val
     }
     let resolved;
     try {
-      resolved = def.resolve(model, op.params || {}, { db: sandbox });
+      resolved = await def.resolve(model, op.params || {}, { db: sandbox, router: road, weekend });
     } catch (err) {
       steps.push({ id, type: def.type, status: "failed", ambiguities: [], summary: null, warnings: [], error: err.message });
       continue;

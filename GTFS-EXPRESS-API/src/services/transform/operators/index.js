@@ -11,12 +11,20 @@
  *     params: [{ name, type, required, description, enum? }],  // what an instruction must say
  *     example: { … },                    // a valid params object
  *     resolve(model, params, ctx) → { value, ambiguities: [{ param, code, message, options? }], warnings: [] }
- *     apply(db, value, ctx) → { summary, warnings?, noop?, tables? }
+ *                                        (may be async; ctx = { db, router, weekend })
+ *     apply(db, value, ctx) → { summary, warnings?, noop?, tables? }   (synchronous; ctx = { model, weekend })
  *   }
  *
  * resolve() turns words into entities of the feed and NEVER guesses: a
  * missing or ambiguous parameter is an ambiguity (the step is blocked and
- * the user answers). apply() is deterministic on the sandbox it receives.
+ * the user answers). It also gathers the facts from outside the feed the
+ * change needs (road geometry through ctx.router). apply() is
+ * deterministic on the sandbox it receives, inside one transaction.
+ *
+ * The building blocks: resolve.js (words → entities), gtfsOps.js (services,
+ * trips, stop_times, stops), patternOps.js (a new stop sequence with true
+ * times and shapes), runtime.js (running times from the feed), geometry.js
+ * (shapes), feedModel.js (the feed as read).
  */
 
 "use strict";

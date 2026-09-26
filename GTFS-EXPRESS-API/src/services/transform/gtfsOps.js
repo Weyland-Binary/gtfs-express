@@ -16,6 +16,11 @@
  *   tripsIn(model, filter)                  trips of a route/direction running on
  *                                           given days, departing in a window
  *   uniqueId(db, table, column, base)       an id not yet taken
+ *   stopTimesOf(db, tripId)                 a trip's stop_times rows, in order
+ *   rewriteTrip(db, tripId, rows)           a trip's new stop sequence (times in
+ *                                           seconds or HH:MM:SS, other columns kept)
+ *   createStop(db, { name, lat, lon, … })   a new stop with a readable unique id
+ *   newShapeId(db, base)                    a shape id not yet taken
  */
 
 "use strict";
@@ -181,4 +186,85 @@ const tripsIn = (model, { routeId, direction = "both", dows = null, from = 0, to
   return out.sort((a, b) => a.first - b.first);
 };
 
-module.exports = { uniqueId, serviceDows, restrictService, cloneTrip, deleteTrips, dropUnusedServices, isolateDays, tripsIn, shiftTime, DOW };
+const stopTimesOf = (db, tripId) => db.prepare("SELECT * FROM stop_times WHERE trip_id = ? ORDER BY CAST(stop_sequence AS INTEGER)").all(tripId);
+
+const asTime = (v) => (v == null || v === "" ? null : typeof v === "number" ? secToTime(v) : String(v));
+
+/**
+ * Replace the stop_times of a trip by `rows`, in order. Each row is
+ * { stop_id, arr?, dep? (seconds), arrival_time?, departure_time?, ...any
+ * other stop_times column }. Kept rows keep their stop_sequence when the
+ * result stays increasing (fewer changed rows, stable references);
+ * otherwise the trip is renumbered 1..n. Times must not decrease.
+ */
+const rewriteTrip = (db, tripId, rows) => {
+  if (!rows || rows.length < 2) throw new Error(`trip ${tripId} would have fewer than two stops`);
+  const cols = stColumns(db);
+  const out = rows.map((r) => {
+    const o = {};
+    for (const c of cols) if (r[c] !== undefined) o[c] = r[c];
+    o.trip_id = tripId;
+    o.stop_id = r.stop_id;
+    if (r.arr !== undefined) o.arrival_time = asTime(r.arr);
+    if (r.dep !== undefined) o.departure_time = asTime(r.dep);
+    return o;
+  });
+  // Sequences: keep the original ones when possible, fill new rows in the gaps.
+  const seq = out.map((o) => (o.stop_sequence == null || o.stop_sequence === "" ? null : Number(o.stop_sequence)));
+  let ok = true;
+  let prev = 0;
+  for (let i = 0; i < seq.length && ok; i++) {
+    if (seq[i] == null) {
+      let j = i + 1;
+      while (j < seq.length && seq[j] == null) j += 1;
+      const next = j < seq.length ? seq[j] : prev + (j - i) + 1;
+      const room = next - prev - 1;
+      if (room < j - i) ok = false;
+      else for (let k = i; k < j; k++) seq[k] = prev + Math.floor(((k - i + 1) * (room + 1)) / (j - i + 1));
+      i = j - 1;
+      if (ok) prev = seq[j - 1];
+      continue;
+    }
+    if (seq[i] <= prev && i > 0) ok = false;
+    prev = seq[i];
+  }
+  const finalSeq = ok ? seq : out.map((_, i) => i + 1);
+  // Times must not go backwards.
+  let last = null;
+  for (const o of out) {
+    for (const k of ["arrival_time", "departure_time"]) {
+      const v = o[k] == null ? null : fm.timeToSec(o[k]);
+      if (v == null) continue;
+      if (last != null && v < last) throw new Error(`trip ${tripId}: times go backwards at ${o.stop_id}`);
+      last = v;
+    }
+  }
+  db.prepare("DELETE FROM stop_times WHERE trip_id = ?").run(tripId);
+  const insCols = [...new Set(["trip_id", "stop_id", "stop_sequence", "arrival_time", "departure_time", ...out.flatMap((o) => Object.keys(o))])].filter((c) => cols.includes(c));
+  const ins = db.prepare(`INSERT INTO stop_times (${insCols.join(", ")}) VALUES (${insCols.map(() => "?").join(", ")})`);
+  out.forEach((o, i) => ins.run(insCols.map((c) => (c === "stop_sequence" ? finalSeq[i] : o[c] === undefined ? null : o[c]))));
+  return { renumbered: !ok };
+};
+
+const slug = (v) =>
+  String(v || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 40);
+
+/** A new stop (location_type 0). Returns its id. */
+const createStop = (db, { id = null, name, lat, lon, code = null, parent_station = null, wheelchair_boarding = null, platform_code = null, zone_id = null } = {}) => {
+  if (!name || !Number.isFinite(Number(lat)) || !Number.isFinite(Number(lon))) throw new Error("a new stop needs a name and coordinates");
+  const sid = id && !db.prepare("SELECT 1 FROM stops WHERE stop_id = ?").get(id) ? id : uniqueId(db, "stops", "stop_id", `NEW_${slug(name) || "STOP"}`);
+  const row = { stop_id: sid, stop_name: name, stop_lat: Math.round(Number(lat) * 1e6) / 1e6, stop_lon: Math.round(Number(lon) * 1e6) / 1e6, location_type: 0, stop_code: code, parent_station, wheelchair_boarding, platform_code, zone_id };
+  const cols = db.prepare("PRAGMA table_info(stops)").all().map((c) => c.name).filter((c) => row[c] !== undefined && row[c] !== null);
+  db.prepare(`INSERT INTO stops (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`).run(cols.map((c) => row[c]));
+  return sid;
+};
+
+const newShapeId = (db, base) => uniqueId(db, "shapes", "shape_id", base);
+
+module.exports = { uniqueId, serviceDows, restrictService, cloneTrip, deleteTrips, dropUnusedServices, isolateDays, tripsIn, shiftTime, stopTimesOf, rewriteTrip, createStop, newShapeId, slug, DOW };

@@ -75,7 +75,7 @@ const previewPlanHandler = async (req, res) => {
   try {
     const cc = require("../sessionCountry").sessionCountryCode(ctx.sessionId);
     const started = Date.now();
-    const preview = await engine.previewPlan(ctx.db, plan, { sessionId: ctx.sessionId, dataVersion: getDataVersion(ctx.db), validate: req.body?.validate ? (db) => validateDb(db, cc) : null });
+    const preview = await engine.previewPlan(ctx.db, plan, { sessionId: ctx.sessionId, dataVersion: getDataVersion(ctx.db), validate: req.body?.validate ? (db) => validateDb(db, cc) : null, router: require("../network/roadRouter").createRouter() });
     recordEvent("transform.preview", { ...extractReqMeta(req), operations: plan.operations.length, blocked: preview.blocked, applied: preview.steps.filter((s) => s.status === "applied").length, durationMs: Date.now() - started });
     res.json(preview);
   } catch (err) {

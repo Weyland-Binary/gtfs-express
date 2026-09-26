@@ -216,5 +216,6 @@ module.exports = {
   sanitizeShapeDistances,
   pointToSegmentDistance,
   pointToPolylineDistance,
+  projectPointOntoSegment,
   projectPointOntoPolyline,
 };
