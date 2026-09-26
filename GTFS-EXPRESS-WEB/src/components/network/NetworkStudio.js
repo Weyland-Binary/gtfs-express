@@ -36,7 +36,7 @@ import StudioWelcome from "./StudioWelcome";
 import TerritoryPanel from "./TerritoryPanel";
 import MapLayers from "./MapLayers";
 import { soft } from "./StudioUI";
-import { QualityBadge, QualityCard, fmtMoney } from "./PlanCards";
+import { QualityBadge, QualityCard, fmtMoney, readinessLines } from "./PlanCards";
 import NetworkMap from "./NetworkMap";
 import PlanChat from "./PlanChat";
 import { LinesEditor, StopsEditor, JsonEditor } from "./SpecEditors";
@@ -109,6 +109,8 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
   const [corridors, setCorridors] = useState([]);
   const [autoProject, setAutoProject] = useState(readAutoProject);
   const [ready, setReady] = useState(false);
+  // The planner's verdict on its last turn: clean (nothing major left) and the reasons why not.
+  const [readiness, setReadiness] = useState({ clean: false, reasons: [] });
   const [refining, setRefining] = useState(false);
   const [notice, setNotice] = useState(null);
   const coverageTimer = useRef(null);
@@ -247,6 +249,9 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
   const updateSpec = useCallback((next) => {
     setSpec(next);
     setGeometryStale(true);
+    // The planner's verdict described its own plan, not the user's edit.
+    setReady(false);
+    setReadiness({ clean: false, reasons: [] });
   }, []);
 
   const useExistingStops = useCallback(
@@ -279,6 +284,7 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
       const history = turns.filter((x) => x.content).map((x) => ({ role: x.role, content: x.content }));
       const hasSpec = (spec.lines || []).length > 0;
       setReady(false);
+      setReadiness({ clean: false, reasons: [] });
       setCorridors([]);
       try {
         await streamPlan({
@@ -348,10 +354,12 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
                 break;
               case "done":
                 patch((x) => ({ status: x.status === "error" ? "error" : "complete", ...(data.reason === "empty" && !x.error ? { error: t("network.plan.empty") } : {}) }));
+                setReadiness({ clean: Boolean(data.clean), reasons: data.not_ready_reasons || [] });
                 if (data.ready) {
                   setReady(true);
-                  // The plan is complete: project it into the application (exploration mode).
-                  if (readAutoProject() && projectRef.current) setTimeout(() => projectRef.current({ auto: true }), 0);
+                  // Auto-projection only for a clean plan the turn actually changed: a plan
+                  // over budget, with a major finding, or merely discussed is never built unasked.
+                  if (data.clean && data.specChanged !== false && readAutoProject() && projectRef.current) setTimeout(() => projectRef.current({ auto: true }), 0);
                 }
                 break;
               default:
@@ -599,12 +607,39 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
           {/* Footer: estimate, issues, build */}
           <Box sx={{ borderTop: `1px solid ${alpha(theme.palette.divider, 1)}`, background: theme.palette.background.paper }}>
             <Collapse in={ready && !streaming && canBuild && compile.state !== "running"}>
-              <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 2, py: 0.75, background: alpha(theme.palette.success.main, theme.palette.mode === "dark" ? 0.14 : 0.08) }} data-testid="network-ready">
-                <CheckCircleOutlineIcon sx={{ fontSize: 16, color: "success.main" }} />
-                <Typography sx={{ fontSize: "0.78rem", fontWeight: 700, flex: 1 }}>{t("network.ready")}</Typography>
-                <Button size="small" variant="contained" color="success" disableElevation onClick={() => build({ auto: true })} data-testid="network-project-now" sx={{ textTransform: "none", fontWeight: 800 }}>
-                  {t("network.projectNow")}
-                </Button>
+              {readiness.clean || !readiness.reasons.length ? (
+                <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 2, py: 0.75, background: alpha(theme.palette.success.main, theme.palette.mode === "dark" ? 0.14 : 0.08) }} data-testid="network-ready">
+                  <CheckCircleOutlineIcon sx={{ fontSize: 16, color: "success.main" }} />
+                  <Typography sx={{ fontSize: "0.78rem", fontWeight: 700, flex: 1 }}>{t("network.ready")}</Typography>
+                  <Button size="small" variant="contained" color="success" disableElevation onClick={() => build({ auto: true })} data-testid="network-project-now" sx={{ textTransform: "none", fontWeight: 800 }}>
+                    {t("network.projectNow")}
+                  </Button>
+                </Box>
+              ) : (
+                <Box sx={{ display: "flex", alignItems: "flex-start", gap: 1, px: 2, py: 0.75, background: alpha(theme.palette.warning.main, theme.palette.mode === "dark" ? 0.14 : 0.08) }} data-testid="network-ready-with-issues">
+                  <WarningAmberIcon sx={{ fontSize: 16, color: "warning.dark", mt: 0.25 }} />
+                  <Box sx={{ flex: 1, minWidth: 0 }}>
+                    <Typography sx={{ fontSize: "0.78rem", fontWeight: 700 }}>{t("network.readyWithIssues", { count: readiness.reasons.length })}</Typography>
+                    <Box component="ul" sx={{ m: 0, pl: 2, fontSize: "0.72rem", color: "text.secondary" }} data-testid="network-readiness-reasons">
+                      {readinessLines(readiness.reasons, t, language).slice(0, 5).map((line, i) => (
+                        <li key={i}>{line}</li>
+                      ))}
+                    </Box>
+                  </Box>
+                  <Button size="small" variant="outlined" color="warning" onClick={() => build({ auto: true })} data-testid="network-project-anyway" sx={{ textTransform: "none", fontWeight: 700, flexShrink: 0 }}>
+                    {t("network.projectAnyway")}
+                  </Button>
+                </Box>
+              )}
+            </Collapse>
+            <Collapse in={!ready && !streaming && readiness.reasons.length > 0 && turns.length > 0}>
+              <Box sx={{ px: 2, py: 0.75, background: soft(theme) }} data-testid="network-not-ready">
+                <Typography sx={{ fontSize: "0.74rem", fontWeight: 700 }}>{t("network.notReady.title")}</Typography>
+                <Box component="ul" sx={{ m: 0, pl: 2, fontSize: "0.72rem", color: "text.secondary" }}>
+                  {readinessLines(readiness.reasons, t, language).slice(0, 5).map((line, i) => (
+                    <li key={i}>{line}</li>
+                  ))}
+                </Box>
               </Box>
             </Collapse>
             <Collapse in={issuesOpen && issues.length > 0}>

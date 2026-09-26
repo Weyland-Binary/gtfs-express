@@ -161,6 +161,9 @@ module.exports = {
   // Planner model: designing a network from a brief is the reasoning-heavy
   // step, so it defaults to the strongest tier; falls back to the chat model.
   NETWORK_PLANNER_MODEL: process.env.NETWORK_PLANNER_MODEL || "claude-opus-5-5",
+  // Reasoning effort of the planner (low|medium|high|xhigh|max). Unset keeps
+  // the model's default; only sent to models that accept it.
+  NETWORK_PLANNER_EFFORT: ["low", "medium", "high", "xhigh", "max"].includes(process.env.NETWORK_PLANNER_EFFORT) ? process.env.NETWORK_PLANNER_EFFORT : null,
   // Plans. Free builds small networks; Pro/Team (an access code with the
   // matching tier in codes.json) lift the caps. Prices are display-only;
   // Stripe Checkout links carry the purchase when configured.

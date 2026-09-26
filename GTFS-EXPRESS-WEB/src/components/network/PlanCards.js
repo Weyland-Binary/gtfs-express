@@ -60,6 +60,19 @@ export const findingText = (x, t, language) => {
   return { message: t(key, params), hint: hint === `${key}.hint` ? x.hint : hint };
 };
 
+/**
+ * Why a plan is not ready, or not clean, in the reader's language: one line
+ * per reason the planner's `done` event gave (codes, with the major
+ * findings translated like in the quality card).
+ */
+export const readinessLines = (reasons, t, language) =>
+  (reasons || []).map((r) => {
+    if (r.finding) return findingText(r.finding, t, language).message;
+    const key = `network.notReady.${r.code}`;
+    const text = t(key, { count: r.count ?? "", max: r.max ?? "" });
+    return text === key ? r.code : text;
+  });
+
 const CONFIDENCE_COLOR = { high: "success", medium: "warning", low: "error" };
 const LEVEL_ICON = { major: ErrorOutlineIcon, minor: WarningAmberIcon, info: InfoOutlinedIcon };
 const LEVEL_COLOR = { major: "error.main", minor: "warning.dark", info: "text.secondary" };

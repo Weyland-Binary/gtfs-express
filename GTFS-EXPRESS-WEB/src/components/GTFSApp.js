@@ -663,10 +663,13 @@ function GTFSApp() {
 
   // A share link opened: the server built the visitor's own session from
   // the snapshot; adopt it like the sample and drop the token from the URL.
-  const handleShareOpened = async (result) => {
+  const handleShareOpened = (result) => {
     clearShareFromLocation();
     setShareToken(null);
     if (!result?.sessionId) return;
+    guard(() => adoptShare(result), { reason: "openShare" });
+  };
+  const adoptShare = async (result) => {
     try {
       setDataLoading(true);
       setError("");
@@ -695,9 +698,13 @@ function GTFSApp() {
 
   // A network built by the Network Studio: the server created a brand-new
   // session (validated, migrated), adopt it like the sample.
-  const handleNetworkCreated = async (result) => {
+  const handleNetworkCreated = (result) => {
     setStudioOpen(false);
     if (!result?.sessionId) return;
+    // The built network replaces the feed on screen: unsaved edits go through the guard first.
+    guard(() => adoptNetwork(result), { reason: "openNetwork" });
+  };
+  const adoptNetwork = async (result) => {
     try {
       setDataLoading(true);
       setError("");

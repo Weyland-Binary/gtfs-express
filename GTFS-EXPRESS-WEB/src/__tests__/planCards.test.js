@@ -17,7 +17,7 @@ vi.mock("../components/edit/BetaGateDialog", () => ({ BETA_CODE_STORAGE_KEY: "be
 
 import PlanChat from "../components/network/PlanChat";
 import NetworkReportDialog from "../components/network/NetworkReportDialog";
-import { findingText } from "../components/network/PlanCards";
+import { findingText, readinessLines } from "../components/network/PlanCards";
 
 const theme = createTheme({ palette: { ai: { main: "#7c4dff", gradientStart: "#7c4dff", gradientEnd: "#00bcd4", contrastText: "#fff" } } });
 const withTheme = (ui) => <ThemeProvider theme={theme}>{ui}</ThemeProvider>;
@@ -123,5 +123,21 @@ describe("findingText — quality findings in the reader's language", () => {
   it("falls back to the server's text for an unknown or missing code", () => {
     expect(findingText({ code: "new_rule", message: "Something new.", hint: "Do this." }, t, "fr")).toEqual({ message: "Something new.", hint: "Do this." });
     expect(findingText({ message: "Legacy." }, t, "fr")).toEqual({ message: "Legacy.", hint: undefined });
+  });
+});
+
+describe("readinessLines", () => {
+  const t = (key, params = {}) => Object.entries(params).reduce((acc, [k, v]) => acc.replace(`{${k}}`, String(v)), key === "network.notReady.over_plan_limit" ? "{count} lines, plan allows {max}" : key);
+  it("explains each reason, translating codes and falling back to the finding's text", () => {
+    const lines = readinessLines(
+      [
+        { code: "over_plan_limit", count: 5, max: 3 },
+        { code: "fleet_over", finding: { code: "unknown_code", message: "The plan needs 14 vehicles; the brief allows 10." } },
+        { code: "never_seen" },
+      ],
+      t,
+      "en",
+    );
+    expect(lines).toEqual(["5 lines, plan allows 3", "The plan needs 14 vehicles; the brief allows 10.", "never_seen"]);
   });
 });
