@@ -329,11 +329,20 @@ const buildReport = ({ spec, compiled, ingested, sessionId, territoryPlace = nul
   const territory = territoryPlace ? territoryService.getCachedTerritory(territoryPlace) : null;
   const geometry = { lines: compiled.stats.lines.map((l) => ({ id: l.id, short_name: l.short_name, directions: l.directions.map((d) => ({ id: d.id, routable: true, distance_km: d.distance_km, running_min: d.running_min })) })) };
   let designReport = null;
+  let conformance = null;
   try {
     designReport = design.evaluatePlan(spec, { territory, geometry });
     if (territory) designReport = design.attachAccessibility(designReport, compiled.tables, spec, territory);
   } catch (err) {
     console.warn("network report: evaluatePlan failed:", err.message);
+  }
+  // What the user asked, checked on the timetable actually built.
+  try {
+    const conformanceService = require("./conformanceService");
+    conformance = conformanceService.checkConformance(spec, requirements, { tables: compiled.tables, operations: designReport?.operations || null, territory });
+    if (designReport) designReport = conformanceService.liftGenericFindings(designReport, requirements, spec);
+  } catch (err) {
+    console.warn("network report: conformance failed:", err.message);
   }
   let audit = null;
   try {
@@ -353,6 +362,7 @@ const buildReport = ({ spec, compiled, ingested, sessionId, territoryPlace = nul
     audit,
     territory: territory ? { place: territory.place.display_name, query: territory.place.query, population: territory.population?.value ?? null, sources: territory.sources } : null,
     requirements: requirements || null,
+    conformance,
     counts: ingested?.counts || compiled.stats.counts,
     routing_fallback_legs: compiled.stats.routing_fallback_legs,
     savedAt: new Date().toISOString(),

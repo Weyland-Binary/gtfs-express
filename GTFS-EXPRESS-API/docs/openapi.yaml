@@ -1209,7 +1209,7 @@ paths:
     post:
       tags:
         - Network Studio
-      summary: "Design quality report of a Network Spec: coverage, stop spacing, directness, service level, connectivity, plausibility, compliance; score out of 100, findings and recommendations."
+      summary: "Design quality report of a Network Spec: coverage, stop spacing, directness, service level, connectivity, plausibility, compliance; score out of 100, findings and recommendations. With `requirements`, also the conformance to the brief: a verdict (pass, fail, unknown, waived) per clause, with what was expected and measured."
       security: []
       requestBody:
         required: true
@@ -1217,6 +1217,21 @@ paths:
           application/json:
             schema:
               type: object
+              required: [spec]
+              properties:
+                spec:
+                  type: object
+                  description: The Network Spec.
+                place:
+                  type: string
+                  description: A territory already loaded (coverage, accessibility).
+                geometry:
+                  type: array
+                  items:
+                    type: object
+                requirements:
+                  type: object
+                  description: "The recorded brief. `clauses` is a list of checkable clauses {id, kind, level (must|should), status (stated|assumed|confirmed|waived), params}; kinds: line_exists, termini, via, serves, headway_max, span, days, no_service, mode, lines_max, lines_min, fleet_max, budget_max, od_max_time. `lines_requested` alone is checked too (line, termini, vias)."
       responses:
         "200":
           $ref: "#/components/responses/OkJson"

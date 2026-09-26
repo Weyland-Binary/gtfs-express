@@ -257,6 +257,43 @@ describe("network planner", () => {
     expect(planner._internals.supportsEffort("claude-haiku-4-5")).toBe(false);
   });
 
+  test("clauses: evaluate_plan checks the brief first; a failing must clause keeps the plan from being clean", async () => {
+    const valid = { ...SPEC_WITH_NAMES, stops: [...SPEC_WITH_NAMES.stops.slice(0, 2), { name: "Hôpital", lat: 47.8, lon: 1.06 }] };
+    __script.push(
+      { toolUses: [{ id: "r1", name: "set_requirements", input: { requirements: { area: "Vendôme", clauses: [
+        { id: "A_exists", kind: "line_exists", params: { line: "A" } },
+        { id: "A_peak", kind: "headway_max", params: { line: "A", day: "weekday", from: "07:00", to: "09:00", minutes: 10 }, text: "A toutes les 10 min en pointe" },
+      ] } } }] },
+      { toolUses: [{ id: "r2", name: "set_spec", input: { spec: valid } }] },
+      { toolUses: [{ id: "r3", name: "evaluate_plan", input: {} }] },
+      { text: "Plan livré." },
+    );
+    const { events } = await runPlan({});
+    const evalResult = __captured[__captured.length - 1].messages.at(-1).content[0].content;
+    expect(evalResult).toMatch(/^Brief conformance: 1\/2 must clause\(s\) met, 1 FAILING/);
+    expect(evalResult).toMatch(/FAIL \[must\] A_peak/);
+    const done = events.at(-1).data;
+    expect(done.conforms).toBe(false);
+    expect(done.clean).toBe(false);
+    expect(done.not_ready_reasons).toEqual(expect.arrayContaining([expect.objectContaining({ code: "clause_failed", clause: expect.objectContaining({ id: "A_peak" }) })]));
+    expect(done.requirements.clauses.map((c) => c.id)).toEqual(["A_exists", "A_peak"]);
+  });
+
+  test("a refinement upserts clauses and keeps the user's waiver", async () => {
+    __script.push({ toolUses: [{ id: "u1", name: "set_requirements", input: { requirements: { clauses: [{ id: "A_peak", kind: "headway_max", status: "stated", params: { line: "A", minutes: 10 } }, { id: "A_sun", kind: "days", params: { line: "A", days: ["sunday"] } }] } } }] }, { text: "ok" });
+    const requirements = { area: "Vendôme", objectives: ["relier la gare"], clauses: [{ id: "A_peak", kind: "headway_max", level: "must", status: "waived", decided_by: "user", reason: "pas de budget", params: { line: "A", minutes: 10 } }] };
+    const { events } = await runPlan({ requirements });
+    const recorded = events.find((e) => e.event === "requirements").data;
+    expect(recorded.area).toBe("Vendôme");
+    expect(recorded.objectives).toEqual(["relier la gare"]);
+    const byId = Object.fromEntries(recorded.clauses.map((c) => [c.id, c]));
+    expect(byId.A_peak).toMatchObject({ status: "waived", decided_by: "user" });
+    expect(byId.A_sun.status).toBe("stated");
+    // The model sees every clause, uncut, with the user's decision.
+    const firstMsg = __captured[__captured.length - 2].messages.at(-1).content;
+    expect(firstMsg).toMatch(/- A_peak \[must, waived by the user\] headway_max/);
+  });
+
   test("POST /network/plan streams the events over SSE and validates its input", async () => {
     __script.push({ text: "ok" });
     const res = await request(app).post("/gtfs/network/plan").send({ brief: "Un réseau de deux lignes à Tours", language: "fr" });

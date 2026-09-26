@@ -15,6 +15,7 @@ import BuildCircleOutlinedIcon from "@mui/icons-material/BuildCircleOutlined";
 import ExploreOutlinedIcon from "@mui/icons-material/ExploreOutlined";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { QualityCard } from "./PlanCards";
+import { BriefBadge, BriefChecklist } from "./BriefChecklist";
 
 export default function NetworkReportDialog({ open, report, onClose, onRefine }) {
   const { t } = useLanguage();
@@ -42,6 +43,15 @@ export default function NetworkReportDialog({ open, report, onClose, onRefine })
             {req.assumptions?.length ? <span style={{ color: theme.palette.text.secondary }}>{` · ${t("report.assumptions", { count: req.assumptions.length })}`}</span> : null}
           </Typography>
         )}
+        {report.conformance ? (
+          <Box data-testid="report-conformance" sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+              <Typography sx={{ fontSize: "0.8rem", fontWeight: 800, flex: 1 }}>{t("network.contract.title")}</Typography>
+              <BriefBadge conformance={report.conformance} />
+            </Box>
+            <BriefChecklist clauses={req?.clauses || []} conformance={report.conformance} />
+          </Box>
+        ) : null}
         {report.design ? <QualityCard quality={report.design} dense /> : null}
         <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.6 }}>
           {v.unverified ? (

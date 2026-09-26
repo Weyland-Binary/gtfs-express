@@ -177,21 +177,31 @@ const geometryFromClient = (raw) => {
   return { lines: [...byLine.values()] };
 };
 
-/** POST /network/evaluate { spec, place?, geometry? } → the design quality report of a plan. */
+/** POST /network/evaluate { spec, place?, geometry?, requirements? } → the design quality report of a plan, with its conformance to the brief. */
 const evaluateNetwork = async (req, res) => {
   const spec = specFromBody(req.body, res);
   if (!spec) return;
   const place = typeof req.body?.place === "string" ? req.body.place.trim() : "";
   const territory = place.length >= 2 ? territoryService.getCachedTerritory(place) : null;
   const norm = normalizeSpec(spec);
+  const requirements = req.body?.requirements && typeof req.body.requirements === "object" && JSON.stringify(req.body.requirements).length < 60000 ? req.body.requirements : null;
+  const conformanceService = require("./conformanceService");
+  const needsTrips = conformanceService.clausesOf(requirements).some((c) => c.kind === "od_max_time" && c.status !== "waived");
   let report = design.evaluatePlan(norm.spec, { territory, geometry: geometryFromClient(req.body?.geometry) });
-  if (territory?.population_grid?.cells?.length && norm.ok && req.body?.accessibility !== false) {
+  let tables = null;
+  if (((territory?.population_grid?.cells?.length && req.body?.accessibility !== false) || needsTrips) && norm.ok) {
     try {
       const compiled = await compileSpec(norm.spec, { router: createRouter({ mode: "straight" }), shapes: false });
-      report = design.attachAccessibility(report, compiled.tables, norm.spec, territory);
+      tables = compiled.tables;
+      if (territory?.population_grid?.cells?.length && req.body?.accessibility !== false) report = design.attachAccessibility(report, compiled.tables, norm.spec, territory);
     } catch {
       /* the report stands without it */
     }
+  }
+  if (requirements) {
+    const verdict = conformanceService.checkConformance(norm.spec, requirements, { tables, operations: report.operations || null, territory });
+    report = conformanceService.liftGenericFindings(report, requirements, norm.spec);
+    if (verdict) report = { ...report, conformance: verdict };
   }
   res.json({ ok: norm.ok, territory: Boolean(territory), ...report });
 };

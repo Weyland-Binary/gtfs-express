@@ -40,6 +40,7 @@ const roadRouter = require("./roadRouter");
 const compiler = require("./compiler");
 const territoryService = require("./territoryService");
 const design = require("./networkDesignService");
+const conformance = require("./conformanceService");
 const { haversineMeters } = require("../../utils/geoUtils");
 
 const MAX_ROUNDS = 20;
@@ -91,9 +92,19 @@ Limits: ≤ ${LIMITS.lines} lines, ≤ ${LIMITS.stops} stops, ≤ ${LIMITS.stops
 # Method: four phases, each grounded by a tool
 
 ## 1. Understand (set_requirements, ask_user)
-Attached documents (PDF, Word, text: a tender, a study, a cahier des charges) ARE the specification. Read them entirely — text, tables, maps' captions, annexes — before anything else: lines and stops requested, service levels by period, hours, days, calendars and school periods, fleet, budget, accessibility, deadlines, priorities, what must be kept. Put each requirement in set_requirements (cite the page or section in the reason when you can). When a document and the chat disagree, the latest chat message wins; when two parts of a document disagree, ask.
+Attached documents (PDF, Word, text: a tender, a study, a cahier des charges) ARE the specification. Read them entirely — text, tables, maps' captions, annexes — before anything else: lines and stops requested, service levels by period, hours, days, calendars and school periods, fleet, budget, accessibility, deadlines, priorities, what must be kept. Put each requirement in set_requirements (cite the page or section in the reason when you can), and write every verifiable requirement as a CLAUSE (below): the server checks the plan against each clause, so the network provably does what was asked. When a document and the chat disagree, the latest chat message wins; when two parts of a document disagree, ask.
 On a NEW brief (no [Current spec] block), your FIRST call is set_requirements: what the brief states (operator, area, lines with termini and vias, modes, service days and hours, headways, holidays, budget or fleet constraints, must-serve places), what you ASSUME with a confidence level, and the OPEN QUESTIONS with their impact. Everything the brief states is law; do not "improve" it silently. On a refinement, call set_requirements again only when the request changes the scope (new lines, new area, new service policy).
 An open question has impact "high" when two plausible answers give materially different networks: which town when the name is ambiguous, the termini or the order of stops of a requested line, whether existing lines must be kept, a fleet or budget cap, school-only service. Then call ask_user with those questions (1–3, each with options and a default), end your turn, and continue with the answers next time. Everything else gets a sensible default (below), listed as an assumption the user can contest.
+
+### Clauses (set_requirements.clauses)
+Each clause: { id (stable), kind, level ("must" when the brief imposes it, "should" when it is a wish or your assumption), status ("stated" from the brief, "assumed" from you), text (one line in the user's language), source (document + page, chat, answer, default), params }. Kinds and params:
+- line_exists {line} · termini {line, from, to} · via {line, stops: [names]} · mode {line, mode}
+- serves {place, lat?, lon?, radius_m? (400), line?} — a place that must have a stop nearby
+- headway_max {line?, day ("weekday"|"saturday"|"sunday"|"mon"…), from "07:00", to "09:00", minutes} — every ≤ minutes in the window (no line = every line)
+- span {line?, day, first_before?, last_after?} · days {line?, days: [...]} · no_service {line?, days: [...]}
+- lines_max {count} · lines_min {count} · fleet_max {vehicles} · budget_max {amount} (in the operations currency)
+- od_max_time {from, to, day?, depart_at? | arrive_by?, max_minutes} — a typical trip, walk included (places as names of stops or of the territory's places, or {name, lat, lon})
+Write clauses only for what can be checked; keep the rest in objectives/constraints. Upsert by id on later turns (remove_clauses to drop one). Never change a clause the user confirmed or waived.
 
 ## 2. Ground (get_territory, suggest_corridors)
 Real networks start from the ground: call get_territory with the town or area (once; the dossier is cached) unless a [Territory] block is already in the message. It gives the timezone, the population, the EXISTING stops and stations from OpenStreetMap (reuse their names, coordinates and ids — passengers know them), the existing transit lines (do not duplicate a line that already runs; connect to it), the trip generators that the lines must serve, and the holidays for the calendars. It also gives the country context (currency, language, the usual weekend days, driving side, income level) and the works and projects under way (new neighbourhoods and facilities being built are tomorrow's demand: serve them; roads under construction are not usable until they open; connect to planned tram, metro or rail lines). The application is used worldwide: follow local practice, never assume a European week, currency or language.
@@ -106,13 +117,13 @@ When the brief asks to improve, extend or restructure the EXISTING network, or w
 - Then call refine_stops once: it snaps the planned stops onto the existing ones and fills long gaps with the existing stops along the way, so a line serves the neighbourhoods it crosses. Then estimate_routes: check distances and running times are plausible for the mode (a 12 km urban bus line runs ~35–45 min); adjust speed_kmh or the stop order when they are not.
 
 ## 4. Evaluate (evaluate_plan, coverage_score)
-Call evaluate_plan: the design quality report (coverage of the generators and residents, stop spacing, directness, service level for the population, connectivity, plausibility, compliance) with a score out of 100, the operations bill, the accessibility of the main places (share of residents reaching the station, the hospital, the centre within 30/45/60 min at 08:00) and recommendations. Fix the MAJOR findings unless the brief imposes them, then evaluate again (at most two rounds). Aim for a score ≥ 70 with no major finding. coverage_score gives the detail of the unserved places when you need it.
+Call evaluate_plan: first the BRIEF CONFORMANCE (each clause pass/fail/unknown with what was expected and measured), then the design quality report (coverage of the generators and residents, stop spacing, directness, service level for the population, connectivity, plausibility, compliance) with a score out of 100, the operations bill, the accessibility of the main places (share of residents reaching the station, the hospital, the centre within 30/45/60 min at 08:00) and recommendations. Every MUST clause has to pass: fix the failing ones first (they are what the user asked), then the MAJOR findings unless the brief imposes them, then evaluate again (at most two rounds). A clause you cannot satisfy (contradictory brief, budget too small): say so plainly and ask the user to arbitrate — never deliver it as met. Aim then for a score ≥ 70 with no major finding; a generic finding the brief contradicts is lifted automatically. coverage_score gives the detail of the unserved places when you need it.
 
 ## Designing from scratch
 When the user asks to propose a network for the territory without naming lines, you design it end to end from the data: suggest_corridors for the skeleton, the population grid for where people live, the generators for where they go, the works for where the city grows, the existing network to connect to. Size it for the population (rules of thumb, adapt to density and the budget): under 10 000 inhabitants, 1–2 lines or a shuttle; 10 000–50 000, 2–5 radial lines through the centre with a pulse; 50 000–150 000, 5–12 lines with one or two frequent trunks (10 min at peak); 150 000–500 000, 10–25 lines with a frequent grid of trunks (5–8 min); above, a trunk mode (tram or BRT) plus a feeder grid. Keep the number of lines within the plan's limit. Ask at most the essential questions (budget or fleet cap, service span, priorities) with suggested answers; otherwise state your assumptions and deliver a complete plan.
 
 ## 5. Deliver
-Answer in markdown, in the user's language, briefly: the network (lines, stops, service) in a few lines, the **quality score** and what limits it, the ASSUMPTIONS as a bullet list, what the user should check on the map. When the plan is ready (spec ok, no missing coordinates), say it can be projected into the application. Do not repeat the requirements card; the UI shows it.
+Answer in markdown, in the user's language, briefly: the network (lines, stops, service) in a few lines, the **brief conformance** (X/Y must clauses met, and any that fail or cannot be measured), the **quality score** and what limits it, the ASSUMPTIONS as a bullet list, what the user should check on the map. When the plan is ready (spec ok, no missing coordinates), say it can be projected into the application. Do not repeat the requirements card; the UI shows it.
 
 # Defaults when the brief is silent
 - Service: weekday 06:00–21:00, peak (07:00–09:00, 16:30–19:00) headway 15 min, off-peak 30 min; saturday 08:00–20:00 every 30 min; sunday 09:00–19:00 every 60 min. Shuttles/school lines: explicit departures.
@@ -274,6 +285,24 @@ const createTools = (ctx) => {
               constraints: { type: "array", items: { type: "string" }, description: "Fleet, budget, must-keep existing lines, accessibility…" },
               assumptions: { type: "array", items: { type: "object", properties: { topic: { type: "string" }, value: { type: "string" }, confidence: { type: "string", enum: ["high", "medium", "low"] }, reason: { type: "string" } }, required: ["topic", "value", "confidence"] } },
               open_questions: { type: "array", items: { type: "object", properties: { id: { type: "string" }, question: { type: "string" }, impact: { type: "string", enum: ["high", "low"] }, default: { type: "string" }, options: { type: "array", items: { type: "string" } } }, required: ["id", "question", "impact"] } },
+              clauses: {
+                type: "array",
+                description: "The brief as CHECKABLE clauses (upserted by id; see the prompt for the kinds and their params). The server verifies each one against the plan in evaluate_plan.",
+                items: {
+                  type: "object",
+                  properties: {
+                    id: { type: "string", description: "Stable id, e.g. 'A_termini', 'peak_10min'." },
+                    kind: { type: "string", enum: conformance.KINDS },
+                    level: { type: "string", enum: ["must", "should"] },
+                    status: { type: "string", enum: ["stated", "assumed"] },
+                    text: { type: "string", description: "The clause in the user's language, one line." },
+                    source: { type: "string", description: "Where it comes from: document + page/section, chat, answer, default." },
+                    params: { type: "object" },
+                  },
+                  required: ["id", "kind", "params"],
+                },
+              },
+              remove_clauses: { type: "array", items: { type: "string" }, description: "Ids of clauses that no longer apply." },
             },
           },
         },
@@ -284,6 +313,7 @@ const createTools = (ctx) => {
       const r = input?.requirements;
       if (!r || typeof r !== "object") return { content: "Error: requirements object is required.", isError: true };
       const strList = (v, n = 20, len = 200) => (Array.isArray(v) ? v.map((x) => clip(String(x || ""), len)).filter(Boolean).slice(0, n) : []);
+      const prev = ctx.requirements || {};
       const req = {
         operator: clip(str(r.operator), 120) || null,
         area: clip(str(r.area), 160) || null,
@@ -294,14 +324,22 @@ const createTools = (ctx) => {
         assumptions: (Array.isArray(r.assumptions) ? r.assumptions : []).filter((a) => a && typeof a === "object" && str(a.topic)).slice(0, 25).map((a) => ({ topic: clip(str(a.topic), 60), value: clip(str(a.value), 200), confidence: ["high", "medium", "low"].includes(a.confidence) ? a.confidence : "medium", reason: clip(str(a.reason), 200) || undefined })),
         open_questions: (Array.isArray(r.open_questions) ? r.open_questions : []).filter((q) => q && typeof q === "object" && str(q.question)).slice(0, 8).map((q, i) => ({ id: clip(str(q.id) || `q${i + 1}`, 32), question: clip(str(q.question), 300), impact: q.impact === "high" ? "high" : "low", default: clip(str(q.default), 120) || undefined, options: strList(q.options, 5, 80) })),
       };
+      // A refinement updates the record instead of erasing it: a field left
+      // out keeps its previous value, clauses are upserted by id, and the
+      // user's own decisions on clauses (confirmed, waived) stand.
+      for (const k of ["operator", "area", "service"]) if (req[k] == null && prev[k] != null) req[k] = prev[k];
+      for (const k of ["objectives", "lines_requested", "constraints", "assumptions"]) if (!(Array.isArray(r[k]) && r[k].length) && Array.isArray(prev[k])) req[k] = prev[k];
+      req.clauses = conformance.mergeClauses(prev.clauses, (Array.isArray(r.clauses) ? r.clauses : []).map((c) => ({ ...c, status: c?.status === "assumed" ? "assumed" : "stated", decided_by: undefined })), Array.isArray(r.remove_clauses) ? r.remove_clauses : []);
       ctx.requirements = req;
       ctx.emit("requirements", req);
       ctx.emit("step", { kind: "requirements", lines: req.lines_requested.length, assumptions: req.assumptions.length, questions: req.open_questions.length });
       const high = req.open_questions.filter((q) => q.impact === "high");
+      const checkable = conformance.clausesOf(req);
+      const clauseNote = `${checkable.length} checkable clause(s)${req.clauses.length ? "" : " (derived from lines_requested only: add clauses for service levels, places and caps)"}.`;
       return {
         content: high.length
-          ? `Requirements recorded. ${high.length} open question(s) have a high impact (${high.map((q) => q.id).join(", ")}): call ask_user with them now (options + default), then end your turn.`
-          : `Requirements recorded (${req.lines_requested.length} line(s) requested, ${req.assumptions.length} assumption(s)). No high-impact question: proceed with the defaults and list them as assumptions.`,
+          ? `Requirements recorded; ${clauseNote} ${high.length} open question(s) have a high impact (${high.map((q) => q.id).join(", ")}): call ask_user with them now (options + default), then end your turn.`
+          : `Requirements recorded (${req.lines_requested.length} line(s) requested, ${req.assumptions.length} assumption(s)); ${clauseNote} No high-impact question: proceed with the defaults and list them as assumptions.`,
       };
     },
   };
@@ -366,21 +404,25 @@ const createTools = (ctx) => {
         }
       }
       let report = design.evaluatePlan(ctx.spec, { territory: ctx.territory, geometry });
-      // Accessibility needs a timetable: compile in memory (straight legs, no shapes) when the residents are known.
-      if (ctx.territory?.population_grid?.cells?.length && ctx.specOk) {
+      // Accessibility and the brief's typical trips need a timetable: compile in memory (no shapes).
+      const needsTrips = conformance.clausesOf(ctx.requirements).some((c) => c.kind === "od_max_time" && c.status !== "waived");
+      let tables = null;
+      if ((ctx.territory?.population_grid?.cells?.length || needsTrips) && ctx.specOk) {
         try {
           // Same router as the delivered report (answers are cached), so the score matches what gets built.
           const compiled = await compiler.compileSpec(ctx.spec, { router: deps.createRouter(), shapes: false });
-          report = design.attachAccessibility(report, compiled.tables, ctx.spec, ctx.territory);
+          tables = compiled.tables;
+          if (ctx.territory?.population_grid?.cells?.length) report = design.attachAccessibility(report, compiled.tables, ctx.spec, ctx.territory);
         } catch {
           /* the report stands without it */
         }
       }
+      report = withConformance(report, ctx, tables);
       ctx.quality = report;
       ctx.emit("quality", report);
-      ctx.emit("step", { kind: "quality", score: report.score, grade: report.grade, majors: report.majors });
+      ctx.emit("step", { kind: "quality", score: report.score, grade: report.grade, majors: report.majors, ...(report.conformance ? { brief: report.conformance.summary.must } : {}) });
       if (ctx.territory) ctx.emit("coverage", territoryService.coverageOf(ctx.spec, ctx.territory));
-      return { content: design.summarizeReport(report) };
+      return { content: [conformance.summarizeConformance(report.conformance), design.summarizeReport(report)].join("\n\n") };
     },
   };
 
@@ -535,6 +577,21 @@ const runRound = async ({ client, model, messages, tools, signal, emit, toolChoi
   return { content, toolUses: content.filter((b) => b.type === "tool_use"), stopReason: finalMessage?.stop_reason || null, usage };
 };
 
+/**
+ * The recorded brief for the model: the narrative fields (bounded), then
+ * every clause on its own line — never cut in the middle, so the model sees
+ * exactly what it will be measured against, and what the user decided.
+ */
+const renderRequirements = (req) => {
+  const { clauses = [], ...rest } = req || {};
+  const lines = [`[Requirements as recorded]\n${clip(JSON.stringify(rest), 5000)}`];
+  if (clauses.length) {
+    lines.push("[Clauses] (id [level, status] kind params — the plan is checked against each; a clause the user confirmed or waived is their decision)");
+    for (const c of clauses.slice(0, 60)) lines.push(clip(`- ${c.id} [${c.level}, ${c.status}${c.decided_by === "user" ? " by the user" : ""}] ${c.kind} ${JSON.stringify(c.params)}${c.reason ? ` — reason: ${c.reason}` : ""}`, 400));
+  }
+  return lines.join("\n");
+};
+
 // A previous request that got no answer (error, cancelled) stays a request
 // of its own: it is not merged into the next one.
 const NO_ANSWER = "(No answer: that turn did not complete.)";
@@ -555,7 +612,7 @@ const buildMessages = ({ history, brief, spec, language, near, territoryBlock = 
   if (documents.length) blocks.push(`[Attached documents] ${documents.map((d) => `"${d.name}"${d.pages ? ` (${d.pages} pages)` : ""}${d.truncated ? " (truncated)" : ""}`).join(", ")} — the specification: read them entirely before designing.`);
   if (near) blocks.push(`[Area hint] lat ${near.lat}, lon ${near.lon}`);
   if (territoryBlock) blocks.push(territoryBlock);
-  if (requirements) blocks.push(`[Requirements as recorded]\n${clip(JSON.stringify(requirements), 6000)}`);
+  if (requirements) blocks.push(renderRequirements(requirements));
   if (spec) blocks.push(`[Current spec]\n${clip(JSON.stringify(spec), 40000)}`);
   blocks.push(brief);
   const text = blocks.join("\n\n");
@@ -568,6 +625,18 @@ const buildMessages = ({ history, brief, spec, language, near, territoryBlock = 
     last.content = [...briefDocuments.toContentBlocks(documents), { type: "text", text: last.content }];
   }
   return msgs;
+};
+
+/**
+ * The quality report with the brief's verdict: the conformance of the spec
+ * to the recorded clauses, and the generic findings the brief overrides
+ * lifted. The brief is the law; the generic score stays secondary.
+ */
+const withConformance = (report, ctx, tables = null) => {
+  if (!report || !ctx.spec) return report;
+  const verdict = conformance.checkConformance(ctx.spec, ctx.requirements, { tables, operations: report.operations || null, territory: ctx.territory });
+  const lifted = conformance.liftGenericFindings(report, ctx.requirements, ctx.spec);
+  return verdict ? { ...lifted, conformance: verdict } : lifted;
 };
 
 /**
@@ -593,6 +662,7 @@ const readiness = (ctx, { incomplete = null } = {}) => {
   if (q) {
     const majors = (q.dimensions || []).flatMap((d) => d.findings || []).filter((f) => f.level === "major");
     for (const f of majors) reasons.push({ code: f.code === "fleet_over" || f.code === "budget_over" ? f.code : "major_finding", finding: { code: f.code || null, params: f.params || null, message: f.message, hint: f.hint || null } });
+    for (const r of q.conformance?.results || []) if (r.level === "must" && r.status === "fail") reasons.push({ code: "clause_failed", clause: { id: r.id, kind: r.kind, text: r.text, expected: r.expected, measured: r.measured } });
     // Majors outside the dimensions (accessibility) count too.
     if ((q.majors || 0) > majors.length) reasons.push({ code: "accessibility", count: q.majors - majors.length });
   }
@@ -710,17 +780,18 @@ const planNetwork = async ({ brief, spec = null, history = [], language = "en", 
     // deterministically) when the model changed the spec after its last evaluation.
     if (ctx.spec && ctx.spec.lines.length && !ctx.quality) {
       try {
-        ctx.quality = design.evaluatePlan(ctx.spec, { territory: ctx.territory, geometry: ctx.geometry });
+        ctx.quality = withConformance(design.evaluatePlan(ctx.spec, { territory: ctx.territory, geometry: ctx.geometry }), ctx);
         ctx.emit("quality", ctx.quality);
       } catch {
         /* no score rather than a wrong one */
       }
     }
     const verdict = readiness(ctx, { incomplete });
-    const quality = ctx.quality ? { score: ctx.quality.score, grade: ctx.quality.grade, majors: ctx.quality.majors } : null;
+    const quality = ctx.quality ? { score: ctx.quality.score, grade: ctx.quality.grade, majors: ctx.quality.majors, ...(ctx.quality.conformance ? { brief: ctx.quality.conformance.summary } : {}) } : null;
     // Nothing to show (no text, no plan, no question): the studio says so instead of an empty turn.
     const empty = !finalText.trim() && !ctx.spec && !ctx.asked;
-    emit("done", { reason: incomplete ? "incomplete" : empty ? "empty" : "complete", specOk: ctx.specOk, specChanged: ctx.specChanged, asked: ctx.asked, ready: verdict.ready, clean: verdict.clean, not_ready_reasons: verdict.reasons, quality });
+    const conforms = ctx.quality?.conformance ? ctx.quality.conformance.conforms : null;
+    emit("done", { reason: incomplete ? "incomplete" : empty ? "empty" : "complete", specOk: ctx.specOk, specChanged: ctx.specChanged, asked: ctx.asked, ready: verdict.ready, clean: verdict.clean, conforms, not_ready_reasons: verdict.reasons, quality, requirements: ctx.requirements });
     recordEvent("network.plan", { ...(req ? extractReqMeta(req) : {}), model, rounds, toolCalls, specOk: ctx.specOk, asked: ctx.asked, ready: verdict.ready, clean: verdict.clean, incomplete, truncations, score: quality?.score ?? null, ...usageTotals, durationMs: Date.now() - startedAt, anon: freeTier });
     return { text: finalText, spec: ctx.spec, specOk: ctx.specOk, ready: verdict.ready, clean: verdict.clean, quality: ctx.quality, requirements: ctx.requirements };
   } catch (err) {
@@ -733,4 +804,4 @@ const planNetwork = async ({ brief, spec = null, history = [], language = "en", 
   }
 };
 
-module.exports = { planNetwork, buildSystemPrompt, _internals: { deps, createTools, buildMessages, readiness, supportsEffort, MAX_ROUNDS, MAX_TOKENS } };
+module.exports = { planNetwork, buildSystemPrompt, _internals: { deps, createTools, buildMessages, readiness, withConformance, supportsEffort, MAX_ROUNDS, MAX_TOKENS } };

@@ -68,6 +68,7 @@ export const findingText = (x, t, language) => {
 export const readinessLines = (reasons, t, language) =>
   (reasons || []).map((r) => {
     if (r.finding) return findingText(r.finding, t, language).message;
+    if (r.clause) return t("network.notReady.clause_failed", { text: r.clause.text || r.clause.id, measured: r.clause.measured || "—" });
     const key = `network.notReady.${r.code}`;
     const text = t(key, { count: r.count ?? "", max: r.max ?? "" });
     return text === key ? r.code : text;

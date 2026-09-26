@@ -38,6 +38,7 @@ import TerritoryPanel from "./TerritoryPanel";
 import MapLayers from "./MapLayers";
 import { soft } from "./StudioUI";
 import { QualityBadge, QualityCard, fmtMoney, readinessLines } from "./PlanCards";
+import { BriefBadge, BriefChecklist } from "./BriefChecklist";
 import NetworkMap from "./NetworkMap";
 import PlanChat from "./PlanChat";
 import { LinesEditor, StopsEditor, JsonEditor } from "./SpecEditors";
@@ -107,6 +108,7 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
   const [requirements, setRequirements] = useState(null);
   const [quality, setQuality] = useState(null);
   const [qualityOpen, setQualityOpen] = useState(false);
+  const [briefOpen, setBriefOpen] = useState(false);
   const [corridors, setCorridors] = useState([]);
   const [autoProject, setAutoProject] = useState(readAutoProject);
   const [ready, setReady] = useState(false);
@@ -195,12 +197,13 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
     if (streaming || !validation || !(validation.spec?.lines || []).length) return undefined;
     clearTimeout(qualityTimer.current);
     qualityTimer.current = setTimeout(() => {
-      evaluateSpec(spec, territory?.place?.query || null, geometry.length ? geometry.map((g) => ({ lineId: g.lineId, directionId: g.directionId, distance_km: g.distance_km, running_min: g.running_min })) : null)
+      // The brief rides along: every manual edit is measured against what was asked.
+      evaluateSpec(spec, territory?.place?.query || null, geometry.length ? geometry.map((g) => ({ lineId: g.lineId, directionId: g.directionId, distance_km: g.distance_km, running_min: g.running_min })) : null, requirements)
         .then((q) => setQuality(q))
         .catch(() => {});
     }, 700);
     return () => clearTimeout(qualityTimer.current);
-  }, [validation, territory, spec, geometry, streaming]);
+  }, [validation, territory, spec, geometry, streaming, requirements]);
   useEffect(() => {
     if (!(spec.lines || []).length) setQuality(null);
   }, [spec.lines]);
@@ -356,6 +359,8 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
               case "done":
                 patch((x) => ({ status: x.status === "error" ? "error" : "complete", ...(data.reason === "empty" && !x.error ? { error: t("network.plan.empty") } : {}) }));
                 setReadiness({ clean: Boolean(data.clean), reasons: data.not_ready_reasons || [] });
+                // The record of the brief after this turn (clauses merged, the user's decisions kept).
+                if (data.requirements) setRequirements(data.requirements);
                 if (data.ready) {
                   setReady(true);
                   // Auto-projection only for a clean plan the turn actually changed: a plan
@@ -675,6 +680,7 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
                       </>
                     )}
                   </Box>
+                  <BriefBadge conformance={quality?.conformance} onClick={() => setBriefOpen(true)} />
                   <QualityBadge quality={quality} onClick={() => setQualityOpen(true)} />
                   {quality?.operations && quality.operations.fleet_total > 0 && (
                     <Tooltip title={t("network.ops.hint", { km: quality.operations.veh_km_year.toLocaleString(), hours: quality.operations.veh_h_year.toLocaleString() })}>
@@ -713,6 +719,22 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
       {/* Quality report */}
       <Dialog open={qualityOpen} onClose={() => setQualityOpen(false)} maxWidth="sm" fullWidth data-testid="network-quality-dialog">
         <Box sx={{ p: 2 }}>{quality && <QualityCard quality={quality} />}</Box>
+      </Dialog>
+      {/* The brief, clause by clause */}
+      <Dialog open={briefOpen} onClose={() => setBriefOpen(false)} maxWidth="sm" fullWidth data-testid="network-brief-dialog">
+        <Box sx={{ p: 2, display: "flex", flexDirection: "column", gap: 1 }}>
+          <Typography sx={{ fontWeight: 800, fontSize: "1rem" }}>{t("network.contract.title")}</Typography>
+          <Typography sx={{ fontSize: "0.76rem", color: "text.secondary" }}>{t("network.contract.subtitle")}</Typography>
+          <BriefChecklist
+            clauses={requirements?.clauses || []}
+            conformance={quality?.conformance}
+            onChange={streaming ? null : (clauses) => {
+              setRequirements((prev) => ({ ...(prev || {}), clauses }));
+              // A decision on the brief changes what "ready" means.
+              setReadiness({ clean: false, reasons: [] });
+            }}
+          />
+        </Box>
       </Dialog>
       <Snackbar open={Boolean(notice)} autoHideDuration={4000} onClose={() => setNotice(null)} message={notice || ""} anchorOrigin={{ vertical: "bottom", horizontal: "center" }} />
 

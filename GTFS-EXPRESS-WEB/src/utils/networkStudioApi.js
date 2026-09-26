@@ -47,7 +47,7 @@ export const compileSpec = (spec, options = {}) => post("/network/compile", { sp
 export const fetchTerritory = (place, force = false) => post("/network/territory", { place, force });
 export const fetchCoverage = (spec, place) => post("/network/coverage", { spec, place });
 /** The design quality report of a plan; `geometry` is the studio's routed lines ([{lineId, directionId, distance_km, running_min}]). */
-export const evaluateSpec = (spec, place = null, geometry = null) => post("/network/evaluate", { spec, place, geometry });
+export const evaluateSpec = (spec, place = null, geometry = null, requirements = null) => post("/network/evaluate", { spec, place, geometry, ...(requirements ? { requirements } : {}) });
 /** Snap the planned stops onto the territory's existing stops and fill the long gaps. */
 export const refineSpec = (spec, place) => post("/network/refine", { spec, place });
 /** The public GTFS feeds covering a place (Mobility Database catalog). */
