@@ -33,6 +33,8 @@ export default function RepairPlanBar({ proposals, batchState, onBatchApplied, c
           p.preview.totalAffected > 0 &&
           !p.preview.exceedsConfirmedCap &&
           !p.outcome &&
+          // A change to the designed network is the user's call, one by one.
+          !p.touchesDesign &&
           !(batchState && batchState[p.proposalId]),
       ),
     [proposals, batchState],

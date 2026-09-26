@@ -139,7 +139,7 @@ const nameMatches = (a, b) => {
  * network with that name, else a named place of the territory. null when it
  * cannot be located (the clause is then "unknown", never a guess).
  */
-const locate = (ref, spec, territory) => {
+const locate = (ref, spec, territory, referenceStops = null) => {
   if (ref && typeof ref === "object") {
     const lat = num(ref.lat);
     const lon = num(ref.lon);
@@ -150,6 +150,9 @@ const locate = (ref, spec, territory) => {
   if (!name) return null;
   const stop = (spec.stops || []).find((s) => s.lat != null && (nameMatches(s.name, name) || nameKey(s.id) === nameKey(name)));
   if (stop) return { lat: stop.lat, lon: stop.lon, name: stop.name, stopId: stop.id, via: "stop" };
+  // A place the design located, even if the feed no longer serves it.
+  const ref0 = (referenceStops || []).find((s) => s.lat != null && (nameMatches(s.name, name) || nameKey(s.id) === nameKey(name)));
+  if (ref0) return { lat: ref0.lat, lon: ref0.lon, name: ref0.name, via: "design" };
   const poi = (territory?.pois?.items || []).find((p) => nameMatches(p.name, name));
   if (poi) return { lat: poi.lat, lon: poi.lon, name: poi.name, via: "territory" };
   const existing = (territory?.existing_stops || []).find((s) => nameMatches(s.name, name));
@@ -225,12 +228,12 @@ const CHECKS = {
     return l ? result(c, "pass", { expected: `line ${c.params.line}`, measured: `line ${l.short_name}`, lines: [l.id] }) : missingLine(c);
   },
 
-  termini(c, { spec, territory }) {
+  termini(c, { spec, territory, referenceStops }) {
     const l = findLine(spec, c.params.line);
     if (!l) return missingLine(c);
     const byId = new Map(spec.stops.map((s) => [s.id, s]));
-    const a = locate(c.params.from, spec, territory);
-    const b = locate(c.params.to, spec, territory);
+    const a = locate(c.params.from, spec, territory, referenceStops);
+    const b = locate(c.params.to, spec, territory, referenceStops);
     const near = (stop, name, point) => {
       if (!stop) return false;
       if (nameMatches(stop.name, name)) return true;
@@ -245,7 +248,7 @@ const CHECKS = {
     return result(c, "fail", { expected: `${c.params.from} ↔ ${c.params.to}`, measured, lines: [l.id] });
   },
 
-  via(c, { spec, territory }) {
+  via(c, { spec, territory, referenceStops }) {
     const l = findLine(spec, c.params.line);
     if (!l) return missingLine(c);
     const byId = new Map(spec.stops.map((s) => [s.id, s]));
@@ -254,7 +257,7 @@ const CHECKS = {
     let unknown = 0;
     for (const name of Array.isArray(c.params.stops) ? c.params.stops : []) {
       if (served.some((s) => nameMatches(s.name, name))) continue;
-      const p = locate(name, spec, territory);
+      const p = locate(name, spec, territory, referenceStops);
       if (!p) {
         unknown += 1;
         continue;
@@ -267,8 +270,8 @@ const CHECKS = {
     return result(c, "pass", { expected, measured: "all served", lines: [l.id] });
   },
 
-  serves(c, { spec, territory }) {
-    const p = locate(c.params.lat != null ? { lat: c.params.lat, lon: c.params.lon, name: c.params.place } : c.params.place, spec, territory);
+  serves(c, { spec, territory, referenceStops }) {
+    const p = locate(c.params.lat != null ? { lat: c.params.lat, lon: c.params.lon, name: c.params.place } : c.params.place, spec, territory, referenceStops);
     const radius = num(c.params.radius_m) || PLACE_RADIUS_M;
     if (!p) return result(c, "unknown", { expected: `${c.params.place} within ${radius} m`, measured: "place not located", note: "give its position (lat/lon) or pick it on the map" });
     const lines = str(c.params.line) ? [findLine(spec, c.params.line)].filter(Boolean) : spec.lines || [];
@@ -409,10 +412,10 @@ const CHECKS = {
     return result(c, operations.cost_year <= n ? "pass" : "fail", { expected: `≤ ${Math.round(n)} ${operations.currency}/year`, measured: `${Math.round(operations.cost_year)} ${operations.currency}/year` });
   },
 
-  od_max_time(c, { spec, territory, tables }) {
+  od_max_time(c, { spec, territory, tables, referenceStops }) {
     const max = num(c.params.max_minutes);
-    const a = locate(c.params.from, spec, territory);
-    const b = locate(c.params.to, spec, territory);
+    const a = locate(c.params.from, spec, territory, referenceStops);
+    const b = locate(c.params.to, spec, territory, referenceStops);
     const label = `${str(c.params.from?.name ?? c.params.from)} → ${str(c.params.to?.name ?? c.params.to)}`;
     if (!(max > 0)) return result(c, "unknown", { note: "no max_minutes" });
     if (!a || !b) return result(c, "unknown", { expected: `${label} ≤ ${max} min`, measured: "place not located", note: "give the positions or pick them on the map" });
@@ -484,10 +487,10 @@ const fastestTrip = (tables, spec, a, b, params) => {
  * @param {object} requirements the recorded brief (clauses and/or lines_requested)
  * @param {{ tables?: object, operations?: object, territory?: object }} ctx
  */
-const checkConformance = (spec, requirements, { tables = null, operations = null, territory = null } = {}) => {
+const checkConformance = (spec, requirements, { tables = null, operations = null, territory = null, referenceStops = null } = {}) => {
   const clauses = clausesOf(requirements);
   if (!clauses.length || !spec) return null;
-  const ctx = { spec, tables, operations, territory };
+  const ctx = { spec, tables, operations, territory, referenceStops };
   const results = clauses.map((c) => {
     if (c.status === "waived") return result(c, "waived", { note: c.reason || null });
     try {

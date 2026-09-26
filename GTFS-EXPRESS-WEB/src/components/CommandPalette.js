@@ -328,6 +328,13 @@ function CommandPalette() {
       run: () => window.dispatchEvent(new CustomEvent("gtfs:open-network-studio")),
     });
     cmds.push({
+      id: "networkReport",
+      label: t("palette.action.networkReport"),
+      hint: t("palette.action.networkReportHint"),
+      category: "advanced",
+      run: () => window.dispatchEvent(new CustomEvent("gtfs:open-network-report")),
+    });
+    cmds.push({
       id: "askAi",
       label: t("palette.action.askAi"),
       hint: t("palette.action.askAiHint"),

@@ -44,6 +44,7 @@ import ShapeStudio from "./shapeStudio/ShapeStudio";
 import FeedDiffPage from "./diff/FeedDiffPage";
 import NetworkStudio from "./network/NetworkStudio";
 import NetworkReportDialog from "./network/NetworkReportDialog";
+import { fetchNetworkReport } from "../utils/networkStudioApi";
 import SharedFeedLanding from "./share/SharedFeedLanding";
 import { shareTokenFromLocation, clearShareFromLocation } from "../utils/shareApi";
 import PricingDialog, { PRICING_EVENT } from "./PricingDialog";
@@ -201,6 +202,17 @@ function GTFSApp() {
     window.addEventListener("gtfs:open-network-studio", handler);
     return () => window.removeEventListener("gtfs:open-network-studio", handler);
   }, []);
+  // The network report on demand (the chat, the dashboard): the brief
+  // re-measured on the feed as it is now, after the edits.
+  useEffect(() => {
+    const handler = async () => {
+      const report = await fetchNetworkReport({ live: true }).catch(() => null);
+      if (report) setNetworkReport(report);
+      else showToast(t("network.report.none"), "info");
+    };
+    window.addEventListener("gtfs:open-network-report", handler);
+    return () => window.removeEventListener("gtfs:open-network-report", handler);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   // Plans & pricing, opened at the moment a limit is met (detail.reason).
   const [pricing, setPricing] = useState(null); // null | { reason }
   useEffect(() => {

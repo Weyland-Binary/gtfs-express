@@ -45,7 +45,7 @@ const POI_COLOR = { school: "#F9A825", college: "#F57F17", hospital: "#D32F2F", 
 
 const WORK_COLORS = { development: "#EF6C00", transit: "#8E24AA", rail: "#6D4C41", road: "#F9A825", site: "#EF6C00" };
 
-export default function NetworkMap({ stops = [], lines = [], geometry = [], existingStops = [], pois = [], corridors = [], works = [], population = null, focusBbox = null, selectedStopId = null, placingStopId = null, onSelectStop = null, onMoveStop = null, onPlaceStop = null, onPickExistingStop = null, fitEpoch = 0, height = "100%" }) {
+export default function NetworkMap({ stops = [], lines = [], geometry = [], existingStops = [], pois = [], corridors = [], works = [], population = null, focusBbox = null, selectedStopId = null, placingStopId = null, onSelectStop = null, onMoveStop = null, onPlaceStop = null, onPickExistingStop = null, addingStops = false, onAddStopAt = null, fitEpoch = 0, height = "100%" }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const [basemap] = useBasemap();
@@ -83,6 +83,8 @@ export default function NetworkMap({ stops = [], lines = [], geometry = [], exis
         <BasemapTileLayer basemap={basemap} isDark={isDark} />
         <FitBounds points={points} epoch={fitEpoch} />
         <ClickToPlace active={Boolean(placingStopId)} onPlace={(lat, lon) => onPlaceStop && onPlaceStop(placingStopId, lat, lon)} />
+        {/* "Add stops" mode: every click on the map creates a stop there. */}
+        <ClickToPlace active={Boolean(addingStops && !placingStopId)} onPlace={(lat, lon) => onAddStopAt && onAddStopAt(lat, lon)} />
         {popCells.map((c) => (
           <Rectangle key={c.key} bounds={c.bounds} pathOptions={{ color: "transparent", fillColor: isDark ? "#fbbf24" : "#7c3aed", fillOpacity: c.opacity, weight: 0 }} interactive={false} />
         ))}

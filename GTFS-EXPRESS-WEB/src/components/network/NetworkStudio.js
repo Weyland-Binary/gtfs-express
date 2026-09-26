@@ -29,6 +29,7 @@ import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import LockOutlinedIcon from "@mui/icons-material/LockOutlined";
 import DirectionsBusFilledOutlinedIcon from "@mui/icons-material/DirectionsBusFilledOutlined";
+import AddLocationAltOutlinedIcon from "@mui/icons-material/AddLocationAltOutlined";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { useFeatures } from "../../utils/featuresApi";
 import { validateSpec, estimateSpec, compileSpec, streamPlan, loadDraft, saveDraft, fetchCoverage, evaluateSpec, refineSpec, uploadBriefDocument, deleteBriefDocument } from "../../utils/networkStudioApi";
@@ -41,7 +42,8 @@ import { QualityBadge, QualityCard, fmtMoney, readinessLines } from "./PlanCards
 import { BriefBadge, BriefChecklist } from "./BriefChecklist";
 import NetworkMap from "./NetworkMap";
 import PlanChat from "./PlanChat";
-import { LinesEditor, StopsEditor, JsonEditor } from "./SpecEditors";
+import { LinesEditor, StopsEditor, JsonEditor, withStopIds } from "./SpecEditors";
+import NetworkSettings, { prefillFromTerritory } from "./NetworkSettings";
 import { BETA_CODE_STORAGE_KEY } from "../edit/BetaGateDialog";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import { PRICING_EVENT } from "../PricingDialog";
@@ -55,6 +57,13 @@ const focusTestId = (id) => {
   if (!el) return;
   el.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
   el.focus?.();
+};
+const haversineM = (a, b, c, d) => {
+  const R = 6371000;
+  const dLat = ((c - a) * Math.PI) / 180;
+  const dLon = ((d - b) * Math.PI) / 180;
+  const x = Math.sin(dLat / 2) ** 2 + Math.cos((a * Math.PI) / 180) * Math.cos((c * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(x));
 };
 const newId = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
 const readAutoProject = () => {
@@ -109,6 +118,8 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
   const [quality, setQuality] = useState(null);
   const [qualityOpen, setQualityOpen] = useState(false);
   const [briefOpen, setBriefOpen] = useState(false);
+  const [prefilled, setPrefilled] = useState([]); // settings filled from the territory
+  const [addingStops, setAddingStops] = useState(false); // click the map to add stops
   const [corridors, setCorridors] = useState([]);
   const [autoProject, setAutoProject] = useState(readAutoProject);
   const [ready, setReady] = useState(false);
@@ -176,6 +187,18 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
       /* storage disabled */
     }
   }, [autoProject]);
+
+  // A territory fills the network's empty settings (timezone, language, local
+  // weekend, holidays): a network built by hand needs no JSON. Never overwrites.
+  const territoryKey = territory?.place?.query || null;
+  useEffect(() => {
+    if (!territory) return;
+    setSpec((prev) => {
+      const r = prefillFromTerritory(prev, territory);
+      if (r.filled.length) setPrefilled(r.filled);
+      return r.spec;
+    });
+  }, [territoryKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Coverage of the plan against the territory (debounced, after validation).
   useEffect(() => {
@@ -249,6 +272,23 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
     const id = setTimeout(refreshRoutes, 600);
     return () => clearTimeout(id);
   }, [validation, geometryStale, routing, refreshRoutes]);
+
+  // A click on the map in "add stops" mode: the stop takes the name and the
+  // exact place of an existing stop or a named place within 40 m, else a new name.
+  const addStopAt = useCallback(
+    (lat, lon) => {
+      const near = (p) => Number.isFinite(p?.lat) && Math.abs(p.lat - lat) < 0.001 && Math.abs(p.lon - lon) < 0.0015 && haversineM(lat, lon, p.lat, p.lon) <= 40;
+      const existing = (territory?.existing_stops || []).find((s) => s.name && near(s));
+      const poi = existing ? null : (territory?.pois?.items || []).find((p) => p.name && near(p));
+      const stops = spec.stops || [];
+      if (existing && stops.some((s) => s.id === existing.id)) return;
+      const stop = existing ? { id: existing.id, name: existing.name, lat: existing.lat, lon: existing.lon, source: "osm" } : { name: poi ? poi.name : t("network.newStop", { n: stops.length + 1 }), lat: poi ? poi.lat : lat, lon: poi ? poi.lon : lon };
+      const [added] = withStopIds(stops, [stop]);
+      updateSpec({ ...spec, stops: [...stops, added] });
+      setSelectedStopId(added.id);
+    },
+    [spec, territory, t], // eslint-disable-line react-hooks/exhaustive-deps
+  );
 
   const updateSpec = useCallback((next) => {
     setSpec(next);
@@ -586,7 +626,12 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
           <Box sx={{ flex: 1, minHeight: 0, position: "relative", overflow: tab === "map" ? "hidden" : "auto", p: tab === "map" ? 0 : 1.5 }}>
             {tab === "map" && (
               <>
-                <NetworkMap stops={spec.stops || []} lines={validation?.spec?.lines || spec.lines || []} geometry={geometry} corridors={corridors} population={territory && layers.population ? territory.population_grid : null} focusBbox={territory ? territory.place.bbox : null} works={territory && layers.works ? territory.works?.items || [] : []} existingStops={territory && layers.stops ? territory.existing_stops : []} pois={territory && layers.pois ? territory.pois.items : []} onPickExistingStop={(s) => { if (!(spec.stops || []).some((x) => x.id === s.id)) updateSpec({ ...spec, stops: [...(spec.stops || []), { id: s.id, name: s.name || s.kind, lat: s.lat, lon: s.lon, source: "osm" }] }); }} selectedStopId={selectedStopId} placingStopId={placingStopId} onSelectStop={setSelectedStopId} onMoveStop={(id, lat, lon) => updateSpec({ ...spec, stops: spec.stops.map((s) => (s.id === id ? { ...s, lat, lon } : s)) })} onPlaceStop={(id, lat, lon) => { updateSpec({ ...spec, stops: spec.stops.map((s) => (s.id === id ? { ...s, lat, lon } : s)) }); setPlacingStopId(null); }} fitEpoch={fitEpoch} />
+                <NetworkMap stops={spec.stops || []} lines={validation?.spec?.lines || spec.lines || []} geometry={geometry} corridors={corridors} population={territory && layers.population ? territory.population_grid : null} focusBbox={territory ? territory.place.bbox : null} works={territory && layers.works ? territory.works?.items || [] : []} existingStops={territory && layers.stops ? territory.existing_stops : []} pois={territory && layers.pois ? territory.pois.items : []} onPickExistingStop={(s) => { if (!(spec.stops || []).some((x) => x.id === s.id)) updateSpec({ ...spec, stops: [...(spec.stops || []), { id: s.id, name: s.name || s.kind, lat: s.lat, lon: s.lon, source: "osm" }] }); }} selectedStopId={selectedStopId} placingStopId={placingStopId} onSelectStop={setSelectedStopId} onMoveStop={(id, lat, lon) => updateSpec({ ...spec, stops: spec.stops.map((s) => (s.id === id ? { ...s, lat, lon } : s)) })} onPlaceStop={(id, lat, lon) => { updateSpec({ ...spec, stops: spec.stops.map((s) => (s.id === id ? { ...s, lat, lon } : s)) }); setPlacingStopId(null); }} addingStops={addingStops} onAddStopAt={addStopAt} fitEpoch={fitEpoch} />
+                {(spec.stops || []).length > 0 || territory ? (
+                  <Box sx={{ position: "absolute", top: 12, left: 12, zIndex: 1000 }}>
+                    <Chip size="small" icon={<AddLocationAltOutlinedIcon sx={{ fontSize: 15 }} />} label={addingStops ? t("network.map.addingStops") : t("network.map.addStops")} color={addingStops ? "primary" : "default"} onClick={() => setAddingStops((v) => !v)} data-testid="map-add-stops" sx={{ fontWeight: 700, boxShadow: 2, background: addingStops ? undefined : theme.palette.background.paper }} />
+                  </Box>
+                ) : null}
                 <MapLayers territory={territory} layers={layers} onToggle={(k) => setLayers((l) => ({ ...l, [k]: !l[k] }))} />
                 {placingStopId && (
                   <Box sx={{ position: "absolute", top: 12, left: "50%", transform: "translateX(-50%)", zIndex: 1000, px: 1.5, py: 0.6, borderRadius: 99, background: theme.palette.warning.main, color: theme.palette.warning.contrastText, fontSize: "0.76rem", fontWeight: 700, boxShadow: 3 }}>
@@ -607,7 +652,12 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
                 )}
               </>
             )}
-            {tab === "lines" && <LinesEditor spec={spec} onChange={updateSpec} />}
+            {tab === "lines" && (
+              <Box sx={{ display: "flex", flexDirection: "column", gap: 1.25, maxWidth: 1120, mx: "auto" }}>
+                <NetworkSettings spec={spec} onChange={updateSpec} territory={territory} prefilled={prefilled} />
+                <LinesEditor spec={spec} onChange={updateSpec} />
+              </Box>
+            )}
             {tab === "stops" && <StopsEditor spec={spec} onChange={updateSpec} selectedStopId={selectedStopId} onSelectStop={setSelectedStopId} placingStopId={placingStopId} onPlaceRequest={(id) => { setPlacingStopId(id); if (id) setTab("map"); }} near={near} existingStops={territory ? territory.existing_stops : []} />}
             {tab === "json" && <JsonEditor key={turns.length} spec={spec} onChange={updateSpec} />}
           </Box>

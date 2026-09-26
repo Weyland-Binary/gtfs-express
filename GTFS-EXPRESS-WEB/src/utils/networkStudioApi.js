@@ -64,8 +64,8 @@ export const fetchCatalog = async (place) => {
 /** Download a public feed and reverse-compile it into a spec with its baseline report. */
 export const importCatalogFeed = (url, place) => post("/network/catalog/import", { url, place });
 /** The network report stored with the current session (null when the session was not built by the studio). */
-export const fetchNetworkReport = async () => {
-  const res = await fetchWithSession(`${API_BASE_URL}/network/report`);
+export const fetchNetworkReport = async ({ live = false } = {}) => {
+  const res = await fetchWithSession(`${API_BASE_URL}/network/report${live ? "?live=1" : ""}`);
   if (!res.ok) return null;
   return res.json().catch(() => null);
 };

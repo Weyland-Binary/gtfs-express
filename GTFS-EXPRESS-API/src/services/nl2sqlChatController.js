@@ -227,7 +227,15 @@ const generateChatTurn = async (req, res) => {
       userMessage,
       language,
       sessionContext,
-      memoryBlock: require("./assistantMemoryService").buildMemoryBlock(sessionCtx.sessionId),
+      // What the assistant remembers of this session, and — for a network
+      // designed in the Studio — the brief it answers.
+      memoryBlock: [require("./assistantMemoryService").buildMemoryBlock(sessionCtx.sessionId), (() => {
+        try {
+          return require("./network/liveDesign").designBlock(sessionCtx.sessionId);
+        } catch {
+          return "";
+        }
+      })()].filter(Boolean).join("\n\n"),
       attachmentRefs: attachments.refs,
       freeRemaining,
       freeTier: Boolean(req.freeTier),

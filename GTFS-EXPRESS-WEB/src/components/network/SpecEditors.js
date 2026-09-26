@@ -25,6 +25,27 @@ import { useLanguage } from "../../contexts/LanguageContext";
 import { geocodeQuery } from "../../utils/networkStudioApi";
 import { QuietButton, SectionHeader, Tag, soft } from "./StudioUI";
 
+/**
+ * Give an id to stops added by hand (the map, the list): without one a stop
+ * can be neither placed on the map nor put on a line. Ids are short and
+ * unique in the spec (S1, S2…); existing ids are kept.
+ */
+export const withStopIds = (existing, added) => {
+  const used = new Set((existing || []).map((s) => s.id).filter(Boolean));
+  let n = (existing || []).length;
+  return (added || []).map((s) => {
+    if (s.id && !used.has(s.id)) {
+      used.add(s.id);
+      return s;
+    }
+    let id;
+    do id = `S${++n}`;
+    while (used.has(id));
+    used.add(id);
+    return { ...s, id };
+  });
+};
+
 export const MODES = ["bus", "coach", "express", "shuttle", "trolleybus", "tram", "metro", "rail", "ferry", "cable", "gondola", "funicular", "monorail"];
 export const CALENDARS = ["weekday", "saturday", "sunday", "weekend", "daily", "monsat"];
 
@@ -89,7 +110,7 @@ const fieldSx = (theme, { ghost = false, strength = 1 } = {}) => ({
 });
 
 /** A text field without a box: the label is its placeholder and accessible name. */
-function Field({ value, onChange, label, width = null, mono = false, ghost = false, strength = 1, testid = undefined, sx = {}, inputSx = {}, inputProps = {}, ...rest }) {
+export function Field({ value, onChange, label, width = null, mono = false, ghost = false, strength = 1, testid = undefined, sx = {}, inputSx = {}, inputProps = {}, ...rest }) {
   const theme = useTheme();
   return (
     <InputBase
@@ -104,7 +125,7 @@ function Field({ value, onChange, label, width = null, mono = false, ghost = fal
 }
 
 /** A compact select on the same soft fill. */
-function SelectField({ value, onChange, label, children, ghost = false, strength = 1, minWidth = 0, testid = undefined, sx = {} }) {
+export function SelectField({ value, onChange, label, children, ghost = false, strength = 1, minWidth = 0, testid = undefined, sx = {} }) {
   const theme = useTheme();
   return (
     <Select
@@ -555,7 +576,7 @@ export function StopsEditor({ spec, onChange, selectedStopId, onSelectStop, plac
   // A stop added while the list is filtered must be seen: adding clears the filter.
   const addStops = (added) => {
     setFilter("");
-    onChange({ ...spec, stops: [...stops, ...added] });
+    onChange({ ...spec, stops: [...stops, ...withStopIds(stops, added)] });
   };
   const head = { fontSize: "0.64rem", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "text.secondary" };
 

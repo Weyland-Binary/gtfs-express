@@ -422,6 +422,8 @@ const getFeedOverview = {
 
 // ── navigate ──────────────────────────────────────────────────────────────
 const NAV_TARGETS = new Set([
+  "network_studio",
+  "network_report",
   "route",
   "stop",
   "trip",
@@ -443,7 +445,7 @@ const navigate = {
   definition: {
     name: "navigate",
     description:
-      "Open something in the app for the user: an entity's detail panel (route, stop, trip, shape — give its id), the schedule & map of a route (target 'schedule' + route_id), the validation report, the SQL console, the shape studio of a route (edit mode only), or the home dashboard. Use it when the user asks to see or open something, or to point at the entity you just discussed.",
+      "Open something in the app for the user: an entity's detail panel (route, stop, trip, shape — give its id), the schedule & map of a route (target 'schedule' + route_id), the validation report, the SQL console, the shape studio of a route (edit mode only), the home dashboard, the Network Studio (to redesign lines, stops or service from the brief) or the network report (the brief, clause by clause, on the current feed). Use it when the user asks to see or open something, or to point at the entity you just discussed.",
     input_schema: {
       type: "object",
       properties: {
@@ -849,7 +851,8 @@ const mergeStops = {
     };
     const proposalId = ctx.nextProposalId();
     const title = clip(typeof input?.title === "string" ? input.title.trim() : "", 80) || `Merge ${plan.duplicates.length} stop(s) into ${plan.survivor.stop_name || plan.survivor.stop_id}`;
-    ctx.emit("proposal", { proposalId, kind: "operation", operation: "merge_stops", title, rationale: "", params, preview });
+    const touchesDesign = designedStops(ctx, [plan.survivor.stop_id, ...plan.duplicates.map((d) => d.stop_id)]);
+    ctx.emit("proposal", { proposalId, kind: "operation", operation: "merge_stops", title, rationale: "", params, preview, ...(touchesDesign.length ? { touchesDesign: true } : {}) });
     return {
       content: [
         `proposal_id: ${proposalId}`,
@@ -857,11 +860,24 @@ const mergeStops = {
         `References re-pointed: ${Object.entries(plan.by_table).map(([t, n]) => `${n} ${t}`).join(", ") || "none"}.`,
         plan.trips_with_both > 0 ? `WARNING: ${plan.trips_with_both} trip(s) serve both stops and would call at the survivor twice — mention it.` : "",
         Object.keys(plan.filled).length ? `Survivor fields filled from the duplicates: ${Object.keys(plan.filled).join(", ")}.` : "",
+        touchesDesign.length ? DESIGN_NOTE(touchesDesign) : "",
         "The user can apply this from the chat. Do not claim it is done.",
       ].filter(Boolean).join("\n"),
     };
   },
 };
+
+// Stops of a feed designed in the Studio are deliberate: a proposal that
+// touches them says so, and is left out of "apply all".
+const designedStops = (ctx, ids) => {
+  try {
+    const d = require("./network/liveDesign").designedIds(ctx.dbCtx.sessionId);
+    return d ? [...new Set(ids)].filter((id) => d.stops.has(id)) : [];
+  } catch {
+    return [];
+  }
+};
+const DESIGN_NOTE = (ids) => `DESIGNED NETWORK: ${ids.length} of these stops (${ids.slice(0, 6).join(", ")}${ids.length > 6 ? "…" : ""}) belong to the network designed from the user's brief. Say so, ask the user to confirm, and after it is applied call get_network_design to check the brief still holds.`;
 
 // ── get_stop_name_variants ────────────────────────────────────────────────
 const VARIANT_GROUPS_MAX = 40;
@@ -928,13 +944,15 @@ const renameStops = {
     const proposalId = ctx.nextProposalId();
     const title = clip(typeof input?.title === "string" ? input.title.trim() : "", 80) || `Rename ${plan.renames.length} stop(s)`;
     const rationale = clip(typeof input?.rationale === "string" ? input.rationale.trim() : "", 300);
-    ctx.emit("proposal", { proposalId, kind: "operation", operation: "rename_stops", title, rationale, params: { renames: plan.renames.map((r) => ({ stop_id: r.stop_id, stop_name: r.stop_name })) }, preview });
+    const touchesDesign = designedStops(ctx, plan.renames.map((r) => r.stop_id));
+    ctx.emit("proposal", { proposalId, kind: "operation", operation: "rename_stops", title, rationale, params: { renames: plan.renames.map((r) => ({ stop_id: r.stop_id, stop_name: r.stop_name })) }, preview, ...(touchesDesign.length ? { touchesDesign: true } : {}) });
     return {
       content: [
         `proposal_id: ${proposalId}`,
         `${plan.renames.length} rename(s) planned (${plan.unchanged} already correct):`,
         ...plan.renames.slice(0, 15).map((r) => `- ${r.stop_id}: "${r.old_name}" → "${r.stop_name}"`),
         plan.renames.length > 15 ? `… and ${plan.renames.length - 15} more` : "",
+        touchesDesign.length ? DESIGN_NOTE(touchesDesign) : "",
         "The user can review, untick and apply from the chat. Do not claim it is done.",
       ].filter(Boolean).join("\n"),
     };
@@ -1102,6 +1120,53 @@ const forget = {
   },
 };
 
+
+// ── get_network_design ────────────────────────────────────────────────────
+const getNetworkDesign = {
+  definition: {
+    name: "get_network_design",
+    description:
+      "For a feed designed in the Network Studio: the brief it answers (operator, area, objectives, constraints, assumptions, and the CLAUSES the network must meet) with each clause's verdict at build and NOW on the feed as edited (pass, fail, unknown, waived; expected vs measured), the design score and its major findings. Call it before a structural change (merging or renaming designed stops, removing trips, changing service) and after one, to tell the user whether the brief still holds. Returns nothing useful for an uploaded feed.",
+    input_schema: { type: "object", properties: { live: { type: "boolean", description: "Re-measure the brief on the current feed (default true)." } } },
+  },
+  run(input, ctx) {
+    const liveDesign = require("./network/liveDesign");
+    const design = liveDesign.loadDesign(ctx.dbCtx.sessionId);
+    if (!design) return { content: "This feed was not designed in the Network Studio: there is no brief to check against." };
+    const req = design.requirements || {};
+    const built = design.report?.conformance || null;
+    let live = null;
+    if (input?.live !== false) {
+      try {
+        live = liveDesign.liveConformance(ctx.dbCtx.db, ctx.dbCtx.sessionId);
+      } catch (err) {
+        live = null;
+      }
+    }
+    const verdicts = (c) => (c?.results || []).map((r) => `${r.id} [${r.level}] ${r.status}${r.expected ? ` — expected ${r.expected}` : ""}${r.measured ? `; measured ${r.measured}` : ""}`);
+    const changed = [];
+    if (built && live) {
+      const before = new Map(built.results.map((r) => [r.id, r.status]));
+      for (const r of live.results) if (before.get(r.id) === "pass" && r.status === "fail") changed.push(`${r.id} (${r.text || r.kind}) was met at build and FAILS now: ${r.measured}`);
+    }
+    const design_ = design.report?.design;
+    return {
+      content: JSON.stringify({
+        operator: req.operator || null,
+        area: req.area || null,
+        objectives: req.objectives || [],
+        constraints: req.constraints || [],
+        assumptions: (req.assumptions || []).map((a) => `${a.topic}: ${a.value} (${a.confidence})`),
+        design: design_ ? { score: design_.score, grade: design_.grade, majors: design_.majors } : null,
+        brief_at_build: built ? { summary: built.summary, clauses: verdicts(built) } : null,
+        brief_now: live ? { summary: live.summary, approximate: true, clauses: verdicts(live) } : null,
+        regressions: changed,
+        note: changed.length ? "Tell the user which clauses the edits broke, and offer to restore them or to open the Network Studio." : undefined,
+      }),
+    };
+  },
+};
+
 const TOOLS = [
   runSql,
   proposeFix,
@@ -1119,6 +1184,7 @@ const TOOLS = [
   renameStops,
   extendCalendar,
   planJourney,
+  getNetworkDesign,
   remember,
   forget,
 ];

@@ -260,6 +260,16 @@ const getNetworkReport = (req, res) => {
   if (!ctx) return;
   const stored = loadStoredReport(ctx.sessionId);
   if (!stored) return res.status(404).json({ error: "NO_REPORT", message: "This session has no network report." });
+  // ?live=1: the brief re-measured on the feed as it is now (after edits).
+  if (req.query?.live === "1" || req.query?.live === "true") {
+    let live = null;
+    try {
+      live = require("./liveDesign").liveConformance(ctx.db, ctx.sessionId);
+    } catch (err) {
+      console.warn("network report: live conformance failed:", err.message);
+    }
+    return res.json({ ...stored, live: live ? { conformance: live } : null });
+  }
   res.json(stored);
 };
 

@@ -43,13 +43,17 @@ export default function NetworkReportDialog({ open, report, onClose, onRefine })
             {req.assumptions?.length ? <span style={{ color: theme.palette.text.secondary }}>{` · ${t("report.assumptions", { count: req.assumptions.length })}`}</span> : null}
           </Typography>
         )}
-        {report.conformance ? (
+        {report.live?.conformance || report.conformance ? (
           <Box data-testid="report-conformance" sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
             <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
               <Typography sx={{ fontSize: "0.8rem", fontWeight: 800, flex: 1 }}>{t("network.contract.title")}</Typography>
-              <BriefBadge conformance={report.conformance} />
+              <BriefBadge conformance={report.live?.conformance || report.conformance} />
             </Box>
-            <BriefChecklist clauses={req?.clauses || []} conformance={report.conformance} />
+            {/* On the feed as it is now when the report was asked for later; else at build. */}
+            <Typography sx={{ fontSize: "0.68rem", color: "text.secondary" }} data-testid="report-conformance-when">
+              {report.live?.conformance ? t("network.contract.liveNow") : t("network.contract.atBuild")}
+            </Typography>
+            <BriefChecklist clauses={req?.clauses || []} conformance={report.live?.conformance || report.conformance} />
           </Box>
         ) : null}
         {report.design ? <QualityCard quality={report.design} dense /> : null}

@@ -198,6 +198,12 @@ export default function ChatDrawer({
           window.dispatchEvent(new CustomEvent("gtfs:close-validation-report"));
           showSqlConsole();
           break;
+        case "network_studio":
+          window.dispatchEvent(new CustomEvent("gtfs:open-network-studio"));
+          break;
+        case "network_report":
+          window.dispatchEvent(new CustomEvent("gtfs:open-network-report"));
+          break;
         case "schedule":
         case "shape_studio":
         case "home":
