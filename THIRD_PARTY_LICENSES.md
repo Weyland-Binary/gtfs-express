@@ -120,6 +120,20 @@ License text: <https://proj.org/en/stable/about.html#license>
 
 ---
 
+## Test data: real GTFS feeds (test fixtures only, not shipped in the images)
+
+`GTFS-EXPRESS-API/src/__tests__/fixtures/real/` holds two unmodified
+open-data feeds used to test the transformation engine on real networks:
+
+- `albi-libea-urbain.zip` — libéA Urbain, Communauté d'agglomération de
+  l'Albigeois, from transport.data.gouv.fr. Open Database License (ODbL) 1.0
+  (https://opendatacommons.org/licenses/odbl/1-0/). A public database
+  derived from it must be shared under the ODbL with this attribution.
+- `vernon-sngo.zip` — SNgo! (Vernon / Les Andelys), Syndicat mixte Atoumod,
+  from transport.data.gouv.fr. Licence Ouverte / Open Licence 2.0 (Etalab).
+
+Sources, dates and checksums: `fixtures/real/README.md`.
+
 ## Apache License, Version 2.0
 
 ```

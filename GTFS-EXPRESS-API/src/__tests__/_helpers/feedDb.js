@@ -74,4 +74,17 @@ const loadZip = (zipPath) => {
 const SAMPLE_DIR = path.resolve(__dirname, "../../../sample");
 const loadSample = () => loadDir(SAMPLE_DIR);
 
-module.exports = { loadDir, loadZip, loadSample, SAMPLE_DIR };
+// Real open-data feeds (see fixtures/real/README.md for sources and licences).
+const REAL_DIR = path.resolve(__dirname, "../fixtures/real");
+const REAL = { albi: "albi-libea-urbain.zip", vernon: "vernon-sngo.zip" };
+const _real = new Map();
+/** A real feed as a fresh in-memory database (parsed once per process, then copied). */
+const loadReal = (name) => {
+  if (!REAL[name]) throw new Error(`unknown real feed ${name}`);
+  if (!_real.has(name)) _real.set(name, loadZip(path.join(REAL_DIR, REAL[name])).serialize());
+  const db = new Database(_real.get(name));
+  db.pragma("foreign_keys = OFF");
+  return db;
+};
+
+module.exports = { loadDir, loadZip, loadSample, loadReal, SAMPLE_DIR, REAL_DIR };
