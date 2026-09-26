@@ -243,7 +243,15 @@ const serviceForDates = (db, model, baseId, dates, { existing = null } = {}) => 
   const set = new Set(dates);
   const insDate = db.prepare("INSERT OR REPLACE INTO calendar_dates (service_id, date, exception_type) VALUES (?, ?, ?)");
   if (base) {
-    const days = new Set(dates.map(fm.dowOf).filter((d) => String(base[COL[d]]) === "1"));
+    // Weekly days: the base's, and any weekday the dates run regularly (at
+    // least 3 times and on half of its occurrences over the period — a
+    // Saturday timetable copied to every Sunday makes Sundays, a one-off
+    // holiday stays an exception and keeps its service's day type).
+    const occurs = new Map();
+    const runs = new Map();
+    for (const d of calendars.rangeDates(dates[0], dates[dates.length - 1])) occurs.set(fm.dowOf(d), (occurs.get(fm.dowOf(d)) || 0) + 1);
+    for (const d of dates) runs.set(fm.dowOf(d), (runs.get(fm.dowOf(d)) || 0) + 1);
+    const days = new Set([...runs.keys()].filter((d) => String(base[COL[d]]) === "1" || (runs.get(d) >= 3 && runs.get(d) >= occurs.get(d) / 2)));
     const row = { ...base, service_id: id, start_date: dates[0], end_date: dates[dates.length - 1] };
     for (const d of DOW) row[COL[d]] = days.has(d) ? 1 : 0;
     const cols = Object.keys(row);

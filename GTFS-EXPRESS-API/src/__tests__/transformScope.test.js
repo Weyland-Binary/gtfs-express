@@ -166,6 +166,24 @@ describe("strict dates and services that stay what their id says", () => {
     expect(S.serviceForDates(d, buildFeedModel(d), "WKD", dates)).toBe(again);
   });
 
+  test("regular dates of a weekday the base does not run become weekly days; a one-off stays an exception", () => {
+    const d = sandboxOf(db);
+    const m = buildFeedModel(d);
+    // The Saturday service also running every Sunday of October: those Sundays are Sundays.
+    const sundays = S.activeDates(m, "SUN").filter((x) => x >= "20261001" && x <= "20261031" && S.dayTypeOf(m, "SUN", x) === "sun");
+    const sats = S.activeDates(m, "SAT").filter((x) => x >= "20261001" && x <= "20261031");
+    const id = S.serviceForDates(d, m, "SAT", [...sats, ...sundays].sort());
+    const m2 = buildFeedModel(d);
+    expect(sundays.every((x) => S.dayTypeOf(m2, id, x) === "sun")).toBe(true);
+    expect(sats.every((x) => S.dayTypeOf(m2, id, x) === "sat")).toBe(true);
+    // One Thursday added to the Saturdays is a Saturday-timetable day, not a weekly Thursday.
+    const thu = "20261015";
+    const id2 = S.serviceForDates(d, m2, "SAT", [...sats, thu].sort());
+    const m3 = buildFeedModel(d);
+    expect(S.dayTypeOf(m3, id2, thu)).toBe("sat");
+    expect(d.prepare("SELECT thursday FROM calendar WHERE service_id = ?").get(id2).thursday).toBe(0);
+  });
+
   test("the copy isolateScope keeps for the other dates keeps the trip's timed transfers", () => {
     const d = sandboxOf(db);
     const m = buildFeedModel(d);
