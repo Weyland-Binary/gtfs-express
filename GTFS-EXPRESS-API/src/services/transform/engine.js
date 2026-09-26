@@ -7,13 +7,16 @@
  *     title?, source?,                      // the brief it comes from
  *     operations: [{ id?, type, params, source?: { document?, page?, quote? }, clauses?: [ids] }],
  *     requirements?: { clauses: [...] },    // what must be true afterwards (conformanceService)
- *     weekend?: ["sat","sun"]
+ *     weekend?: ["sat","sun"],
+ *     costs?: { cost_per_km, cost_per_hour, currency },   // for the impact (defaults 4.2 EUR/km)
+ *     calendars?: { name: { from, to } | { dates } }      // named periods (scope.js)
  *   }
  *
  *   previewPlan(db, plan, opts)  → {
  *     id, steps: [{ id, type, status: applied|blocked|failed|skipped, ambiguities, summary, warnings }],
  *     blocked, changes: { table: { inserted, deleted, updated } }, diff: semanticDiff, lines: [text],
- *     integrity: [...], conformance: { before, after }, validation?: { before, after, new_errors }
+ *     integrity: [...], impact: impact.impactOf (km, hours, cost, fleet, stops losing service,
+ *     "major service change" flags), conformance: { before, after }, validation?: { before, after, new_errors }
  *   }
  *   commitPreview(sessionId, db, previewId) → { editId, description }
  *
@@ -136,6 +139,17 @@ const previewPlan = async (db, plan, { sessionId = null, dataVersion = null, val
   const integrityAfter = integrityOf(sandbox, after);
   const newIntegrity = integrityAfter.filter((x) => (integrityBefore.find((y) => y.code === x.code)?.count || 0) < x.count);
 
+  // What it costs to run and who it affects (the figures an amendment asks for).
+  let impact = null;
+  if (!changeset.empty) {
+    try {
+      const costs = plan?.costs && typeof plan.costs === "object" ? plan.costs : {};
+      impact = require("./impact").impactOf(before, after, { ...(Number.isFinite(Number(costs.cost_per_km)) ? { costPerKm: Number(costs.cost_per_km) } : {}), ...(Number.isFinite(Number(costs.cost_per_hour)) ? { costPerHour: Number(costs.cost_per_hour) } : {}), ...(costs.currency ? { currency: String(costs.currency).slice(0, 3) } : {}) });
+    } catch (err) {
+      impact = { error: err.message };
+    }
+  }
+
   let conformance = null;
   if (plan?.requirements) {
     const { checkFeedConformance } = require("./feedView");
@@ -157,7 +171,7 @@ const previewPlan = async (db, plan, { sessionId = null, dataVersion = null, val
   const title = String(plan?.title || "").slice(0, 120) || `${steps.filter((s) => s.status === "applied").length} change(s)`;
   if (!changeset.empty) _previews.set(previewId, { sessionId, dataVersion, at: Date.now(), redoOps, undoOps, tables: Object.keys(changeset.tables), title, blocked });
   sandbox.close();
-  return { id: changeset.empty ? null : previewId, title, steps, blocked, empty: changeset.empty, changes: summarize(changeset), diff, lines, integrity: newIntegrity, conformance, validation };
+  return { id: changeset.empty ? null : previewId, title, steps, blocked, empty: changeset.empty, changes: summarize(changeset), diff, lines, integrity: newIntegrity, impact, conformance, validation };
 };
 
 // New errors by rule: what the change broke, not what was already broken.

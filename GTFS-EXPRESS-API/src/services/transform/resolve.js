@@ -4,7 +4,9 @@
  *
  * Every resolver returns { value } or { ambiguity: { code, message, options? } }:
  *   route(model, ref)            "L3", "3", a route_id, a long name ("Gare ↔ Hôpital")
- *   stop(model, ref, opts)       a stop_id, a name (possibly served by a given route), or { lat, lon }
+ *   stop(model, ref, opts)       a stop_id, a name (possibly served by a given route), or { lat, lon };
+ *                                `group: true` accepts a name shared by stops of one place (both
+ *                                sides of a road, ≤ 400 m apart) and returns them all in `many`
  *   direction(model, routeId, ref) "0" | "1" | "both" | a headsign / terminus name
  *   days(ref)                    "weekday" | "saturday" | ["mon", …] | "school_days" …
  *   window(from, to)             "07:00"–"09:00" → seconds
@@ -16,6 +18,7 @@
 "use strict";
 
 const { nameKey } = require("../network/networkSpec")._internals;
+const { haversineMeters } = require("../../utils/geoUtils");
 
 const DOW = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 const DAY_WORDS = {
@@ -64,7 +67,20 @@ const stopsOfRoute = (model, routeId) => {
  * when one is given; otherwise it is an ambiguity. `platforms: true` accepts
  * a parent station's name for all its platforms.
  */
-const stop = (model, ref, { routeId = null, allowMany = false } = {}) => {
+// Stops that are one place for a passenger: the same name, a few hundred
+// metres apart at most (the two sides of a road, the bays of a square).
+const SAME_PLACE_M = 400;
+const samePlace = (hits) => {
+  if (hits.length < 2) return false;
+  const k = nameKey(hits[0].name);
+  if (!hits.every((h) => nameKey(h.name) === k)) return false;
+  const located = hits.filter((h) => h.lat != null && h.lon != null);
+  if (located.length !== hits.length) return false;
+  for (let i = 0; i < located.length; i++) for (let j = i + 1; j < located.length; j++) if (haversineMeters(located[i].lat, located[i].lon, located[j].lat, located[j].lon) > SAME_PLACE_M) return false;
+  return true;
+};
+
+const stop = (model, ref, { routeId = null, allowMany = false, group = false } = {}) => {
   if (ref && typeof ref === "object" && Number.isFinite(Number(ref.lat)) && Number.isFinite(Number(ref.lon)) && !ref.id) {
     return { value: { id: null, name: str(ref.name) || null, lat: Number(ref.lat), lon: Number(ref.lon), new: true } };
   }
@@ -82,6 +98,8 @@ const stop = (model, ref, { routeId = null, allowMany = false } = {}) => {
   }
   if (hits.length === 1) return { value: hits[0] };
   if (hits.length > 1 && allowMany) return { value: hits[0], many: hits };
+  // The same place (both sides of the road): all of them, when the caller can use a group.
+  if (hits.length > 1 && group && samePlace(hits)) return { value: hits[0], many: hits, samePlace: true };
   if (hits.length > 1) return amb("stop_ambiguous", `"${raw}" matches ${hits.length} stops.`, hits.map((s) => `${s.name} (${s.id})`));
   return amb("stop_unknown", `No stop "${raw}" in the feed.`);
 };

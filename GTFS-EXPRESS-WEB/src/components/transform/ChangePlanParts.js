@@ -299,6 +299,63 @@ export const describeItem = (t, it) => {
   }
 };
 
+const fmtNum = (n, lang) => (n == null ? "—" : Math.round(n).toLocaleString(lang || undefined));
+const signed = (n, lang) => `${n > 0 ? "+" : n < 0 ? "−" : "±"}${fmtNum(Math.abs(n), lang)}`;
+
+/** What the plan costs to run and who it affects (an amendment's figures). */
+export function ImpactCard({ impact }) {
+  const { t, language } = useLanguage();
+  const theme = useTheme();
+  if (!impact || impact.error) return null;
+  const rows = [
+    ["km", impact.totals.km],
+    ["hours", impact.totals.hours],
+    ["cost", impact.totals.cost, impact.currency],
+    ["fleet", impact.totals.fleet],
+    ["frequentStops", impact.totals.frequent_stops],
+  ];
+  const lost = impact.stops?.lost || [];
+  const lostDays = impact.stops?.lost_days || [];
+  const lostFrequent = impact.stops?.lost_frequent || [];
+  const flags = (impact.flags || []).filter((f) => f.code !== "stop_unserved");
+  return (
+    <Box data-testid="change-impact" sx={{ p: 1.25, borderRadius: "12px", background: theme.palette.background.paper, boxShadow: `0 0 0 1px ${theme.palette.divider}` }}>
+      <Typography sx={{ fontSize: "0.82rem", fontWeight: 800 }}>{t("transform.impact.title")}</Typography>
+      <Typography sx={{ fontSize: "0.68rem", color: "text.secondary", mb: 0.75 }}>{t("transform.impact.window", { from: impact.window.from, to: impact.window.to, days: impact.window.days })}</Typography>
+      <Box sx={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 0.75 }}>
+        {rows.map(([k, x, unit]) => (
+          <Box key={k} sx={{ px: 1, py: 0.75, borderRadius: "10px", background: soft(theme) }}>
+            <Typography sx={{ fontSize: "0.64rem", color: "text.secondary", fontWeight: 600 }}>{t(`transform.impact.${k}`)}</Typography>
+            <Typography sx={{ fontSize: "0.84rem", fontWeight: 800 }}>
+              {fmtNum(x.after, language)}
+              {unit ? ` ${unit}` : ""}
+            </Typography>
+            <Typography sx={{ fontSize: "0.66rem", fontWeight: 700, color: x.delta > 0 ? "warning.main" : x.delta < 0 ? "info.main" : "text.secondary" }}>
+              {signed(x.delta, language)}
+              {x.pct != null && x.delta ? ` (${x.pct > 0 ? "+" : ""}${x.pct} %)` : ""}
+            </Typography>
+          </Box>
+        ))}
+      </Box>
+      {flags.length > 0 && (
+        <Box sx={{ mt: 1, display: "flex", flexWrap: "wrap", gap: 0.5 }} data-testid="change-impact-flags">
+          {flags.map((f, i) => (
+            <Chip key={i} size="small" color="warning" variant="outlined" label={t(`transform.impact.flag.${f.code}`, { line: f.label || "" })} sx={{ height: 22, fontSize: "0.66rem", fontWeight: 700 }} />
+          ))}
+        </Box>
+      )}
+      {lost.length > 0 && (
+        <Alert severity="warning" sx={{ mt: 1, py: 0, fontSize: "0.74rem" }} data-testid="change-impact-lost">
+          {t("transform.impact.lost", { count: lost.length, stops: lost.slice(0, 8).map((s) => s.name).join(", ") })}
+        </Alert>
+      )}
+      {lostDays.length > 0 && <Typography sx={{ mt: 0.75, fontSize: "0.72rem", color: "text.secondary" }}>{t("transform.impact.lostDays", { count: lostDays.length, stops: [...new Set(lostDays.map((s) => s.name))].slice(0, 6).join(", ") })}</Typography>}
+      {lostFrequent.length > 0 && <Typography sx={{ mt: 0.5, fontSize: "0.72rem", color: "text.secondary" }}>{t("transform.impact.lostFrequent", { count: lostFrequent.length })}</Typography>}
+      <Typography sx={{ mt: 0.75, fontSize: "0.64rem", color: "text.disabled" }}>{t("transform.impact.costBasis", { perKm: impact.assumptions.cost_per_km, currency: impact.currency })}</Typography>
+    </Box>
+  );
+}
+
 export function ChangesPanel({ preview }) {
   const { t } = useLanguage();
   const theme = useTheme();
@@ -316,6 +373,7 @@ export function ChangesPanel({ preview }) {
   const totals = preview.diff?.totals;
   return (
     <Box data-testid="change-diff" sx={{ display: "flex", flexDirection: "column", gap: 1.25 }}>
+      <ImpactCard impact={preview.impact} />
       {totals && (
         <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
           {[["trips", totals.trips_weekday], ["vehicles", totals.vehicles_peak_weekday], ["routes", totals.routes], ["stops", totals.stops]].map(([k, x]) => (

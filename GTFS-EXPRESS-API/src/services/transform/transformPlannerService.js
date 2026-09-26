@@ -74,7 +74,9 @@ const buildSystemPrompt = () => `You are the service-change planner of GTFS Expr
 { "title", "operations": [{ "id": "op1", "type", "params": {…}, "source": { "quote", "page"? }, "clauses"?: [clause ids], "note"? }],
   "requirements"?: { "clauses": [{ "id", "kind", "level": "must"|"should", "text", "params": {…} }] },
   "calendars"?: { "<name>": { "from", "to" } | { "dates": [...] } | { "ranges": [{ "from", "to" }] } },
+  "costs"?: { "cost_per_km", "cost_per_hour", "currency" },   // when the brief states them: the impact (km, hours, cost, fleet) uses them
   "assumptions"?: [{ "text", "operation"?, "confidence" }] }
+The preview also gives the IMPACT: commercial km, service hours and cost over the real running days, vehicles at peak, stops that lose service, and "major service change" flags. When the brief sets a budget or a fleet cap, check it there (and add a fleet_max / budget_max clause).
 Dates YYYY-MM-DD, times HH:MM (may exceed 24:00 for after-midnight trips of the same service day).
 
 # Operation catalogue (* = required)
@@ -151,6 +153,8 @@ const summarizePreview = (p) => {
   }
   if (p.lines?.length) out.push(`Changes:\n${p.lines.slice(0, 40).map((l) => `  ${l}`).join("\n")}${p.lines.length > 40 ? `\n  … ${p.lines.length - 40} more` : ""}`);
   if (p.integrity?.length) out.push(`Integrity problems introduced: ${p.integrity.map((i) => `${i.code} ×${i.count}`).join(", ")}`);
+  const im = p.impact;
+  if (im && im.totals) out.push(`Impact (${im.window.days} running days): km ${im.totals.km.before} → ${im.totals.km.after} (${im.totals.km.pct ?? 0}%), hours ${im.totals.hours.before} → ${im.totals.hours.after}, cost ${im.totals.cost.before} → ${im.totals.cost.after} ${im.currency}, vehicles at peak ${im.totals.fleet.before} → ${im.totals.fleet.after}${im.stops.lost.length ? `; stops no longer served: ${im.stops.lost.map((s) => s.name).slice(0, 10).join(", ")}` : ""}${im.flags.filter((f) => f.code !== "stop_unserved").length ? `; major-change flags: ${im.flags.filter((f) => f.code !== "stop_unserved").map((f) => `${f.code} ${f.label || ""}`).join(", ")}` : ""}`);
   const res = p.conformance?.after?.results || [];
   if (res.length) out.push(`Clauses after the plan: ${res.map((r) => `${r.id} ${r.status}${r.status !== "pass" ? ` (expected ${r.expected}, measured ${r.measured})` : ""}`).join("; ")}`);
   return out.join("\n");
@@ -259,13 +263,14 @@ const createTools = (ctx) => {
           operations: { type: "array", items: OPERATION_SCHEMA },
           requirements: { type: "object" },
           calendars: { type: "object" },
+          costs: { type: "object", properties: { cost_per_km: { type: "number" }, cost_per_hour: { type: "number" }, currency: { type: "string" } } },
           assumptions: { type: "array", items: { type: "object", properties: { text: { type: "string" }, operation: { type: "string" }, confidence: { type: "string" } }, required: ["text"] } },
         },
         required: ["title", "operations"],
       },
     },
     async run(input) {
-      const plan = { title: String(input.title || "").slice(0, 160), operations: Array.isArray(input.operations) ? input.operations.slice(0, 100) : [], ...(input.requirements ? { requirements: input.requirements } : {}), ...(input.calendars ? { calendars: input.calendars } : {}), assumptions: Array.isArray(input.assumptions) ? input.assumptions.slice(0, 40) : [] };
+      const plan = { title: String(input.title || "").slice(0, 160), operations: Array.isArray(input.operations) ? input.operations.slice(0, 100) : [], ...(input.requirements ? { requirements: input.requirements } : {}), ...(input.calendars ? { calendars: input.calendars } : {}), ...(input.costs ? { costs: input.costs } : {}), assumptions: Array.isArray(input.assumptions) ? input.assumptions.slice(0, 40) : [] };
       const errors = validatePlan(plan);
       if (errors.length) return { content: `Plan refused:\n- ${errors.join("\n- ")}`, isError: true };
       ctx.plan = plan;
@@ -288,6 +293,7 @@ const createTools = (ctx) => {
           title: { type: "string" },
           requirements: { type: "object" },
           calendars: { type: "object" },
+          costs: { type: "object" },
           assumptions: { type: "array", items: { type: "object" } },
         },
       },
@@ -306,7 +312,7 @@ const createTools = (ctx) => {
           else plan.operations.push(op);
         }
       }
-      for (const k of ["title", "requirements", "calendars", "assumptions"]) if (input[k] !== undefined) plan[k] = input[k];
+      for (const k of ["title", "requirements", "calendars", "costs", "assumptions"]) if (input[k] !== undefined) plan[k] = input[k];
       const errors = validatePlan(plan);
       if (errors.length) return { content: `Patch refused:\n- ${errors.join("\n- ")}`, isError: true };
       ctx.plan = plan;

@@ -87,9 +87,9 @@ const resolveAdd = async (model, p, ctx) => {
   let stop = null;
   if (p.stop == null || p.stop === "") ambiguities.push({ param: "stop", code: "stop_missing", message: "Which stop (an existing stop, or a name with coordinates for a new one)?" });
   else {
-    const s = R.stop(model, p.stop, { routeId: route.value?.id });
+    const s = R.stop(model, p.stop, { routeId: route.value?.id, group: true });
     const isNew = p.stop && typeof p.stop === "object" && Number.isFinite(Number(p.stop.lat)) && Number.isFinite(Number(p.stop.lon));
-    if (s.value && !s.value.new) stop = { id: s.value.id, name: s.value.name, lat: s.value.lat, lon: s.value.lon };
+    if (s.value && !s.value.new) stop = { id: s.value.id, name: s.value.name, lat: s.value.lat, lon: s.value.lon, sides: (s.many || [s.value]).map((x) => ({ id: x.id, name: x.name, lat: x.lat, lon: x.lon })) };
     else if (isNew) {
       if (!String(p.stop.name || "").trim()) ambiguities.push({ param: "stop", code: "stop_name_missing", message: "What is the new stop called?" });
       else stop = { id: null, name: String(p.stop.name).trim().slice(0, 100), lat: Number(p.stop.lat), lon: Number(p.stop.lon), code: p.stop.code || null };
@@ -119,10 +119,21 @@ const resolveAdd = async (model, p, ctx) => {
       warnings.push(`A pattern of direction ${pat.direction_id} already serves ${stop.name}.`);
       continue;
     }
+    // The side of the road this pattern passes (the platform that lengthens it least).
+    const sides = stop.sides && stop.sides.length > 1 ? stop.sides : null;
+    let here = stop;
+    if (sides) {
+      if (sides.some((x) => pat.stops.includes(x.id))) {
+        warnings.push(`A pattern of direction ${pat.direction_id} already serves ${stop.name}.`);
+        continue;
+      }
+      const scored = sides.map((x) => ({ x, ins: insertionFor(model, pat, x, anchors) })).filter((c) => c.ins.index != null);
+      if (scored.length) here = { ...stop, ...scored.sort((a, b) => (a.ins.detour ?? 0) - (b.ins.detour ?? 0))[0].x };
+    }
     // Anchors name stops of one direction: in the other, before/after swap.
-    let ins = insertionFor(model, pat, stop, anchors);
+    let ins = insertionFor(model, pat, here, anchors);
     if (ins.skip && (anchors.after || anchors.before)) {
-      const swapped = insertionFor(model, pat, stop, { after: anchors.before, before: anchors.after });
+      const swapped = insertionFor(model, pat, here, { after: anchors.before, before: anchors.after });
       if (!swapped.skip) ins = swapped;
     }
     if (ins.skip) {
@@ -137,7 +148,7 @@ const resolveAdd = async (model, p, ctx) => {
       ambiguities.push({ param: "after", code: "insertion_ambiguous", message: `Direction ${pat.direction_id} passes twice near ${stop.name}: after ${name(model, ins.tie[0].a)} or after ${name(model, ins.tie[1].a)}?`, options: ins.tie.map((x) => name(model, x.a)) });
       continue;
     }
-    plans.push({ pattern: pat.key, trips, index: ins.index });
+    plans.push({ pattern: pat.key, trips, index: ins.index, stopId: here.id, at: { lat: here.lat, lon: here.lon } });
   }
   if (ambiguities.length) return { ambiguities, warnings };
   if (!plans.length) return { ambiguities: [{ param: "route", code: "nothing_to_change", message: `No trip of line ${label(route.value)} can take ${stop.name} as asked.` }], warnings };
@@ -148,8 +159,8 @@ const resolveAdd = async (model, p, ctx) => {
     const st = model.patterns.get(pl.pattern).stops;
     const prev = model.stops.get(st[pl.index - 1]);
     const next = model.stops.get(st[pl.index]);
-    if (prev) pairs.push([prev, stop]);
-    if (next) pairs.push([stop, next]);
+    if (prev) pairs.push([prev, pl.at]);
+    if (next) pairs.push([pl.at, next]);
   }
   const legs = ctx?.router ? await P.routeLegs(ctx.router, pairs) : new Map();
   return { value: { routeId: route.value.id, label: label(route.value), stop, scope, mode: mode || "shift", plans, legs }, ambiguities: [], warnings };
@@ -157,15 +168,15 @@ const resolveAdd = async (model, p, ctx) => {
 
 const applyAdd = (db, v, { model }) => {
   const warnings = [];
-  const stopId = v.stop.id || G.createStop(db, { name: v.stop.name, lat: v.stop.lat, lon: v.stop.lon, code: v.stop.code });
-  const coords = new Map([[stopId, { lat: v.stop.lat, lon: v.stop.lon }]]);
+  const newId = v.stop.id ? null : G.createStop(db, { name: v.stop.name, lat: v.stop.lat, lon: v.stop.lon, code: v.stop.code });
+  const coords = new Map(newId ? [[newId, { lat: v.stop.lat, lon: v.stop.lon }]] : []);
   let trips = 0;
   const sources = {};
   for (const pl of v.plans) {
     const scoped = S.isolateScope(db, model, pl.trips, v.scope);
     const stops = model.patterns.get(pl.pattern).stops;
     const positions = stops.map((s, i) => ({ stop_id: s, from: i }));
-    positions.splice(pl.index, 0, { stop_id: stopId, from: null });
+    positions.splice(pl.index, 0, { stop_id: newId || pl.stopId, from: null });
     const out = P.resequence(db, model, scoped, { positions, mode: v.mode, legs: v.legs, coords });
     trips += out.trips;
     warnings.push(...out.warnings);
@@ -190,7 +201,7 @@ const resolveRemove = async (model, p, ctx) => {
     else route = r.value;
   }
   const { scope, mode } = await commonResolve(model, p, ctx, ambiguities);
-  const s = R.stop(model, p.stop, { routeId: route?.id });
+  const s = R.stop(model, p.stop, { routeId: route?.id, group: true });
   if (s.ambiguity) ambiguities.push({ param: "stop", ...s.ambiguity });
   let direction = "both";
   if (route) {
@@ -201,8 +212,9 @@ const resolveRemove = async (model, p, ctx) => {
   if (ambiguities.length) return { ambiguities, warnings };
   // A station stands for its platforms.
   const target = s.value;
-  const ids = new Set([target.id]);
-  for (const x of model.stops.values()) if (x.parent === target.id) ids.add(x.id);
+  // The stop, the other stops of the same place (both sides of the road), a station's platforms.
+  const ids = new Set((s.many || [target]).map((x) => x.id));
+  for (const x of model.stops.values()) if (ids.has(x.parent)) ids.add(x.id);
   const plans = [];
   const routes = new Set();
   for (const pat of model.patterns.values()) {
