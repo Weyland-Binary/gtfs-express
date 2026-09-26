@@ -356,8 +356,22 @@ const buildReport = ({ spec, compiled, ingested, sessionId, territoryPlace = nul
   } catch (err) {
     console.warn("network report: audit failed:", err.message);
   }
+  // The built feed measured like any other (uploaded or changed by a plan):
+  // quality on the planners' scale, minimum fleet, consumer checks.
+  let built = null;
+  try {
+    const { ensureDbHandle } = require("../db/connection");
+    const db = ensureDbHandle(sessionId);
+    if (db) {
+      const { measureFeed, compactMeasure } = require("../transform/measure");
+      built = compactMeasure(measureFeed(db));
+    }
+  } catch (err) {
+    console.warn("network report: measure failed:", err.message);
+  }
   return {
     design: designReport,
+    built,
     validation: validationSummary(ingested?.validationReport),
     audit,
     territory: territory ? { place: territory.place.display_name, query: territory.place.query, population: territory.population?.value ?? null, sources: territory.sources } : null,

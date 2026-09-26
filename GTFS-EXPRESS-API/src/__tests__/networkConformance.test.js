@@ -200,5 +200,13 @@ describe("the verdict travels", () => {
     expect(res.status).toBe(201);
     const c = res.body.report.conformance;
     expect(Object.fromEntries(c.results.map((r) => [r.id, r.status]))).toEqual({ a: "pass", peak5: "fail", gh: "pass" });
+    // The built feed measured like any other: quality, fewest vehicles, consumer checks.
+    const b = res.body.report.built;
+    expect(b.score).toBeGreaterThan(0);
+    expect(b.grade).toMatch(/^[A-E]$/);
+    expect(b.lines.length).toBeGreaterThan(0);
+    expect(b.fleet.vehicles).toBeGreaterThan(0);
+    expect(b.fleet.vehicles_line_by_line).toBeGreaterThanOrEqual(b.fleet.vehicles);
+    expect(Array.isArray(b.checks)).toBe(true);
   });
 });

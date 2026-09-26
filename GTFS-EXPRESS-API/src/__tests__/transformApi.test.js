@@ -33,6 +33,14 @@ describe("transform API: preview → commit → undo → redo", () => {
     expect(op.params.map((p) => p.name)).toEqual(expect.arrayContaining(["route", "days", "from", "to", "headway_min"]));
   });
 
+  test("the feed's health: quality, minimum fleet and consumer checks", async () => {
+    const r = await api(sessionId).get("/transform/quality");
+    expect(r.status).toBe(200);
+    expect(r.body.grade).toMatch(/^[A-E]$/);
+    expect(r.body.fleet.vehicles).toBeGreaterThan(0);
+    expect(Array.isArray(r.body.checks)).toBe(true);
+  });
+
   test("the overview gives each line its service per day type", async () => {
     const r = await api(sessionId).get("/transform/overview");
     expect(r.status).toBe(200);

@@ -81,3 +81,18 @@ describe("consumer checks (beyond the validator)", () => {
     expect(newChecks([{ code: "x", count: 2 }], [{ code: "x", count: 3 }, { code: "y", count: 1 }]).map((c) => c.code)).toEqual(["x", "y"]);
   });
 });
+
+describe("one yardstick for any feed", () => {
+  const { measureFeed, compactMeasure } = require("../services/transform/measure");
+
+  test("Albi: quality, the fewest vehicles of the busiest weekday, consumer checks", () => {
+    const m = measureFeed(loadReal("albi"));
+    expect(m.grade).toMatch(/^[A-E]$/);
+    expect(m.fleet.vehicles).toBe(32);
+    expect(m.fleet.vehicles_line_by_line).toBe(43);
+    expect(m.checks.map((c) => c.code)).toContain("low_contrast");
+    const c = compactMeasure(m);
+    expect(c.lines.find((l) => l.label === "B")).toEqual(expect.objectContaining({ tier: "structuring", score: expect.any(Number) }));
+    expect(JSON.stringify(c).length).toBeLessThan(JSON.stringify(m).length);
+  });
+});

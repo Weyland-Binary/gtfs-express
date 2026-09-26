@@ -21,13 +21,14 @@ vi.mock("../contexts/EditModeContext", () => ({ useEditMode: () => editState }))
 const api = {
   fetchOperations: vi.fn(),
   fetchOverview: vi.fn(),
+  fetchHealth: vi.fn(),
   previewChangePlan: vi.fn(),
   commitChangePlan: vi.fn(),
   streamChangePlan: vi.fn(),
 };
 vi.mock("../utils/transformApi", async () => {
   const real = await vi.importActual("../utils/transformApi");
-  return { ...real, fetchOperations: (...a) => api.fetchOperations(...a), fetchOverview: (...a) => api.fetchOverview(...a), previewChangePlan: (...a) => api.previewChangePlan(...a), commitChangePlan: (...a) => api.commitChangePlan(...a), streamChangePlan: (...a) => api.streamChangePlan(...a) };
+  return { ...real, fetchOperations: (...a) => api.fetchOperations(...a), fetchOverview: (...a) => api.fetchOverview(...a), fetchHealth: (...a) => api.fetchHealth(...a), previewChangePlan: (...a) => api.previewChangePlan(...a), commitChangePlan: (...a) => api.commitChangePlan(...a), streamChangePlan: (...a) => api.streamChangePlan(...a) };
 });
 
 import ChangeStudio from "../components/transform/ChangeStudio";
@@ -70,6 +71,7 @@ describe("ChangeStudio", () => {
     editState.recordEdit.mockClear();
     api.fetchOperations.mockResolvedValue({ operations: CATALOGUE });
     api.fetchOverview.mockResolvedValue({ routes: [{ id: "S1", short_name: "S1", long_name: "Broadway" }] });
+    api.fetchHealth.mockResolvedValue({ score: 79, grade: "B", dimensions: [{ id: "frequency", score: 70 }], lines: [{ id: "S1", tier: "structuring" }], fleet: { date: "20261006", vehicles: 32, vehicles_line_by_line: 43, deadhead_km: 266 }, checks: [{ code: "low_contrast", count: 2 }] });
     api.previewChangePlan.mockImplementation(async (plan) => (plan.operations[0].params.days ? readyPreview(plan) : blockedPreview(plan)));
     api.commitChangePlan.mockResolvedValue({ ok: true, description: "S1", tables: ["trips"] });
   });
@@ -78,6 +80,10 @@ describe("ChangeStudio", () => {
     const onClose = vi.fn();
     mount(onClose);
     expect(screen.getByTestId("change-welcome")).toBeTruthy();
+    // Before any change: the feed's health on the yardstick every preview compares against.
+    expect((await screen.findByTestId("network-health-score")).textContent).toBe("B 79");
+    expect(screen.getByTestId("network-health-fleet").textContent).toBe("transform.health.fleet");
+    expect(within(screen.getByTestId("network-health-checks")).getByText("low_contrast: 2")).toBeTruthy();
     fireEvent.click(screen.getByTestId("change-add"));
     const dialog = await screen.findByTestId("change-operation-dialog");
     const typeInput = within(dialog).getByTestId("change-type");

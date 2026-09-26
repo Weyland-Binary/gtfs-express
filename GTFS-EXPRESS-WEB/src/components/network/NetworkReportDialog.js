@@ -16,6 +16,7 @@ import ExploreOutlinedIcon from "@mui/icons-material/ExploreOutlined";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { QualityCard } from "./PlanCards";
 import { BriefBadge, BriefChecklist } from "./BriefChecklist";
+import { NetworkHealthCard } from "../transform/ChangePlanParts";
 
 export default function NetworkReportDialog({ open, report, onClose, onRefine }) {
   const { t } = useLanguage();
@@ -57,6 +58,7 @@ export default function NetworkReportDialog({ open, report, onClose, onRefine })
           </Box>
         ) : null}
         {report.design ? <QualityCard quality={report.design} dense /> : null}
+        {report.built ? <NetworkHealthCard health={report.built} title={t("report.built.title")} subtitle={t("report.built.subtitle")} /> : null}
         <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.6 }}>
           {v.unverified ? (
             <Chip size="small" icon={<HelpOutlineIcon sx={{ fontSize: 14 }} />} variant="outlined" label={t("network.result.validationUnverified")} data-testid="report-validation" sx={{ height: 24, fontSize: "0.7rem", fontWeight: 700 }} />

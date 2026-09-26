@@ -4,6 +4,7 @@
  *
  *   fetchOperations()               GET  /transform/operations   the catalogue
  *   fetchOverview()                 GET  /transform/overview     lines and their service
+ *   fetchHealth()                   GET  /transform/quality      quality, minimum fleet, consumer checks
  *   previewChangePlan(plan, opts)   POST /transform/preview      sandbox run, nothing written
  *   commitChangePlan(previewId)     POST /transform/commit       one undoable edit (edit mode)
  *   streamChangePlan({...})         POST /transform/plan         the change planner (SSE)
@@ -28,6 +29,7 @@ const post = (path, body) => fetchWithSession(`${API_BASE_URL}${path}`, { method
 
 export const fetchOperations = () => fetchWithSession(`${API_BASE_URL}/transform/operations`).then(json);
 export const fetchOverview = () => fetchWithSession(`${API_BASE_URL}/transform/overview`).then(json);
+export const fetchHealth = () => fetchWithSession(`${API_BASE_URL}/transform/quality`).then(json);
 export const previewChangePlan = (plan, { validate = false } = {}) => post("/transform/preview", { plan, validate });
 export const commitChangePlan = (previewId) => post("/transform/commit", { previewId });
 

@@ -410,6 +410,60 @@ export function ChangesPanel({ preview }) {
   );
 }
 
+/**
+ * The feed's health on one yardstick — whether it was uploaded, designed in
+ * the Network Studio or changed by a plan: quality on the planners' scale,
+ * the fewest vehicles that run its busiest weekday, and what big consumers
+ * would reject.
+ */
+export function NetworkHealthCard({ health, title = null, subtitle = null }) {
+  const { t, language } = useLanguage();
+  const theme = useTheme();
+  if (!health || health.error || health.score == null) return null;
+  const tiers = {};
+  for (const l of health.lines || []) if (l.tier) tiers[l.tier] = (tiers[l.tier] || 0) + 1;
+  const checks = (health.checks || []).filter((c) => c.count > 0 && c.code !== "error");
+  const f = health.fleet;
+  return (
+    <Box data-testid="network-health" sx={{ p: 1.25, borderRadius: "12px", background: theme.palette.background.paper, boxShadow: `0 0 0 1px ${theme.palette.divider}` }}>
+      <Box sx={{ display: "flex", alignItems: "baseline", gap: 1 }}>
+        <Typography sx={{ fontSize: "0.82rem", fontWeight: 800, flex: 1 }}>{title || t("transform.health.title")}</Typography>
+        <Typography sx={{ fontSize: "0.9rem", fontWeight: 800 }} data-testid="network-health-score">
+          {health.grade} {Math.round(health.score)}
+        </Typography>
+      </Box>
+      <Typography sx={{ fontSize: "0.68rem", color: "text.secondary", mb: 0.75 }}>{subtitle || t("transform.health.subtitle")}</Typography>
+      <Box sx={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(118px, 1fr))", gap: 0.6 }}>
+        {(health.dimensions || []).map((d) => (
+          <Box key={d.id} sx={{ px: 1, py: 0.6, borderRadius: "10px", background: soft(theme) }}>
+            <Typography sx={{ fontSize: "0.62rem", color: "text.secondary", fontWeight: 600 }}>{t(`transform.quality.dim.${d.id}`)}</Typography>
+            <Typography sx={{ fontSize: "0.8rem", fontWeight: 800 }}>{d.score == null ? "—" : Math.round(d.score)}</Typography>
+          </Box>
+        ))}
+      </Box>
+      {f && (
+        <Typography sx={{ mt: 0.75, fontSize: "0.74rem" }} data-testid="network-health-fleet">
+          {t("transform.health.fleet", { vehicles: f.vehicles, lineByLine: f.vehicles_line_by_line, deadhead: fmtNum(f.deadhead_km, language) })}
+        </Typography>
+      )}
+      {Object.keys(tiers).length > 0 && (
+        <Box sx={{ mt: 0.75, display: "flex", flexWrap: "wrap", gap: 0.5 }}>
+          {["structuring", "complementary", "coverage"].filter((k) => tiers[k]).map((k) => (
+            <Chip key={k} size="small" variant="outlined" label={t("transform.health.tier", { count: tiers[k], tier: tf(t, `transform.quality.tier.${k}`, null, k) })} sx={{ height: 22, fontSize: "0.66rem", fontWeight: 700 }} />
+          ))}
+        </Box>
+      )}
+      <Box sx={{ mt: 0.75, display: "flex", flexWrap: "wrap", gap: 0.5 }} data-testid="network-health-checks">
+        {checks.length ? (
+          checks.map((c) => <Chip key={c.code} size="small" color="warning" variant="outlined" label={tf(t, `transform.health.check.${c.code}`, { count: c.count }, `${c.code}: ${c.count}`)} sx={{ height: 22, fontSize: "0.66rem", fontWeight: 700 }} />)
+        ) : (
+          <Typography sx={{ fontSize: "0.72rem", color: "success.main" }}>{t("transform.health.checksOk")}</Typography>
+        )}
+      </Box>
+    </Box>
+  );
+}
+
 /** The network's quality on the planners' scale, before → after the plan. */
 export function QualityCard({ quality }) {
   const { t } = useLanguage();

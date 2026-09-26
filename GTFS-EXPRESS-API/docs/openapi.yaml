@@ -1287,7 +1287,7 @@ paths:
     get:
       tags:
         - Transform
-      summary: "The network's quality report measured on its GTFS with planners' thresholds (TCQSM/TCRP 165, Cerema tiers, legibility, French urban criteria): score and grade, dimensions (frequency, span, spacing, speed, legibility, network) with findings, per-line measures and tier, frequent stops, connectivity."
+      summary: "The network's health measured on its GTFS, the same yardstick for an uploaded feed, a network designed in the Network Studio and a plan's before → after: quality with planners' thresholds (TCQSM/TCRP 165, Cerema tiers, legibility, French urban criteria: score and grade, dimensions with findings, per-line measures and tier, frequent stops, connectivity), `fleet` (the fewest vehicles that run the busiest weekday, with interlining and line by line, dead-running km) and `checks` (what big consumers reject beyond the spec)."
       security:
         - SessionId: []
       responses:

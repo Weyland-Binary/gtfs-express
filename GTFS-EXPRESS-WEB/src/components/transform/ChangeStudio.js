@@ -34,8 +34,8 @@ import { useEditMode } from "../../contexts/EditModeContext";
 import { useFeatures } from "../../utils/featuresApi";
 import MarkdownText from "../chat/MarkdownText";
 import { BRIEF_ACCEPT, uploadBriefDocument, deleteBriefDocument } from "../../utils/networkStudioApi";
-import { fetchOperations, fetchOverview, previewChangePlan, commitChangePlan, streamChangePlan, withParam, nextOpId } from "../../utils/transformApi";
-import { OperationCard, OperationDialog, ChangesPanel, ChecksPanel } from "./ChangePlanParts";
+import { fetchOperations, fetchOverview, fetchHealth, previewChangePlan, commitChangePlan, streamChangePlan, withParam, nextOpId } from "../../utils/transformApi";
+import { OperationCard, OperationDialog, ChangesPanel, ChecksPanel, NetworkHealthCard } from "./ChangePlanParts";
 import { soft } from "../network/StudioUI";
 
 const EMPTY_PLAN = { title: "", operations: [] };
@@ -52,6 +52,7 @@ export default function ChangeStudio({ open, onClose, initialPlan = null }) {
 
   const [catalogue, setCatalogue] = useState([]);
   const [routes, setRoutes] = useState([]);
+  const [health, setHealth] = useState(null);
   const [plan, setPlan] = useState(EMPTY_PLAN);
   const [preview, setPreview] = useState(null);
   const [previewing, setPreviewing] = useState(false);
@@ -76,6 +77,10 @@ export default function ChangeStudio({ open, onClose, initialPlan = null }) {
     fetchOverview()
       .then((d) => setRoutes(d.routes || []))
       .catch(() => setRoutes([]));
+    // The feed as it is now, on the yardstick every preview compares against.
+    fetchHealth()
+      .then(setHealth)
+      .catch(() => setHealth(null));
   }, [open]);
   useEffect(() => {
     scrollRef.current?.scrollTo?.({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -394,6 +399,7 @@ export default function ChangeStudio({ open, onClose, initialPlan = null }) {
             {tab === "plan" && (
               <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
                 {!plan.operations.length && <Typography sx={{ fontSize: "0.8rem", color: "text.secondary", p: 1 }}>{t("transform.emptyPlanHint")}</Typography>}
+                {!plan.operations.length && <NetworkHealthCard health={health} />}
                 {plan.operations.map((op, i) => (
                   <OperationCard key={op.id} op={op} step={stepOf(op.id)} def={catalogue.find((c) => c.type === op.type)} index={i} count={plan.operations.length} busy={streaming || previewing || committing} onAnswer={answer} onRemove={removeOp} onMove={moveOp} onEdit={(o) => setDialog({ initial: o })} />
                 ))}

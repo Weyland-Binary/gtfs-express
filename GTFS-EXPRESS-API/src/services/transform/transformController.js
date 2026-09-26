@@ -70,8 +70,8 @@ const overviewOf = (model) => {
 const getQuality = (req, res) => {
   const ctx = requireSession(req, res);
   if (!ctx) return;
-  const { feedQuality } = require("./feedQuality");
-  res.json(feedQuality(buildFeedModel(ctx.db)));
+  // Quality, minimum fleet and consumer checks: the same yardstick as a plan's before → after.
+  res.json(require("./measure").measureFeed(ctx.db));
 };
 
 const getOverview = (req, res) => {
