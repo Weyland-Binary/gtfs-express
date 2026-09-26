@@ -87,6 +87,21 @@ const cloneTrip = (db, tripId, { newId = null, serviceId = null, shiftSec = 0, p
   return id;
 };
 
+/** The trip-level transfers of `fromId` (from_trip_id / to_trip_id) repeated for `toId`: a copy of a trip keeps its timed connections. */
+const copyTripTransfers = (db, fromId, toId) => {
+  const cols = db.prepare("PRAGMA table_info(transfers)").all().map((c) => c.name);
+  if (!cols.includes("from_trip_id") || !cols.includes("to_trip_id")) return 0;
+  const data = cols.filter((c) => c !== "id");
+  const ins = db.prepare(`INSERT INTO transfers (${data.join(", ")}) VALUES (${data.map(() => "?").join(", ")})`);
+  let n = 0;
+  for (const r of db.prepare("SELECT * FROM transfers WHERE from_trip_id = ? OR to_trip_id = ?").all(fromId, fromId)) {
+    const row = { ...r, from_trip_id: r.from_trip_id === fromId ? toId : r.from_trip_id, to_trip_id: r.to_trip_id === fromId ? toId : r.to_trip_id };
+    ins.run(data.map((c) => (row[c] === undefined ? null : row[c])));
+    n += 1;
+  }
+  return n;
+};
+
 /** Delete trips with their stop_times, frequencies and trip-level transfers. */
 const deleteTrips = (db, tripIds) => {
   const ids = [...new Set(tripIds)];
@@ -105,9 +120,12 @@ const deleteTrips = (db, tripIds) => {
 
 /** Services left without any trip are removed (calendar and exceptions). */
 const dropUnusedServices = (db, serviceIds) => {
+  // Fares v2 timeframes and flex booking rules name services too.
+  const refs = [["timeframes", "service_id"], ["booking_rules", "prior_notice_service_id"]].filter(([t, c]) => db.prepare("PRAGMA table_info(" + t + ")").all().some((x) => x.name === c));
   let n = 0;
   for (const id of new Set(serviceIds)) {
     if (db.prepare("SELECT 1 FROM trips WHERE service_id = ? LIMIT 1").get(id)) continue;
+    if (refs.some(([t, c]) => db.prepare(`SELECT 1 FROM ${t} WHERE ${c} = ? LIMIT 1`).get(id))) continue;
     db.prepare("DELETE FROM calendar WHERE service_id = ?").run(id);
     db.prepare("DELETE FROM calendar_dates WHERE service_id = ?").run(id);
     n += 1;
@@ -218,7 +236,7 @@ const slug = (v) =>
 const createStop = (db, { id = null, name, lat, lon, code = null, parent_station = null, wheelchair_boarding = null, platform_code = null, zone_id = null } = {}) => {
   if (!name || !Number.isFinite(Number(lat)) || !Number.isFinite(Number(lon))) throw new Error("a new stop needs a name and coordinates");
   const sid = id && !db.prepare("SELECT 1 FROM stops WHERE stop_id = ?").get(id) ? id : uniqueId(db, "stops", "stop_id", `NEW_${slug(name) || "STOP"}`);
-  const row = { stop_id: sid, stop_name: name, stop_lat: Math.round(Number(lat) * 1e6) / 1e6, stop_lon: Math.round(Number(lon) * 1e6) / 1e6, location_type: 0, stop_code: code, parent_station, wheelchair_boarding, platform_code, zone_id };
+  const row = { stop_id: sid, stop_name: name, stop_lat: Math.round(Number(lat) * 1e6) / 1e6, stop_lon: Math.round(Number(lon) * 1e6) / 1e6, location_type: "0", stop_code: code, parent_station, wheelchair_boarding, platform_code, zone_id };
   const cols = db.prepare("PRAGMA table_info(stops)").all().map((c) => c.name).filter((c) => row[c] !== undefined && row[c] !== null);
   db.prepare(`INSERT INTO stops (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`).run(cols.map((c) => row[c]));
   return sid;
@@ -226,4 +244,4 @@ const createStop = (db, { id = null, name, lat, lon, code = null, parent_station
 
 const newShapeId = (db, base) => uniqueId(db, "shapes", "shape_id", base);
 
-module.exports = { uniqueId, serviceDows, cloneTrip, deleteTrips, dropUnusedServices, isolateDays, tripsIn, shiftTime, stopTimesOf, rewriteTrip, createStop, newShapeId, slug, DOW };
+module.exports = { uniqueId, serviceDows, cloneTrip, copyTripTransfers, deleteTrips, dropUnusedServices, isolateDays, tripsIn, shiftTime, stopTimesOf, rewriteTrip, createStop, newShapeId, slug, DOW };

@@ -128,3 +128,64 @@ describe("isolateScope and services", () => {
     expect(p.lines.join("\n")).toMatch(/S1 · weekday \(20260907→20261030, \d+ days\) · am_peak · dir 0: every \d+ → 12 min/);
   });
 });
+
+describe("strict dates and services that stay what their id says", () => {
+  test("parseDate takes a whole date that exists, nothing less", () => {
+    expect(calendars.parseDate("2026-07-14")).toBe("20260714");
+    expect(calendars.parseDate("2026-07-14T00:00:00Z")).toBe("20260714");
+    expect(calendars.parseDate("14/07/2026")).toBe("20260714");
+    expect(calendars.parseDate("2026-02-31")).toBeNull();
+    expect(calendars.parseDate("2026-07-14,2026-08-15")).toBeNull();
+    expect(calendars.parseDate("25/12")).toBeNull();
+  });
+
+  test("dates and except as a string are read, a bad date is asked, never dropped", async () => {
+    const one = await S.resolveScope(model, { dates: "2026-10-13" }, {});
+    expect([...one.value.dates]).toEqual(["20261013"]);
+    expect(S.isAll(one.value)).toBe(false);
+    const two = await S.resolveScope(model, { dates: "2026-10-13, 2026-10-14" }, {});
+    expect([...two.value.dates]).toEqual(["20261013", "20261014"]);
+    const named = await S.resolveScope(model, { dates: "vacances" }, {});
+    expect(named.ambiguities.map((a) => a.code)).toEqual(["date_invalid"]);
+    const bad = await S.resolveScope(model, { except: ["25/12", "2026-12-24"] }, {});
+    expect(bad.ambiguities.map((a) => [a.param, a.code])).toEqual([["except", "date_invalid"]]);
+    const ex = await S.resolveScope(model, { except: "2026-12-24" }, {});
+    expect([...ex.value.except]).toEqual(["20261224"]);
+  });
+
+  test("serviceForDates does not reuse an id an earlier step changed", () => {
+    const d = sandboxOf(db);
+    const m = buildFeedModel(d);
+    const dates = S.activeDates(m, "WKD").filter((x) => x >= "20261001");
+    const id = S.serviceForDates(d, m, "WKD", dates);
+    d.prepare("INSERT OR REPLACE INTO calendar_dates (service_id, date, exception_type) VALUES (?, ?, 2)").run(id, dates[3]);
+    const again = S.serviceForDates(d, m, "WKD", dates);
+    expect(again).not.toBe(id);
+    expect(S.activeDates(buildFeedModel(d), again)).toEqual(dates);
+    // Unchanged, it is reused.
+    expect(S.serviceForDates(d, buildFeedModel(d), "WKD", dates)).toBe(again);
+  });
+
+  test("the copy isolateScope keeps for the other dates keeps the trip's timed transfers", () => {
+    const d = sandboxOf(db);
+    const m = buildFeedModel(d);
+    const tid = [...m.trips.values()].find((t) => t.service_id === "WKD").id;
+    const stop = m.trips.get(tid).stops[1];
+    d.prepare("INSERT INTO transfers (from_stop_id, to_stop_id, from_trip_id, transfer_type) VALUES (?, ?, ?, 1)").run(stop, stop, tid);
+    S.isolateScope(d, m, [tid], { dows: null, from: "20261001", to: null, dates: null, except: null });
+    const rows = d.prepare("SELECT from_trip_id FROM transfers WHERE from_trip_id LIKE ?").all(`${tid}%`).map((r) => r.from_trip_id).sort();
+    expect(rows.length).toBe(2);
+    expect(rows[0]).toBe(tid);
+  });
+
+  test("a new stop and new stop_times rows store enums as integers, not 0.0", async () => {
+    const d = sandboxOf(db);
+    const p = await previewPlan(d, { operations: [{ type: "add_stop", params: { route: "S1", stop: { name: "Enum Plaza", lat: 40.79, lon: -73.972 }, direction: "0" } }] });
+    expect(p.blocked).toBe(false);
+    const { commitPreview } = require("../services/transform/engine");
+    commitPreview("t", d, p.id);
+    expect(d.prepare("SELECT COUNT(*) AS n FROM stops WHERE location_type LIKE '%.%' OR wheelchair_boarding LIKE '%.%'").get().n).toBe(0);
+    expect(d.prepare("SELECT COUNT(*) AS n FROM stop_times WHERE timepoint LIKE '%.%' OR pickup_type LIKE '%.%' OR drop_off_type LIKE '%.%'").get().n).toBe(0);
+    expect(d.prepare("SELECT location_type FROM stops WHERE stop_name = 'Enum Plaza'").get().location_type).toBe("0");
+  });
+});

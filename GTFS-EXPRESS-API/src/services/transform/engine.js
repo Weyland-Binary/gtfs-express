@@ -87,6 +87,20 @@ const integrityOf = (db, model = null) => {
  * Run the plan on a sandbox and describe the result. `opts.validate`
  * (async function(db) → report) runs the canonical validator on both sides.
  */
+const ENUM_COLUMNS = {
+  stops: ["location_type", "wheelchair_boarding"],
+  stop_times: ["pickup_type", "drop_off_type", "continuous_pickup", "continuous_drop_off", "timepoint"],
+  trips: ["direction_id", "wheelchair_accessible", "bikes_allowed", "cars_allowed"],
+  routes: ["route_type", "continuous_pickup", "continuous_drop_off"],
+};
+const normalizeEnums = (db, tables) => {
+  for (const [t, cols] of Object.entries(ENUM_COLUMNS)) {
+    if (!tables.has(t)) continue;
+    const have = new Set(db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name));
+    for (const c of cols.filter((x) => have.has(x))) db.prepare(`UPDATE ${t} SET ${c} = CAST(CAST(${c} AS REAL) AS INTEGER) WHERE typeof(${c}) = 'text' AND ${c} GLOB '*[0-9].0'`).run();
+  }
+};
+
 const previewPlan = async (db, plan, { sessionId = null, dataVersion = null, validate = null, territory = null, tables = null, router = null, country = null, fetchImpl = null } = {}) => {
   prune();
   const ops = (Array.isArray(plan?.operations) ? plan.operations : []).slice(0, MAX_OPERATIONS);
@@ -127,6 +141,9 @@ const previewPlan = async (db, plan, { sessionId = null, dataVersion = null, val
       steps.push({ id, type: def.type, status: "failed", ambiguities: [], summary: null, warnings: resolved.warnings || [], error: err.message, source: op.source || null });
     }
   }
+  // better-sqlite3 binds a JS number as REAL: in a TEXT column 0 becomes
+  // "0.0", an invalid GTFS enum. Operators write strings; this is the net.
+  if (touched.size) sandbox.transaction(() => normalizeEnums(sandbox, touched))();
   // Scoped changes split services: merge the ones that ended up running the
   // same dates as another, drop the ones left without trips.
   let after = model;

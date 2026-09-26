@@ -109,6 +109,17 @@ const describeScope = (scope) => {
 };
 
 /**
+ * A list of dates as given: an array, or a string of dates separated by
+ * commas, semicolons or spaces. null when the value is a name (a period).
+ */
+const dateList = (v) => {
+  if (Array.isArray(v)) return v.map((x) => String(x).trim()).filter(Boolean);
+  const s = String(v).trim();
+  if (!/^[\d\s,;/:TZ+.-]+$/.test(s)) return null;
+  return s.split(/[\s,;]+/).filter(Boolean);
+};
+
+/**
  * Read the scope parameters of an operation. `required.days`: the days
  * must be said (e.g. set_headway: "every 8 min" means nothing without
  * the day type).
@@ -129,14 +140,18 @@ const resolveScope = async (model, p, ctx = {}, { daysRequired = false } = {}) =
     else scope[key] = y;
   }
   if (scope.from && scope.to && scope.to < scope.from) ambiguities.push({ param: "to_date", code: "dates_inverted", message: `The period ends (${scope.to}) before it starts (${scope.from}).` });
-  if (Array.isArray(p.dates) && p.dates.length) {
-    const set = new Set();
-    for (const d of p.dates) {
-      const y = calendars.parseDate(d);
-      if (!y) ambiguities.push({ param: "dates", code: "date_invalid", message: `"${d}" is not a date (YYYY-MM-DD).` });
-      else set.add(y);
+  if (p.dates != null && p.dates !== "" && !(Array.isArray(p.dates) && !p.dates.length)) {
+    const list = dateList(p.dates);
+    if (!list) ambiguities.push({ param: "dates", code: "date_invalid", message: `"${p.dates}" is not a list of dates (YYYY-MM-DD); a named period goes in "period".` });
+    else {
+      const set = new Set();
+      for (const d of list) {
+        const y = calendars.parseDate(d);
+        if (!y) ambiguities.push({ param: "dates", code: "date_invalid", message: `"${d}" is not a date (YYYY-MM-DD).` });
+        else set.add(y);
+      }
+      scope.dates = set;
     }
-    scope.dates = set;
   }
   const range = model.range || { start: "19700101", end: "21000101" };
   const namedOpts = { calendars: ctx.calendars || null, country: ctx.country || null, region: p.region || ctx.region || null, from: range.start, to: range.end, fetchImpl: ctx.fetchImpl || null };
@@ -149,9 +164,16 @@ const resolveScope = async (model, p, ctx = {}, { daysRequired = false } = {}) =
     }
   }
   if (p.except) {
-    if (Array.isArray(p.except)) {
-      scope.except = new Set(p.except.map(calendars.parseDate).filter(Boolean));
-      scope.exceptLabel = `${scope.except.size} date(s)`;
+    const list = dateList(p.except);
+    if (list) {
+      const set = new Set();
+      for (const d of list) {
+        const y = calendars.parseDate(d);
+        if (!y) ambiguities.push({ param: "except", code: "date_invalid", message: `"${d}" is not a date (YYYY-MM-DD).` });
+        else set.add(y);
+      }
+      scope.except = set;
+      scope.exceptLabel = `${set.size} date(s)`;
     } else {
       const n = await calendars.named(p.except, namedOpts);
       if (n.ambiguity) ambiguities.push({ param: "except", ...n.ambiguity });
@@ -184,6 +206,18 @@ const tripsInScope = (model, { routeId = null, direction = "both" } = {}, scope 
   return out;
 };
 
+/** The dates a service runs, read from the tables (the model may predate this step). */
+const datesInDb = (db, id) => {
+  const cal = db.prepare("SELECT * FROM calendar WHERE service_id = ?").get(id);
+  const set = new Set();
+  if (cal) for (const d of calendars.rangeDates(String(cal.start_date), String(cal.end_date))) if (String(cal[COL[fm.dowOf(d)]]) === "1") set.add(d);
+  for (const r of db.prepare("SELECT date, exception_type FROM calendar_dates WHERE service_id = ?").all(id)) {
+    if (String(r.exception_type) === "1") set.add(String(r.date));
+    else set.delete(String(r.date));
+  }
+  return [...set].sort();
+};
+
 const hashDates = (dates) => crypto.createHash("sha1").update(dates.join(",")).digest("hex").slice(0, 6);
 
 /**
@@ -198,8 +232,13 @@ const serviceForDates = (db, model, baseId, dates, { existing = null } = {}) => 
   const key = dates.join(",");
   if (activeDates(model, baseId).join(",") === key) return baseId;
   if (existing && existing.has(key)) return existing.get(key);
-  const id = `${String(baseId).slice(0, 60)}~${hashDates(dates)}`;
-  if (db.prepare("SELECT 1 FROM calendar WHERE service_id = ? UNION SELECT 1 FROM calendar_dates WHERE service_id = ? LIMIT 1").get(id, id)) return id;
+  let id = `${String(baseId).slice(0, 60)}~${hashDates(dates)}`;
+  // An earlier step of the plan may have created this id and edited it in
+  // place since: reuse it only while it still runs exactly these dates.
+  for (let n = 2; db.prepare("SELECT 1 FROM calendar WHERE service_id = ? UNION SELECT 1 FROM calendar_dates WHERE service_id = ? LIMIT 1").get(id, id); n++) {
+    if (datesInDb(db, id).join(",") === key) return id;
+    id = `${String(baseId).slice(0, 60)}~${hashDates(dates)}_${n}`;
+  }
   const base = db.prepare("SELECT * FROM calendar WHERE service_id = ?").get(baseId);
   const set = new Set(dates);
   const insDate = db.prepare("INSERT OR REPLACE INTO calendar_dates (service_id, date, exception_type) VALUES (?, ?, ?)");
@@ -250,7 +289,8 @@ const isolateScope = (db, model, tripIds, scope) => {
     if (!p.inside) continue;
     if (p.split) {
       const suffix = hashDates([p.outside]);
-      G.cloneTrip(db, tid, { newId: G.uniqueId(db, "trips", "trip_id", `${tid}~${suffix}`), serviceId: p.outside });
+      const copy = G.cloneTrip(db, tid, { newId: G.uniqueId(db, "trips", "trip_id", `${tid}~${suffix}`), serviceId: p.outside });
+      G.copyTripTransfers(db, tid, copy);
       db.prepare("UPDATE trips SET service_id = ? WHERE trip_id = ?").run(p.inside, tid);
     }
     out.push(tid);

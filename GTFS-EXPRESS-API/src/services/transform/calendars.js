@@ -24,13 +24,19 @@ const { _internals: fm } = require("./feedModel");
 const TTL_MS = 24 * 3600 * 1000;
 const _cache = new Map();
 
+/** YYYY-MM-DD, YYYYMMDD (an ISO time part allowed) or DD/MM/YYYY → YYYYMMDD; null for anything else or a day that does not exist. */
 const parseDate = (v) => {
   const s = String(v ?? "").trim();
-  let m = /^(\d{4})-?(\d{2})-?(\d{2})/.exec(s);
-  if (m) return `${m[1]}${m[2]}${m[3]}`;
-  m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s);
-  if (m) return `${m[3]}${m[2].padStart(2, "0")}${m[1].padStart(2, "0")}`;
-  return null;
+  let y;
+  let mo;
+  let d;
+  let m = /^(\d{4})-?(\d{2})-?(\d{2})(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/.exec(s);
+  if (m) [y, mo, d] = [m[1], m[2], m[3]];
+  else if ((m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s))) [y, mo, d] = [m[3], m[2].padStart(2, "0"), m[1].padStart(2, "0")];
+  else return null;
+  const t = new Date(Date.UTC(+y, +mo - 1, +d));
+  if (t.getUTCFullYear() !== +y || t.getUTCMonth() !== +mo - 1 || t.getUTCDate() !== +d) return null;
+  return `${y}${mo}${d}`;
 };
 
 const rangeDates = (from, to) => {

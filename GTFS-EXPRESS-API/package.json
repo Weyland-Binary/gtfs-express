@@ -25,7 +25,10 @@
     "testMatch": [
       "**/__tests__/**/*.test.js"
     ],
-    "testTimeout": 30000
+    "testTimeout": 30000,
+    "setupFiles": [
+      "<rootDir>/src/__tests__/_helpers/jestEnv.js"
+    ]
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",

@@ -61,7 +61,7 @@ const buildFeedModel = (db, { weekend = ["sat", "sun"] } = {}) => {
   const routes = new Map();
   for (const r of safeAll(db, "SELECT * FROM routes")) {
     const type = parseInt(r.route_type, 10);
-    routes.set(r.route_id, { id: r.route_id, short_name: r.route_short_name || "", long_name: r.route_long_name || "", type: Number.isFinite(type) ? type : 3, mode: MODE_OF_TYPE[Number.isFinite(type) ? type : 3] || (type >= 700 && type < 800 ? "bus" : type >= 100 && type < 200 ? "rail" : type >= 900 && type < 1000 ? "tram" : "bus"), color: r.route_color || "", agency_id: r.agency_id || null, sort: r.route_sort_order });
+    routes.set(r.route_id, { id: r.route_id, short_name: r.route_short_name || "", long_name: r.route_long_name || "", type: Number.isFinite(type) ? type : 3, mode: MODE_OF_TYPE[Number.isFinite(type) ? type : 3] || (type >= 700 && type < 800 ? "bus" : type >= 100 && type < 200 ? "rail" : type >= 900 && type < 1000 ? "tram" : "bus"), color: r.route_color || "", text_color: r.route_text_color || "", agency_id: r.agency_id || null, sort: r.route_sort_order });
   }
   const stops = new Map();
   for (const s of safeAll(db, "SELECT stop_id, stop_name, stop_lat, stop_lon, location_type, parent_station, wheelchair_boarding, stop_code FROM stops")) {

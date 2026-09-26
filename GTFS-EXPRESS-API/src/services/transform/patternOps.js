@@ -241,7 +241,7 @@ const resequence = (db, model, tripIds, { positions, mode = "shift", legs = new 
     const dists = ns && hadDist && unit ? geo.stopDistances(ns.points, stopsCoords.map((c) => c || { lat: NaN, lon: NaN }), unit) : null;
     const tpl = old[0];
     const rows = positions.map((p, i) => {
-      const base = p.from != null ? old[p.from] : { stop_headsign: tpl.stop_headsign ?? null, pickup_type: null, drop_off_type: null, timepoint: 0 };
+      const base = p.from != null ? old[p.from] : { stop_headsign: tpl.stop_headsign ?? null, pickup_type: null, drop_off_type: null, timepoint: "0" };
       const row = { ...base, stop_id: p.stop_id, arr: A[i], dep: D[i] };
       if (p.from == null) row.stop_sequence = null;
       if (hadDist) row.shape_dist_traveled = dists ? dists[i] : null;
