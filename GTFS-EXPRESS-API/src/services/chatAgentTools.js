@@ -1167,6 +1167,81 @@ const getNetworkDesign = {
   },
 };
 
+// ── Change plans (the transformation engine of the Change Studio) ─────────
+
+const getChangeCatalogue = {
+  definition: {
+    name: "get_change_catalogue",
+    description: "The operations of the change engine (the Change Studio): each type with its parameters (* = required) and an example. Call it before propose_change_plan when unsure of an operation's parameters.",
+    input_schema: { type: "object", properties: { category: { type: "string", description: "Only this category (service, calendar, stops, routes, network, fares, metadata, generic)." } } },
+  },
+  run(input) {
+    const registry = require("./transform/operators");
+    const list = registry.catalogue().filter((o) => !input?.category || o.category === input.category);
+    return {
+      content: list
+        .map((o) => `- ${o.type} [${o.category}] ${o.title}\n  params: ${(o.params || []).map((p) => `${p.name}${p.required ? "*" : ""}:${p.type}${p.enum ? `(${p.enum.join("|")})` : ""}`).join(", ")}\n  e.g. ${JSON.stringify(o.example || {})}`)
+        .join("\n"),
+    };
+  },
+};
+
+const proposeChangePlan = {
+  definition: {
+    name: "propose_change_plan",
+    description:
+      "Propose a CHANGE PLAN on the loaded feed: typed operations of the change engine (frequencies, spans, trips, running times, stops on a line, extensions, detours, calendars and holidays, new or merged lines, attributes, fares…), each with the words of the user it implements in source.quote. The engine previews the plan on a copy of the feed: each step applied, BLOCKED with the questions it cannot answer from the feed, or failed; the changes per line and period; integrity. Nothing is written: the user applies the whole plan in one click (one undo) or opens it in the Change Studio. Leave out what the user did not say (the engine asks) rather than guessing. Prefer it to create_trips / shift_trips / insert_stop for anything beyond a single trip.",
+    input_schema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "Short title in the user's language." },
+        operations: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: { id: { type: "string" }, type: { type: "string" }, params: { type: "object" }, source: { type: "object", properties: { quote: { type: "string" } } } },
+            required: ["id", "type", "params"],
+          },
+        },
+        requirements: { type: "object", description: "{ clauses: [...] } checked after the plan (headway_max, span, days, no_service, line_exists, serves…)." },
+        calendars: { type: "object", description: "Named periods with their dates: { name: { from, to } | { dates } }." },
+      },
+      required: ["title", "operations"],
+    },
+  },
+  async run(input, ctx) {
+    const registry = require("./transform/operators");
+    const engine = require("./transform/engine");
+    const { summarizePreview } = require("./transform/transformPlannerService");
+    const { getDataVersion } = require("../middleware/readCache");
+    const ops = Array.isArray(input.operations) ? input.operations.slice(0, 60) : [];
+    if (!ops.length) return { content: "Error: operations[] is empty.", isError: true };
+    const unknown = ops.filter((o) => !registry.get(o?.type)).map((o) => o?.type);
+    if (unknown.length) return { content: `Error: unknown operation type(s) ${unknown.join(", ")}. Call get_change_catalogue.`, isError: true };
+    const plan = { title: String(input.title || "").slice(0, 160), operations: ops, ...(input.requirements ? { requirements: input.requirements } : {}), ...(input.calendars ? { calendars: input.calendars } : {}) };
+    const { sessionId, db } = ctx.dbCtx;
+    const country = sessionId ? require("./sessionCountry").sessionCountryCode(sessionId) : null;
+    const preview = await engine.previewPlan(db, plan, { sessionId, dataVersion: getDataVersion(db), router: require("./network/roadRouter").createRouter(), country });
+    const proposalId = ctx.nextProposalId();
+    ctx.emit("proposal", {
+      proposalId,
+      kind: "operation",
+      operation: "change_plan",
+      title: plan.title || "Change plan",
+      rationale: "",
+      params: { plan },
+      preview: {
+        blocked: preview.blocked,
+        empty: preview.empty,
+        integrity: preview.integrity,
+        lines: preview.lines.slice(0, 30),
+        steps: preview.steps.map((s) => ({ id: s.id, type: s.type, status: s.status, summary: s.summary, error: s.error || null, ambiguities: (s.ambiguities || []).map((a) => ({ param: a.param, code: a.code, message: a.message, options: (a.options || []).slice(0, 8) })) })),
+      },
+    });
+    return { content: `proposal_id: ${proposalId}\n${summarizePreview(preview)}\n${preview.blocked ? "Some steps are blocked: ask the user the questions above (or fix your parameters) — the card lets them open the plan in the Change Studio." : "The user can apply the whole plan from the card (one undo)."}` };
+  },
+};
+
 const TOOLS = [
   runSql,
   proposeFix,
@@ -1185,6 +1260,8 @@ const TOOLS = [
   extendCalendar,
   planJourney,
   getNetworkDesign,
+  getChangeCatalogue,
+  proposeChangePlan,
   remember,
   forget,
 ];
@@ -1210,11 +1287,14 @@ const createToolContext = ({ dbCtx, emit }) => {
   };
 };
 
+// Synchronous tools answer at once; asynchronous ones (change plans) return a
+// promise, awaited by the chat loop, whose failure is a tool error too.
 const executeTool = (name, input, ctx) => {
   const tool = TOOLS_BY_NAME[name];
   if (!tool) return { content: `Error: unknown tool ${name}.`, isError: true };
   try {
-    return tool.run(input || {}, ctx);
+    const out = tool.run(input || {}, ctx);
+    return out && typeof out.then === "function" ? out.catch((err) => ({ content: `Tool ${name} failed: ${err.message}`, isError: true })) : out;
   } catch (err) {
     return { content: `Tool ${name} failed: ${err.message}`, isError: true };
   }

@@ -206,8 +206,12 @@ function GTFSApp() {
   // Change Studio (change the loaded network the way a brief asks): the
   // header button, the command palette, the chat, or "gtfs:open-change-studio".
   const [changeStudioOpen, setChangeStudioOpen] = useState(false);
+  const [changeStudioPlan, setChangeStudioPlan] = useState(null); // a plan handed over (the chat)
   useEffect(() => {
-    const handler = () => setChangeStudioOpen(true);
+    const handler = (e) => {
+      setChangeStudioPlan(e?.detail?.plan || null);
+      setChangeStudioOpen(true);
+    };
     window.addEventListener("gtfs:open-change-studio", handler);
     return () => window.removeEventListener("gtfs:open-change-studio", handler);
   }, []);
@@ -2155,7 +2159,7 @@ function GTFSApp() {
       <CommandPalette />
       <ShortcutsHelpDialog />
       <NetworkStudio open={studioOpen} onClose={() => setStudioOpen(false)} onCreated={handleNetworkCreated} />
-      {agencies.length > 0 && <ChangeStudio open={changeStudioOpen} onClose={() => setChangeStudioOpen(false)} />}
+      {agencies.length > 0 && <ChangeStudio open={changeStudioOpen} initialPlan={changeStudioPlan} onClose={() => setChangeStudioOpen(false)} />}
       <NetworkReportDialog
         open={Boolean(networkReport)}
         report={networkReport}

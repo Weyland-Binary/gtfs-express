@@ -642,7 +642,7 @@ const streamChatTurn = async ({
       for (const tu of round.toolUses) {
         if (signal?.aborted) break;
         toolCalls += 1;
-        const res = chatAgentTools.executeTool(tu.name, tu.input, toolCtx);
+        const res = await chatAgentTools.executeTool(tu.name, tu.input, toolCtx);
         if (res.isError) consecutiveErrors += 1;
         else consecutiveErrors = 0;
         results.push({

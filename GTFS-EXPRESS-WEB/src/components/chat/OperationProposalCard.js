@@ -19,12 +19,16 @@ import MergeTypeIcon from "@mui/icons-material/MergeType";
 import DriveFileRenameOutlineIcon from "@mui/icons-material/DriveFileRenameOutline";
 import EventRepeatIcon from "@mui/icons-material/EventRepeat";
 import EditLocationAltIcon from "@mui/icons-material/EditLocationAlt";
+import AutoFixHighOutlinedIcon from "@mui/icons-material/AutoFixHighOutlined";
+import HelpOutlineIcon from "@mui/icons-material/HelpOutline";
+import ErrorOutlineIcon from "@mui/icons-material/ErrorOutline";
 import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 import CheckCircleOutlineIcon from "@mui/icons-material/CheckCircleOutline";
 import API_BASE_URL from "../../config";
 import { fetchWithSession } from "../../utils/sessionManager";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { useEditMode } from "../../contexts/EditModeContext";
+import { previewChangePlan, commitChangePlan } from "../../utils/transformApi";
 
 const fmtOffset = (secs) => {
   const m = secs / 60;
@@ -101,6 +105,22 @@ const OPERATIONS = {
     toast: (t, body) => t("chat.op.renamedToast", { count: body.renamed ?? 0 }),
     outcome: (body) => `Applied: ${body.renamed} stop(s) renamed.`,
     entityId: (body) => body.renames?.[0]?.stop_id,
+  },
+  // A change plan of the transformation engine: previewed again on the feed
+  // as it is now, then committed as ONE edit.
+  change_plan: {
+    Icon: AutoFixHighOutlinedIcon,
+    entity: "transform",
+    run: async (params) => {
+      const p = await previewChangePlan(params.plan);
+      if (!p.id || p.blocked || (p.integrity || []).length) throw new Error(p.blocked ? "blocked" : "not applicable");
+      const out = await commitChangePlan(p.id);
+      return { ...out, applied: p.steps.filter((s) => s.status === "applied").length };
+    },
+    summary: (t, { preview, params }) => t("chat.op.changePlanSummary", { count: params?.plan?.operations?.length ?? 0, changes: preview?.lines?.length ?? 0 }),
+    toast: (t, body) => t("chat.op.changePlanToast", { count: body.applied ?? 0 }),
+    outcome: (body) => `Applied: the change plan (${body.applied} step(s)) as one edit.`,
+    entityId: (body) => (body.tables || []).join(","),
   },
   extend_calendar: {
     endpoint: "/edit/calendar/extend",
@@ -234,6 +254,44 @@ function Details({ operation, preview, params, selected, onToggle, applied }) {
       </Box>
     );
   }
+  if (operation === "change_plan") {
+    const steps = preview?.steps || [];
+    const Status = { applied: CheckCircleOutlineIcon, blocked: HelpOutlineIcon, failed: ErrorOutlineIcon };
+    return (
+      <Box sx={{ mt: 0.5, display: "flex", flexDirection: "column", gap: 0.4 }} data-testid="chat-change-plan">
+        {steps.map((st) => {
+          const I = Status[st.status] || CheckCircleOutlineIcon;
+          const color = st.status === "applied" ? "success.main" : st.status === "blocked" ? "warning.main" : st.status === "failed" ? "error.main" : "text.disabled";
+          return (
+            <Box key={st.id} sx={{ fontSize: "0.72rem", lineHeight: 1.45 }}>
+              <Box sx={{ display: "flex", alignItems: "flex-start", gap: 0.5 }}>
+                <I sx={{ fontSize: 13, color, mt: 0.2, flexShrink: 0 }} />
+                <span>{st.summary || st.error || st.type}</span>
+              </Box>
+              {(st.ambiguities || []).map((a, i) => (
+                <Note key={i} warn>
+                  {a.message}
+                  {a.options?.length ? ` (${a.options.join(" · ")})` : ""}
+                </Note>
+              ))}
+            </Box>
+          );
+        })}
+        {(preview?.lines || []).length > 0 && (
+          <Box sx={{ mt: 0.25, pl: 2.2 }}>
+            {preview.lines.slice(0, 6).map((l, i) => (
+              <Typography key={i} sx={{ fontSize: "0.68rem", color: "text.secondary", lineHeight: 1.45 }}>
+                {l}
+              </Typography>
+            ))}
+            {preview.lines.length > 6 && <Note>+{preview.lines.length - 6}</Note>}
+          </Box>
+        )}
+        {(preview?.integrity || []).length > 0 && <Note warn Icon={WarningAmberIcon}>{t("chat.op.changePlanIntegrity")}</Note>}
+        <Chip size="small" variant="outlined" icon={<AutoFixHighOutlinedIcon sx={{ fontSize: 12 }} />} label={t("chat.op.openChangeStudio")} onClick={() => window.dispatchEvent(new CustomEvent("gtfs:open-change-studio", { detail: { plan: params?.plan || null } }))} data-testid="chat-open-change-studio" sx={{ alignSelf: "flex-start", height: 22, fontSize: "0.66rem", fontWeight: 700, mt: 0.25 }} />
+      </Box>
+    );
+  }
   if (operation === "extend_calendar") {
     const services = preview?.services || [];
     return (
@@ -281,7 +339,7 @@ export default function OperationProposalCard({ proposal, index, onOutcome }) {
 
   const summary = op.summary(t, { preview, params });
   const applied = phase === "applied";
-  const nothingSelected = operation === "rename_stops" && selected.size === 0;
+  const nothingSelected = (operation === "rename_stops" && selected.size === 0) || (operation === "change_plan" && Boolean(preview?.blocked || preview?.empty || (preview?.integrity || []).length));
 
   const apply = useCallback(async () => {
     if (phase === "applying" || nothingSelected) return;
@@ -289,13 +347,17 @@ export default function OperationProposalCard({ proposal, index, onOutcome }) {
     setError(null);
     const body = operation === "rename_stops" ? { renames: (params?.renames || []).filter((r) => selected.has(r.stop_id)) } : params;
     try {
-      const res = await fetchWithSession(`${API_BASE_URL}${op.endpoint}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      let data;
+      if (op.run) data = await op.run(body);
+      else {
+        const res = await fetchWithSession(`${API_BASE_URL}${op.endpoint}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      }
       setResult(data);
       setPhase("applied");
       recordEdit(op.toast(t, data), data.validation, { entity: op.entity, entityId: op.entityId(data, params), noUndoAction: true });

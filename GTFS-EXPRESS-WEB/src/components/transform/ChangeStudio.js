@@ -42,7 +42,7 @@ const EMPTY_PLAN = { title: "", operations: [] };
 const MAX_DOCUMENTS = 5;
 const TOOL_LABEL = { lookup: "lookup", route_timetable: "timetable", set_plan: "plan", patch_plan: "plan", ask_user: "questions" };
 
-export default function ChangeStudio({ open, onClose }) {
+export default function ChangeStudio({ open, onClose, initialPlan = null }) {
   const { t, language } = useLanguage();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("md"));
@@ -101,6 +101,15 @@ export default function ChangeStudio({ open, onClose }) {
       setValidating(false);
     }
   }, []);
+
+  // A plan handed over (e.g. by the chat assistant) replaces the current one.
+  useEffect(() => {
+    if (!open || !initialPlan || !Array.isArray(initialPlan.operations)) return;
+    setPlan(initialPlan);
+    setTab("plan");
+    refresh(initialPlan);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, initialPlan]);
 
   const updatePlan = useCallback(
     (next) => {
