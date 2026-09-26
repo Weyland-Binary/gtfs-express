@@ -158,14 +158,19 @@ export function OperationCard({ op, step, def, index, count, onAnswer, onRemove,
 // ── Add / edit an operation ─────────────────────────────────────────────────
 
 const DAY_CHOICES = ["weekday", "saturday", "sunday", "weekend", "daily", "mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+const PERIOD_CHOICES = ["school_days", "school_holidays", "public_holidays"];
+const LIST_TYPES = ["times", "dates", "stops", "routes"];
 
 const parseInput = (type, raw) => {
   if (raw === "" || raw == null) return undefined;
-  if (type === "number") {
+  if (type === "number" || type === "money") {
     const n = Number(String(raw).replace(",", "."));
     return Number.isFinite(n) ? n : raw;
   }
+  if (Array.isArray(raw)) return raw.length ? raw : undefined;
   const s = String(raw).trim();
+  if (type === "boolean") return s === "true" ? true : s === "false" ? false : s;
+  if (type === "color") return s.replace(/^#/, "").toUpperCase();
   if ((s.startsWith("{") && s.endsWith("}")) || (s.startsWith("[") && s.endsWith("]"))) {
     try {
       return JSON.parse(s);
@@ -173,10 +178,10 @@ const parseInput = (type, raw) => {
       return s;
     }
   }
-  if (["times", "dates", "stops"].includes(type) && s.includes(",")) return s.split(",").map((x) => x.trim()).filter(Boolean);
+  if (LIST_TYPES.includes(type) && s.includes(",")) return s.split(",").map((x) => x.trim()).filter(Boolean);
   return s;
 };
-const toInput = (v) => (v == null ? "" : typeof v === "object" ? JSON.stringify(v) : String(v));
+const toInput = (v, type) => (v == null ? "" : type === "routes" && Array.isArray(v) && v.every((x) => typeof x === "string") ? v : typeof v === "object" ? JSON.stringify(v) : String(v));
 
 export function OperationDialog({ open, catalogue, routes, initial, onClose, onSave }) {
   const { t } = useLanguage();
@@ -186,11 +191,13 @@ export function OperationDialog({ open, catalogue, routes, initial, onClose, onS
   useEffect(() => {
     if (!open) return;
     setType(initial?.type || null);
-    setValues(Object.fromEntries(Object.entries(initial?.params || {}).map(([k, v]) => [k, toInput(v)])));
+    const types = Object.fromEntries(((catalogue || []).find((o) => o.type === initial?.type)?.params || []).map((p) => [p.name, p.type]));
+    setValues(Object.fromEntries(Object.entries(initial?.params || {}).map(([k, v]) => [k, toInput(v, types[k])])));
     setQuote(initial?.source?.quote || "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, initial]);
   const def = useMemo(() => (catalogue || []).find((o) => o.type === type) || null, [catalogue, type]);
-  const missing = (def?.params || []).filter((p) => p.required && !String(values[p.name] ?? "").trim()).map((p) => p.name);
+  const missing = (def?.params || []).filter((p) => p.required && !(Array.isArray(values[p.name]) ? values[p.name].length : String(values[p.name] ?? "").trim())).map((p) => p.name);
   const save = () => {
     const params = {};
     for (const p of def.params || []) {
@@ -247,10 +254,44 @@ export function OperationDialog({ open, catalogue, routes, initial, onClose, onS
               <Autocomplete key={p.name} freeSolo options={DAY_CHOICES} value={values[p.name] ?? ""} onInputChange={(_, v) => setValues((s) => ({ ...s, [p.name]: v }))} renderInput={(params) => <TextField {...params} size="small" label={common.label} helperText={p.description} />} />
             );
           }
+          if (p.type === "routes") {
+            const v = values[p.name];
+            return (
+              <Autocomplete
+                key={p.name}
+                multiple
+                freeSolo
+                options={["all", ...(routes || []).map((r) => r.short_name || r.id)]}
+                value={Array.isArray(v) ? v : v ? String(v).split(",").map((x) => x.trim()).filter(Boolean) : []}
+                onChange={(_, list) => setValues((s) => ({ ...s, [p.name]: list.includes("all") ? "all" : list }))}
+                renderInput={(params) => <TextField {...params} size="small" label={common.label} helperText={p.description} inputProps={{ ...params.inputProps, "data-testid": `change-param-${p.name}` }} />}
+              />
+            );
+          }
+          if (p.type === "period") {
+            return (
+              <Autocomplete key={p.name} freeSolo options={PERIOD_CHOICES} value={values[p.name] ?? ""} onInputChange={(_, v) => setValues((s) => ({ ...s, [p.name]: v }))} renderInput={(params) => <TextField {...params} size="small" label={common.label} helperText={p.description} />} />
+            );
+          }
+          if (p.type === "boolean") {
+            return (
+              <TextField key={p.name} {...common} select>
+                <MenuItem value="">—</MenuItem>
+                <MenuItem value="true">true</MenuItem>
+                <MenuItem value="false">false</MenuItem>
+              </TextField>
+            );
+          }
+          if (p.type === "color") {
+            const hex = String(values[p.name] || "").replace(/^#/, "");
+            return <TextField key={p.name} {...common} placeholder="6E6E6E" InputProps={{ startAdornment: /^[0-9a-fA-F]{6}$/.test(hex) ? <Box sx={{ width: 16, height: 16, borderRadius: "4px", mr: 1, background: `#${hex}`, boxShadow: "0 0 0 1px rgba(0,0,0,0.2)" }} /> : null }} />;
+          }
           if (p.type === "date") return <TextField key={p.name} {...common} type="date" InputLabelProps={{ shrink: true }} />;
           if (p.type === "time") return <TextField key={p.name} {...common} placeholder="HH:MM" />;
-          if (p.type === "number") return <TextField key={p.name} {...common} type="number" />;
-          return <TextField key={p.name} {...common} />;
+          if (p.type === "number" || p.type === "money") return <TextField key={p.name} {...common} type="number" />;
+          // Lists and objects: the catalogue's example shows the expected shape.
+          const ex = def?.example && def.example[p.name] !== undefined ? toInput(def.example[p.name]) : LIST_TYPES.includes(p.type) ? "a, b, c" : "";
+          return <TextField key={p.name} {...common} placeholder={Array.isArray(ex) ? ex.join(", ") : ex} multiline={["object", "list", "periods", "departures"].includes(p.type)} />;
         })}
         {def && <TextField size="small" label={t("transform.sourceQuote")} helperText={t("transform.sourceQuoteHint")} value={quote} onChange={(e) => setQuote(e.target.value)} multiline minRows={1} />}
       </DialogContent>

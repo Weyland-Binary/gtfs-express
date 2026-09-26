@@ -33,7 +33,7 @@ vi.mock("../utils/transformApi", async () => {
 });
 
 import ChangeStudio from "../components/transform/ChangeStudio";
-import { describeItem } from "../components/transform/ChangePlanParts";
+import { describeItem, OperationDialog } from "../components/transform/ChangePlanParts";
 
 const theme = createTheme({ palette: { ai: { main: "#7c4dff", gradientStart: "#7c4dff", gradientEnd: "#00bcd4", contrastText: "#fff" } } });
 const CATALOGUE = [
@@ -121,6 +121,31 @@ describe("ChangeStudio", () => {
     expect(editState.enterEditMode).toHaveBeenCalled();
     expect(editState.recordEdit).toHaveBeenCalled();
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it("typed inputs: lines as a list, a boolean, a colour without #, an object from its JSON", async () => {
+    const onSave = vi.fn();
+    const catalogue = [
+      {
+        type: "set_route_attributes",
+        title: "Change a line's identity",
+        category: "routes",
+        params: [{ name: "route", type: "route" }, { name: "color", type: "color" }, { name: "whole_feed", type: "boolean" }, { name: "changes", type: "list" }],
+        example: { changes: [{ route: "B1", short_name: "5401" }] },
+      },
+      { type: "copy_day_service", title: "Copy a day's timetable", category: "calendar", params: [{ name: "routes", type: "routes", required: true }, { name: "period", type: "period" }] },
+    ];
+    const initial = { id: "op9", type: "set_route_attributes", params: { route: "S1" } };
+    render(
+      <ThemeProvider theme={theme}>
+        <OperationDialog open catalogue={catalogue} routes={[{ id: "S1", short_name: "S1" }]} initial={initial} onClose={() => {}} onSave={onSave} />
+      </ThemeProvider>,
+    );
+    fireEvent.change(screen.getByTestId("change-param-color"), { target: { value: "#6e6e6e" } });
+    fireEvent.change(screen.getByTestId("change-param-changes"), { target: { value: '[{"route":"S1","short_name":"5"}]' } });
+    expect(screen.getByTestId("change-param-changes").getAttribute("placeholder")).toBe('[{"route":"B1","short_name":"5401"}]');
+    fireEvent.click(screen.getByTestId("change-operation-save"));
+    expect(onSave.mock.calls[0][0].params).toEqual({ route: "S1", color: "6E6E6E", changes: [{ route: "S1", short_name: "5" }] });
   });
 
   it("phrases every diff code with its day, period and dates", () => {
