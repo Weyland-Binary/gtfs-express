@@ -106,18 +106,19 @@ describe("Network Spec", () => {
 });
 
 describe("timetable arithmetic", () => {
-  test("running times round legs up to 30 s, add dwell between stops, never at the terminus", () => {
+  test("running times follow the commercial speed (dwells included), rounded on the cumulative time", () => {
     const offsets = runningTimes([1000, 2000], { speedKmh: 20, dwellS: 20 });
+    // 3 km at 20 km/h commercial = 540 s terminus to terminus, the dwell included.
     expect(offsets).toEqual([
       { arrival: 0, departure: 0 },
       { arrival: 180, departure: 200 },
-      { arrival: 560, departure: 560 },
+      { arrival: 540, departure: 540 },
     ]);
     // A slower road duration wins over the commercial speed.
     expect(runningTimes([1000], { speedKmh: 60, legDurationsS: [300] })[1].arrival).toBe(360);
     const trips = buildTrips({ lineId: "1", directionId: "0", serviceId: "WKD", stopIds: ["A", "B", "C"], offsets, departuresSec: [6 * 3600, 6 * 3600 + 900] });
     expect(trips.map((t) => t.trip_id)).toEqual(["1_WKD_0_001", "1_WKD_0_002"]);
-    expect(trips[1].stop_times.map((s) => s.departure_time)).toEqual(["06:15:00", "06:18:20", "06:24:20"]);
+    expect(trips[1].stop_times.map((s) => s.departure_time)).toEqual(["06:15:00", "06:18:20", "06:24:00"]);
     expect(trips[0].stop_times.map((s) => s.timepoint)).toEqual(["1", "0", "1"]);
   });
 });

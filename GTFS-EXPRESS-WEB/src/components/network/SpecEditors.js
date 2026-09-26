@@ -230,6 +230,13 @@ function ServiceRow({ service, stopCount, calendars, onChange, onRemove }) {
   );
 }
 
+// A return the user edits is no longer the mirror the server re-derives.
+const ownDirection = (d) => {
+  if (!d || !d.derived) return d;
+  const { derived, ...rest } = d; // eslint-disable-line no-unused-vars
+  return rest;
+};
+
 function DirectionEditor({ direction, index, stops, color, onChange, onRemove, mirrorOf = null }) {
   const { t } = useLanguage();
   const theme = useTheme();
@@ -380,7 +387,7 @@ function LineSection({ line, stops, calendars, defaultOpen, onChange, onRemove }
         <Box sx={{ pl: { xs: 0, md: 5 }, pb: 2, display: "flex", flexDirection: "column", gap: 1.5 }}>
           <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" }, gap: 1.25, alignItems: "start" }}>
             {directions.map((d, di) => (
-              <DirectionEditor key={di} direction={d} index={di} stops={stops} color={color} mirrorOf={di === 1 && isMirror(directions[0], d) ? directions[0].id ?? 0 : null} onChange={(nd) => set({ directions: directions.map((x, k) => (k === di ? nd : x)) })} onRemove={directions.length > 1 ? () => set({ directions: directions.filter((_, k) => k !== di) }) : null} />
+              <DirectionEditor key={di} direction={d} index={di} stops={stops} color={color} mirrorOf={di === 1 && isMirror(directions[0], d) ? directions[0].id ?? 0 : null} onChange={(nd) => set({ directions: directions.map((x, k) => (k === di ? (k === 1 ? ownDirection(nd) : nd) : x)) })} onRemove={directions.length > 1 ? () => set({ directions: directions.filter((_, k) => k !== di).map(ownDirection), round_trip: false }) : null} />
             ))}
             {directions.length < 2 && (
               <Box>

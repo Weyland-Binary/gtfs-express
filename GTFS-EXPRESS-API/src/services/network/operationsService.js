@@ -110,7 +110,8 @@ const estimateOperations = (spec, geometry = null, { layoverMin = null, country 
           if (a && b && Number.isFinite(a.lat) && Number.isFinite(b.lat)) m += haversineMeters(a.lat, a.lon, b.lat, b.lon) * 1.3;
         }
         km = Math.round(m / 100) / 10;
-        min = Math.round((km / Math.max(5, line.speed_kmh || 20)) * 60 + ((d.stops.length - 1) * (line.dwell_s || 20)) / 60);
+        // speed_kmh is a commercial speed: the dwells are already in it (timetable.runningTimes).
+        min = Math.round((km / Math.max(5, line.speed_kmh || 20)) * 60);
       }
       dirs.set(d.id, { km, min });
     }

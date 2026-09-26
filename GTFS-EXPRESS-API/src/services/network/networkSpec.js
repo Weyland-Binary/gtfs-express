@@ -271,7 +271,23 @@ const normalizeSpec = (raw) => {
       err("invalid_dates", path, "Calendar dates must be YYYYMMDD with start ≤ end.");
       return null;
     }
-    const id = str(raw.id) ? slug(raw.id) : `${days.map((d) => d[0].toUpperCase() + d.slice(1)).join("")}${sd === feed.start_date && ed === feed.end_date ? "" : `_${sd}`}`;
+    const same = (c) => c.start_date === sd && c.end_date === ed && c.days.join() === days.join();
+    let id;
+    if (str(raw.id)) {
+      id = slug(raw.id);
+      const existing = calendars.get(id);
+      if (existing && !same(existing)) {
+        err("duplicate_calendar_id", path, `Calendar id "${id}" is used for two different calendars.`);
+        return null;
+      }
+    } else {
+      // Days + period: two periods with the same days never share an id.
+      const base = `${days.map((d) => d[0].toUpperCase() + d.slice(1)).join("")}${sd === feed.start_date && ed === feed.end_date ? "" : `_${sd}`}`;
+      id = base;
+      if (calendars.has(id) && !same(calendars.get(id))) id = `${base}_${ed}`;
+      let n = 2;
+      while (calendars.has(id) && !same(calendars.get(id))) id = `${base}_${ed}_${n++}`;
+    }
     if (!calendars.has(id)) calendars.set(id, { id, days, start_date: sd, end_date: ed });
     return calendars.get(id);
   };
@@ -318,7 +334,11 @@ const normalizeSpec = (raw) => {
     if (speed <= 0 || speed > 400) err("invalid_speed", `${path}.speed_kmh`, "speed_kmh must be between 1 and 400.");
 
     // Directions.
-    const rawDirs = Array.isArray(l.directions) ? l.directions : Array.isArray(l.stops) ? [{ id: "0", stops: l.stops, headsign: l.headsign }] : [];
+    let rawDirs = Array.isArray(l.directions) ? l.directions : Array.isArray(l.stops) ? [{ id: "0", stops: l.stops, headsign: l.headsign }] : [];
+    // A return still marked `derived` (a normalised spec coming back) is the
+    // mirror of the outbound: derive it again, so an edited outbound never
+    // leaves a stale return behind. Editing the return itself drops the mark.
+    if (rawDirs.length === 2 && rawDirs[1] && rawDirs[1].derived === true && l.round_trip !== false) rawDirs = [rawDirs[0]];
     const directions = [];
     rawDirs.slice(0, LIMITS.directions).forEach((d, di) => {
       if (!d || typeof d !== "object") return;
@@ -337,7 +357,7 @@ const normalizeSpec = (raw) => {
       const dirId = str(d.id ?? d.direction_id) === "1" || di === 1 ? "1" : "0";
       directions.push({ id: dirId, headsign: str(d.headsign) || stopById.get(resolved[resolved.length - 1]).name, stops: resolved });
     });
-    if (directions.length === 1 && l.round_trip !== false && !(rawDirs.length > 1)) {
+    if (directions.length === 1 && l.round_trip !== false && rawDirs.length <= 1) {
       const d0 = directions[0];
       directions.push({ id: d0.id === "0" ? "1" : "0", headsign: stopById.get(d0.stops[0]).name, stops: [...d0.stops].reverse(), derived: true });
     }
@@ -372,7 +392,10 @@ const normalizeSpec = (raw) => {
         departures.push(secToTime(sec));
       });
       if (periods.length === 0 && departures.length === 0) return err("no_service", spath, "A service needs periods (headways) or departures.");
-      services.push({ calendar_id: cal.id, direction, periods, departures: [...new Set(departures)].sort(), reverse_offset_min: num(s.reverse_offset_min) ?? null });
+      const svc = { calendar_id: cal.id, direction, periods, departures: [...new Set(departures)].sort(), reverse_offset_min: num(s.reverse_offset_min) ?? null };
+      // The service's own pulse is parsed once every stop is known (below).
+      if (s.sync !== undefined) Object.defineProperty(svc, "_rawSync", { value: { raw: s.sync, path: `${spath}.sync` }, enumerable: false });
+      services.push(svc);
     });
 
     lines.push({
@@ -431,10 +454,11 @@ const normalizeSpec = (raw) => {
     return { stop_id: stop.id, minute: Math.round(minute) };
   };
   if (input.sync !== undefined) sync = parseSync(input.sync, "sync");
-  lines.forEach((l, li) => {
-    l.services.forEach((s, si) => {
-      const raw = (Array.isArray(rawLines[li]?.services) ? rawLines[li].services[si] : null)?.sync;
-      if (raw !== undefined) s.sync = parseSync(raw, `lines[${li}].services[${si}].sync`);
+  lines.forEach((l) => {
+    l.services.forEach((s) => {
+      if (!s._rawSync) return;
+      const parsed = parseSync(s._rawSync.raw, s._rawSync.path);
+      if (parsed !== undefined) s.sync = parsed;
     });
   });
 

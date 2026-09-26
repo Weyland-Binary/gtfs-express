@@ -29,6 +29,19 @@ const KM = (m) => Math.round((m / 1000) * 1000) / 1000;
 const DAY_COL = { mon: "monday", tue: "tuesday", wed: "wednesday", thu: "thursday", fri: "friday", sat: "saturday", sun: "sunday" };
 const DAY_OF_WEEK = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 
+/**
+ * The day type a public holiday runs like: "sunday" / "saturday" name the
+ * local rest days — with a Fri–Sat weekend, "sunday" is the first rest day
+ * (Friday) and "saturday" the last. null for "none".
+ */
+const holidayDayType = (spec) => {
+  if (spec.holiday_service === "none") return null;
+  const named = spec.holiday_service === "saturday" ? "sat" : "sun";
+  const weekend = Array.isArray(spec.weekend) && spec.weekend.length ? spec.weekend : ["sat", "sun"];
+  if (weekend.includes(named)) return named;
+  return spec.holiday_service === "saturday" ? weekend[weekend.length - 1] : weekend[0];
+};
+
 const weekdayOf = (ymd) => DAY_OF_WEEK[new Date(Date.UTC(+ymd.slice(0, 4), +ymd.slice(4, 6) - 1, +ymd.slice(6, 8))).getUTCDay()];
 
 // Drop consecutive identical points and cap the size of a shape.
@@ -199,19 +212,19 @@ const compileSpec = async (spec, { router = null, signal = null, shapes = true, 
     row.end_date = cal.end_date;
     tables.calendar.push(row);
   }
-  // Holidays: services that would run are removed; the holiday service (if
-  // it exists and is not already running that day) is added.
-  const holidayCal = spec.holiday_service === "none" ? null : spec.calendars.find((c) => usedCalendars.has(c.id) && c.days.length === 1 && c.days[0] === (spec.holiday_service === "saturday" ? "sat" : "sun"));
+  // Holidays run like the holiday day type ("sunday" by default): every
+  // calendar that runs on that day type runs on the holiday, every other one
+  // is removed. A "daily" or "weekend" calendar therefore keeps running, and
+  // "none" removes everything.
+  const holidayDay = holidayDayType(spec);
   for (const d of spec.holidays) {
     const wd = weekdayOf(d);
     for (const cal of spec.calendars) {
       if (!usedCalendars.has(cal.id) || d < cal.start_date || d > cal.end_date) continue;
       const runs = cal.days.includes(wd);
-      if (holidayCal && cal.id === holidayCal.id) {
-        if (!runs) tables.calendar_dates.push({ service_id: cal.id, date: d, exception_type: "1" });
-        continue;
-      }
-      if (runs) tables.calendar_dates.push({ service_id: cal.id, date: d, exception_type: "2" });
+      const shouldRun = holidayDay ? cal.days.includes(holidayDay) : false;
+      if (runs && !shouldRun) tables.calendar_dates.push({ service_id: cal.id, date: d, exception_type: "2" });
+      else if (!runs && shouldRun) tables.calendar_dates.push({ service_id: cal.id, date: d, exception_type: "1" });
     }
   }
   for (const t of spec.transfers) {
@@ -395,4 +408,4 @@ const loadStoredReport = (sessionId) => {
   }
 };
 
-module.exports = { compileSpec, estimateGeometry, writeGtfsDir, createSessionFromSpec, loadStoredSpec, saveStoredSpec, loadStoredReport, estimateSpec, COLUMNS, _internals: { toCsv, csvCell, simplifyPoints, weekdayOf, buildReport, validationSummary } };
+module.exports = { compileSpec, estimateGeometry, writeGtfsDir, createSessionFromSpec, loadStoredSpec, saveStoredSpec, loadStoredReport, estimateSpec, COLUMNS, _internals: { toCsv, csvCell, simplifyPoints, weekdayOf, holidayDayType, buildReport, validationSummary } };

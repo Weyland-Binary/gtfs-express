@@ -15,29 +15,45 @@ const { secToTime } = _internals;
 const MIN_LEG_S = 30;
 const GRANULARITY_S = 30;
 
+// The moving time never drops below this share of the commercial time, even
+// when the dwells alone would eat the budget (many stops, long dwells).
+const MIN_MOVING_SHARE = 0.6;
+
 /**
  * Cumulative arrival/departure offsets (seconds from the trip start) for
  * each stop of a direction.
+ *
+ * `speedKmh` is a COMMERCIAL speed: terminus to terminus, dwells included —
+ * the figure operators quote and the planner reasons with (a 12 km urban bus
+ * line at 20 km/h runs 36 min). The dwells are taken out of that budget and
+ * the remaining moving time is shared among the legs by distance; the road
+ * router's duration (×1.15 for a bus) is a floor for each leg. Times are
+ * rounded on the cumulative arrival, so rounding never piles up along the
+ * line.
  * @param {number[]} legDistancesM distance of each leg (stops - 1 entries)
  * @param {{ speedKmh: number, dwellS: number, legDurationsS?: (number|null)[] }} opts
  */
 const runningTimes = (legDistancesM, { speedKmh, dwellS = 0, legDurationsS = null } = {}) => {
   const mps = Math.max(1, speedKmh) / 3.6;
+  const dwell = Math.max(0, Math.round(dwellS));
+  const n = legDistancesM.length;
+  const totalM = legDistancesM.reduce((s, d) => s + Math.max(0, d), 0);
+  const commercialS = totalM / mps;
+  const movingBudgetS = Math.max(commercialS - dwell * Math.max(0, n - 1), commercialS * MIN_MOVING_SHARE);
   const out = [{ arrival: 0, departure: 0 }];
-  let t = 0;
-  for (let i = 0; i < legDistancesM.length; i++) {
-    // OSRM's car duration is a floor for the leg; commercial speed usually
-    // gives a longer, more realistic time on a bus. Take the slower one.
-    const bySpeed = legDistancesM[i] / mps;
+  let exact = 0; // unrounded clock
+  let prevDeparture = 0;
+  for (let i = 0; i < n; i++) {
+    const share = totalM > 0 ? (Math.max(0, legDistancesM[i]) / totalM) * movingBudgetS : 0;
     const byRoad = legDurationsS && Number.isFinite(legDurationsS[i]) ? legDurationsS[i] * 1.15 : 0;
-    let leg = Math.max(MIN_LEG_S, bySpeed, byRoad);
-    leg = Math.ceil(leg / GRANULARITY_S) * GRANULARITY_S;
-    t += leg;
-    const isLast = i === legDistancesM.length - 1;
-    const arrival = t;
-    const departure = isLast ? t : t + Math.round(dwellS);
+    exact += Math.max(MIN_LEG_S, share, byRoad);
+    let arrival = Math.round(exact / GRANULARITY_S) * GRANULARITY_S;
+    if (arrival < prevDeparture + MIN_LEG_S) arrival = Math.ceil((prevDeparture + MIN_LEG_S) / GRANULARITY_S) * GRANULARITY_S;
+    const isLast = i === n - 1;
+    const departure = isLast ? arrival : arrival + dwell;
     out.push({ arrival, departure });
-    t = departure;
+    if (!isLast) exact += dwell;
+    prevDeparture = departure;
   }
   return out;
 };
