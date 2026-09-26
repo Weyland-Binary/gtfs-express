@@ -334,6 +334,11 @@ const createTools = (ctx) => {
       for (const k of ["objectives", "lines_requested", "constraints", "assumptions"]) if (!(Array.isArray(r[k]) && r[k].length) && Array.isArray(prev[k])) req[k] = prev[k];
       req.clauses = conformance.mergeClauses(prev.clauses, (Array.isArray(r.clauses) ? r.clauses : []).map((c) => ({ ...c, status: c?.status === "assumed" ? "assumed" : "stated", decided_by: undefined })), Array.isArray(r.remove_clauses) ? r.remove_clauses : []);
       ctx.requirements = req;
+      // The last report was measured against the old clauses: measure it again.
+      if (ctx.quality && ctx.spec) {
+        const { conformance: _old, lifted_by_brief: _lifted, ...rest } = ctx.quality; // eslint-disable-line no-unused-vars
+        ctx.quality = withConformance(rest, ctx);
+      }
       ctx.emit("requirements", req);
       ctx.emit("step", { kind: "requirements", lines: req.lines_requested.length, assumptions: req.assumptions.length, questions: req.open_questions.length });
       const high = req.open_questions.filter((q) => q.impact === "high");

@@ -157,6 +157,8 @@ const applyPatch = (spec, ops) => {
     const reason = fn(draft, op);
     if (reason) rejected.push({ index, op: op.op, reason });
     else {
+      // Commit the draft whole: a field the op removed must not survive.
+      for (const k of Object.keys(out)) if (!(k in draft)) delete out[k];
       Object.assign(out, draft);
       applied.push({ index, op: op.op });
     }

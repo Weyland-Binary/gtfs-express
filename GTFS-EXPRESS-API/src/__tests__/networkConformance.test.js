@@ -164,6 +164,15 @@ describe("the record of the brief", () => {
     expect(byId.peak.params.minutes).toBe(8);
   });
 
+  test("a clause sent again without an id upserts itself; it never overwrites another", () => {
+    const first = C.mergeClauses([], [{ kind: "lines_max", params: { count: 3 } }]);
+    const again = C.mergeClauses(first, [{ kind: "lines_max", params: { count: 3 } }, { kind: "lines_min", params: { count: 2 } }]);
+    expect(again).toHaveLength(2);
+    expect(again[0].id).toBe(first[0].id);
+    const named = C.mergeClauses([{ id: "lines_max_2", kind: "lines_max", params: { count: 9 } }], [{ kind: "lines_max", params: { count: 3 } }]);
+    expect(named.map((c) => c.params.count).sort()).toEqual([3, 9]);
+  });
+
   test("a clause on span or days lifts the generic finding it contradicts", () => {
     // Line A without its Saturday service: the generic norm wants one, the brief says none.
     const weekdayOnly = normalizeSpec({ ...RAW, lines: [{ ...RAW.lines[0], services: [RAW.lines[0].services[0]] }] }).spec;

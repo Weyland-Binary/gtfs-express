@@ -117,9 +117,24 @@ const withPeakHeadway = (spec, minutes) => ({
   ...spec,
   lines: spec.lines.map((l) => (isSchoolOrShuttle(l) ? l : { ...l, services: l.services.map((s) => ({ ...s, periods: (s.periods || []).map((p) => (overlapsPeak(p) ? { ...p, headway_min: minutes } : p)) })) })),
 });
+// The plan without service on one day: a calendar that runs only that day
+// goes; one that runs it among others (weekend, daily, Mon–Sat) loses it.
 const without = (spec, day) => {
-  const cal = new Map((spec.calendars || []).map((c) => [c.id, c]));
-  return { ...spec, lines: spec.lines.map((l) => ({ ...l, services: l.services.filter((s) => !(cal.get(s.calendar_id)?.days || []).every((d) => d === day)) })) };
+  const calendars = [];
+  const renamed = new Map();
+  for (const c of spec.calendars || []) {
+    if (!c.days.includes(day)) calendars.push(c);
+    else if (c.days.length > 1) {
+      const id = `${c.id}_NO_${day.toUpperCase()}`;
+      calendars.push({ ...c, id, days: c.days.filter((d) => d !== day) });
+      renamed.set(c.id, id);
+    } else renamed.set(c.id, null);
+  }
+  return {
+    ...spec,
+    calendars,
+    lines: spec.lines.map((l) => ({ ...l, services: l.services.filter((s) => renamed.get(s.calendar_id) !== null).map((s) => (renamed.has(s.calendar_id) ? { ...s, calendar_id: renamed.get(s.calendar_id) } : s)) })),
+  };
 };
 
 /**

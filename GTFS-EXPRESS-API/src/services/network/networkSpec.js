@@ -234,19 +234,22 @@ const normalizeSpec = (raw) => {
   const calendars = new Map(); // id -> { id, days, start_date, end_date }
   // A normalised spec round-trips: its calendars[] are registered first so
   // services may refer to them by id (calendar_id).
-  (Array.isArray(input.calendars) ? input.calendars : []).forEach((c) => {
-    const id = c && str(c.id);
-    const days = c && parseDays(c.days);
-    if (!id || !days || !days.length) return;
-    const sd = str(c.start_date).replace(/-/g, "") || feed.start_date;
-    const ed = str(c.end_date).replace(/-/g, "") || feed.end_date;
-    if (DATE_RE.test(sd) && DATE_RE.test(ed) && sd <= ed) calendars.set(id, { id, days, start_date: sd, end_date: ed });
-  });
   // The week follows local practice: spec.weekend (e.g. ["fri", "sat"]) makes
   // "weekday" the other five days and "weekend" these ones.
   const weekendDays = parseDays(input.weekend);
   const weekend = weekendDays && weekendDays.length && weekendDays.length < 7 ? weekendDays : ["sat", "sun"];
   const localDays = (named) => (named.id === "WKD" ? DAY_KEYS.filter((d) => !weekend.includes(d)) : named.id === "WKE" ? weekend : named.days);
+  (Array.isArray(input.calendars) ? input.calendars : []).forEach((c) => {
+    const id = c && str(c.id);
+    let days = c && parseDays(c.days);
+    if (!id || !days || !days.length) return;
+    // The named local calendars follow the weekend as it is NOW (it may have
+    // changed since the spec was normalised).
+    if (id === "WKD" || id === "WKE") days = localDays({ id });
+    const sd = str(c.start_date).replace(/-/g, "") || feed.start_date;
+    const ed = str(c.end_date).replace(/-/g, "") || feed.end_date;
+    if (DATE_RE.test(sd) && DATE_RE.test(ed) && sd <= ed) calendars.set(id, { id, days, start_date: sd, end_date: ed });
+  });
   const resolveCalendar = (raw, path) => {
     if (typeof raw === "string" || raw == null) {
       if (raw && calendars.has(str(raw))) return calendars.get(str(raw));

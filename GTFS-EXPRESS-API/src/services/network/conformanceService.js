@@ -58,13 +58,22 @@ const clip = (s, n) => (s.length > n ? `${s.slice(0, n)}…` : s);
 
 // ── Normalisation ─────────────────────────────────────────────────────────
 
-const normalizeClause = (raw, i = 0) => {
+// A stable id from a clause's content: the same clause sent again (without
+// an id) upserts itself instead of piling up under a fresh number.
+const contentId = (kind, params) => {
+  const text = JSON.stringify(params || {}, Object.keys(params || {}).sort());
+  let h = 5381;
+  for (let i = 0; i < text.length; i++) h = ((h << 5) + h + text.charCodeAt(i)) >>> 0;
+  return `${kind}_${h.toString(36)}`;
+};
+
+const normalizeClause = (raw) => {
   if (!raw || typeof raw !== "object") return null;
   const kind = str(raw.kind).toLowerCase();
   if (!KINDS.includes(kind)) return null;
   const params = raw.params && typeof raw.params === "object" ? JSON.parse(JSON.stringify(raw.params)) : {};
   return {
-    id: clip(str(raw.id) || `${kind}_${i + 1}`, 48),
+    id: clip(str(raw.id) || contentId(kind, params), 48),
     kind,
     level: LEVELS.includes(raw.level) ? raw.level : "must",
     status: STATUSES.includes(raw.status) ? raw.status : "stated",
@@ -87,8 +96,8 @@ const mergeClauses = (previous = [], incoming = [], remove = []) => {
     const prev = out.get(id);
     if (prev && prev.decided_by !== "user") out.delete(id);
   }
-  (incoming || []).forEach((raw, i) => {
-    const c = normalizeClause(raw, out.size + i);
+  (incoming || []).forEach((raw) => {
+    const c = normalizeClause(raw);
     if (!c) return;
     const prev = out.get(c.id);
     if (prev && prev.decided_by === "user") out.set(c.id, { ...c, status: prev.status, decided_by: "user", ...(prev.reason ? { reason: prev.reason } : {}), params: prev.params });

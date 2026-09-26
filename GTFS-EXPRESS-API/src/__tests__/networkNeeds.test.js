@@ -71,3 +71,12 @@ test("POST /network/needs: needs by impact and the levers", async () => {
   expect(res.body.needs.map((n) => n.id)).toContain("validity"); // dates left out
   expect(res.body.levers.base.fleet).toBeGreaterThan(0);
 });
+
+test("no Sunday also takes Sunday out of a weekend or daily calendar", () => {
+  const spec = normalizeSpec({ ...RAW, stops: RAW.stops.slice(0, 3), lines: [{ ...RAW.lines[0], services: [{ calendar: "daily", periods: [{ from: "07:00", to: "19:00", headway_min: 30 }] }] }] }).spec;
+  const l = serviceLevers(spec);
+  const noSun = l.variants.find((v) => v.id === "no_sunday");
+  const noSat = l.variants.find((v) => v.id === "no_saturday");
+  expect(noSun.delta_cost).toBeLessThan(0);
+  expect(noSat.delta_cost).toBeLessThan(0);
+});

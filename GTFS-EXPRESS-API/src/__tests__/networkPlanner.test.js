@@ -308,6 +308,22 @@ describe("network planner", () => {
     expect(events.at(-1).data.specChanged).toBe(true);
   });
 
+  test("changing the clauses after evaluate_plan re-measures the plan against the new brief", async () => {
+    const valid = { ...SPEC_WITH_NAMES, stops: [...SPEC_WITH_NAMES.stops.slice(0, 2), { name: "Hôpital", lat: 47.8, lon: 1.06 }] };
+    __script.push(
+      { toolUses: [{ id: "q1", name: "set_requirements", input: { requirements: { clauses: [{ id: "A_exists", kind: "line_exists", params: { line: "A" } }] } } }] },
+      { toolUses: [{ id: "q2", name: "set_spec", input: { spec: valid } }] },
+      { toolUses: [{ id: "q3", name: "evaluate_plan", input: {} }] },
+      { toolUses: [{ id: "q4", name: "set_requirements", input: { requirements: { clauses: [{ id: "B_exists", kind: "line_exists", params: { line: "B" } }] } } }] },
+      { text: "ok" },
+    );
+    const { events } = await runPlan({});
+    const done = events.at(-1).data;
+    expect(done.conforms).toBe(false);
+    expect(done.clean).toBe(false);
+    expect(done.not_ready_reasons.map((r) => r.clause?.id).filter(Boolean)).toEqual(["B_exists"]);
+  });
+
   test("POST /network/plan streams the events over SSE and validates its input", async () => {
     __script.push({ text: "ok" });
     const res = await request(app).post("/gtfs/network/plan").send({ brief: "Un réseau de deux lignes à Tours", language: "fr" });

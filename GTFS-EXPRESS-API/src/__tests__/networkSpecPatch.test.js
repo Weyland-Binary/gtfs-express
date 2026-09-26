@@ -81,3 +81,12 @@ test("the compact view drops derived returns and summarises long departure lists
   expect(view.length).toBeLessThan(4000);
   expect(view).toMatch(/departures .*get_spec/);
 });
+
+test("set with a null value clears the field (it is not only reported as applied)", () => {
+  const withSync = normalizeSpec({ ...base, sync: { stop: "B", minute: 0 }, holidays: ["20261225"] }).spec;
+  const r = P.applyPatch(withSync, [{ op: "set", field: "sync", value: null }, { op: "set", field: "holidays", value: null }]);
+  expect(r.applied).toHaveLength(2);
+  expect(r.spec.sync).toBeUndefined();
+  expect(r.spec.holidays).toBeUndefined();
+  expect(normalizeSpec(r.spec).spec.sync).toBeUndefined();
+});

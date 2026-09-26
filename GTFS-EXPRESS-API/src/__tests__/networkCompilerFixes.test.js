@@ -163,3 +163,13 @@ describe("commercial speed", () => {
     expect(Math.abs(l.hours_weekday * 60 - expectedMin)).toBeLessThanOrEqual(6);
   });
 });
+
+describe("the local weekend on a spec already normalised", () => {
+  test("changing spec.weekend moves the weekday and weekend calendars with it", () => {
+    const first = normalizeSpec(base({ lines: [line([{ calendar: "weekday", departures: ["08:00"] }, { calendar: "weekend", departures: ["10:00"] }])] })).spec;
+    expect(first.calendars.find((c) => c.id === "WKD").days).toEqual(["mon", "tue", "wed", "thu", "fri"]);
+    const again = normalizeSpec({ ...first, weekend: ["fri", "sat"] }).spec;
+    expect(again.calendars.find((c) => c.id === "WKD").days).toEqual(["mon", "tue", "wed", "thu", "sun"]);
+    expect(again.calendars.find((c) => c.id === "WKE").days).toEqual(["fri", "sat"]);
+  });
+});
