@@ -56,6 +56,35 @@ const catalogueText = () =>
     })
     .join("\n");
 
+/**
+ * How real briefs map onto the catalogue (from service-change notices of
+ * French and foreign networks, and the golden Albi cases): a brief, the
+ * operations that implement it (placeholders in <>), and a note. A recipe
+ * is shown only when every operator it uses is in the catalogue; a test
+ * checks every parameter it names exists.
+ */
+const RECIPES = [
+  { brief: "Un bus toutes les 10 min de 7h à 9h en période scolaire à partir du 2 novembre (contre 15 aujourd'hui)", steps: [{ type: "set_headway", params: { route: "<line>", days: "weekday", from: "07:00", to: "09:00", headway_min: 10, from_date: "2026-11-02", period: "school_days", region: "<zone>" } }], note: "Add a headway_max clause; the stated old value (15) is checked by an assert first when the catalogue has one." },
+  { brief: "Les lignes X et Y circulent désormais le dimanche, de 9h à 19h, un départ par heure sur leur itinéraire principal", steps: [{ type: "copy_day_service", params: { routes: ["X", "Y"], from_day: "saturday", to_days: "sunday", from_date: "<date>" } }, { type: "set_headway", params: { route: "X", days: "sunday", from_date: "<date>", from: "09:00", to: "19:00", start: "09:00", headway_min: 60, patterns: "main_only" } }, { type: "set_span", params: { route: "X", days: "sunday", from_date: "<date>", first: "09:00", last: "18:00" } }], note: "set_headway and set_span for each line." },
+  { brief: "Les jours fériés, ces lignes circulent comme le dimanche, sauf le 1er mai", steps: [{ type: "apply_holiday_rules", params: { routes: ["X", "Y"], rule: "sunday", period: "public_holidays", except: ["2027-05-01"] } }] },
+  { brief: "Pendant les vacances scolaires, la ligne E circule en semaine selon ses horaires du samedi", steps: [{ type: "run_like", params: { routes: ["E"], like: "saturday", days: "weekday", period: "school_holidays", region: "<zone>" } }] },
+  { brief: "Dernier départ à 21h30, un bus toutes les 30 min en soirée, du lundi au samedi", steps: [{ type: "set_span", params: { route: "<line>", days: ["mon", "tue", "wed", "thu", "fri", "sat"], last: "21:30", headway_min: 30 } }], note: "\"Premier départ à 6h30\" is first." },
+  { brief: "Les courses limitées à A sont prolongées jusqu'à B ; horaires conservés aux arrêts desservis", steps: [{ type: "extend_route", params: { route: "<line>", beyond: "A", stops: ["<new stop 1>", "<…>", "B"], from_date: "<date>" } }] },
+  { brief: "La desserte de X est supprimée : les courses sont limitées à Y", steps: [{ type: "truncate_route", params: { route: "<line>", at: "Y", drop: "X", from_date: "<date>" } }], note: "Only the patterns going beyond Y change." },
+  { brief: "Travaux du … au … : arrêts A et B non desservis, arrêt provisoire C (lat, lon), temps de parcours inchangés", steps: [{ type: "reroute", params: { route: "<line>", from_stop: "<stop before A>", to_stop: "<stop after B>", via: [{ name: "C", lat: 0, lon: 0 }], from_date: "<date>", to_date: "<date>", mode: "absorb" } }], note: "One per line; where the two directions use different streets, one per direction (direction set, stops in that direction's order)." },
+  { brief: "L'arrêt X n'est plus desservi par la ligne L ; nouvel arrêt Z (lat, lon) entre A et B", steps: [{ type: "remove_stop", params: { route: "L", stop: "X" } }, { type: "add_stop", params: { route: "L", stop: { name: "Z", lat: 0, lon: 0 }, after: "A", before: "B" } }], note: "A name standing for both sides of the street is fine: the engine takes each direction's side." },
+  { brief: "La course de 7h40 au départ de A doit arriver à B à 7h50 (au lieu de 7h56)", steps: [{ type: "shift_trips", params: { route: "<line>", direction: "B", times: ["07:40"], at_stop: "A", target: { stop: "B", time: "07:50", event: "arrive", was: "07:56" } } }] },
+  { brief: "Suppression de la course de 13h45 au départ de A ; ajout d'un départ à 7h37 de A vers B", steps: [{ type: "remove_trips", params: { route: "<line>", times: ["13:45"], at_stop: "A" } }, { type: "add_trips", params: { route: "<line>", direction: "B", days: "weekday", times: ["07:37"], at_stop: "A" } }], note: "Running times come from the nearest trip." },
+  { brief: "La ligne R devient la ligne 5, en gris, texte blanc", steps: [{ type: "set_route_attributes", params: { changes: [{ route: "R", short_name: "5", color: "6E6E6E", text_color: "FFFFFF" }] } }], note: "With a date, whole_feed: true (GTFS cannot date a line's identity)." },
+  { brief: "La ligne J est supprimée à compter du 4 janvier", steps: [{ type: "discontinue_route", params: { route: "J", from_date: "2027-01-04" } }] },
+  { brief: "Prolonger les horaires jusqu'au 31 août", steps: [{ type: "extend_validity", params: { end_date: "2027-08-31", holidays: "public_holidays", holiday_rule: "sunday" } }] },
+  { brief: "Après ces changements, refaire les services voitures", steps: [{ type: "rebuild_blocks", params: {} }], note: "Also when the preview shows block overlaps and the brief cares about vehicles." },
+];
+const recipesText = () =>
+  RECIPES.filter((r) => r.steps.every((st) => registry.get(st.type)))
+    .map((r) => `- "${r.brief}" → ${r.steps.map((st) => `${st.type} ${JSON.stringify(st.params)}`).join("; ")}${r.note ? `. ${r.note}` : ""}`)
+    .join("\n");
+
 const buildSystemPrompt = () => `You are the service-change planner of GTFS Express: a senior transit scheduler and GTFS expert. A transport authority or operator gives you a brief (a service-change notice, a contract amendment, a cahier des charges, or a few sentences) about THE FEED ALREADY LOADED. You turn it into a CHANGE PLAN: typed operations from the catalogue below, which the engine applies deterministically on a sandbox, previews and checks. You never write GTFS rows.
 
 # Principles
@@ -69,6 +98,10 @@ const buildSystemPrompt = () => `You are the service-change planner of GTFS Expr
 6. Order: validity/calendar first, then line structure (create, extend, truncate, reroute, split, merge), then stops, then timetables (headways, spans, trips, running times), then connections, fares, attributes, asserts after.
 7. After set_plan / patch_plan, read the preview. Fix what is YOUR mistake (a wrong id, a missing parameter the brief does state, a failed step). Leave the genuine questions to the user: call ask_user with them (reuse the engine's options) and stop. Do not loop more than needed.
 8. Answer in the user's language, briefly: what the plan does, what you assumed, what you need.
+9. Data that is not in the feed (another operator's trains, a school's bell times, counts) is never invented: ask for it (ask_user), with where it can be found, and change nothing that depends on it.
+
+# Recipes (how real briefs map onto the catalogue)
+${recipesText()}
 
 # Change plan (set_plan)
 { "title", "operations": [{ "id": "op1", "type", "params": {…}, "source": { "quote", "page"? }, "clauses"?: [clause ids], "note"? }],
@@ -512,4 +545,4 @@ const planChanges = async ({ db, sessionId = null, dataVersion = null, country =
   }
 };
 
-module.exports = { planChanges, buildSystemPrompt, feedOverview, summarizePreview, _internals: { deps, createTools, buildMessages, MAX_ROUNDS } };
+module.exports = { planChanges, buildSystemPrompt, feedOverview, summarizePreview, _internals: { deps, createTools, buildMessages, MAX_ROUNDS, RECIPES } };

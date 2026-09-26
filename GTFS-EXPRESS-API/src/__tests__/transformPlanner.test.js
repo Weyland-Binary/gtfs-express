@@ -165,3 +165,25 @@ describe("POST /transform/plan (SSE)", () => {
     expect(r.status).toBe(400);
   });
 });
+
+describe("planner recipes", () => {
+  const registry = require("../services/transform/operators");
+  const { SCOPE_PARAMS } = require("../services/transform/scope");
+  const { SELECTION_PARAMS } = require("../services/transform/selection");
+  const { RECIPES } = require("../services/transform/transformPlannerService")._internals;
+
+  test("every parameter a recipe names is a parameter of its operator; recipes of absent operators are not shown", () => {
+    const common = new Set([...SCOPE_PARAMS, ...SELECTION_PARAMS].map((p) => p.name));
+    const bad = [];
+    for (const r of RECIPES) for (const st of r.steps) {
+      const op = registry.get(st.type);
+      if (!op) continue;
+      const names = new Set([...(op.params || []).map((p) => p.name), ...common]);
+      for (const k of Object.keys(st.params)) if (!names.has(k)) bad.push(`${st.type}.${k}`);
+    }
+    expect(bad).toEqual([]);
+    const prompt = require("../services/transform/transformPlannerService").buildSystemPrompt();
+    expect(prompt).toMatch(/# Recipes/);
+    for (const r of RECIPES) expect(prompt.includes(r.brief)).toBe(r.steps.every((st) => registry.get(st.type)));
+  });
+});
