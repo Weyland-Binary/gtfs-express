@@ -55,9 +55,9 @@ const route = (model, ref) => {
   return amb("route_unknown", `No line "${raw}" in the feed.`, all.map(routeLabel));
 };
 
-const stopsOfRoute = (model, routeId) => {
+const stopsOfRoute = (model, routeId, direction = null) => {
   const ids = new Set();
-  for (const p of model.patterns.values()) if (p.route_id === routeId) for (const s of p.stops) ids.add(s);
+  for (const p of model.patterns.values()) if (p.route_id === routeId && (!direction || direction === "both" || p.direction_id === direction)) for (const s of p.stops) ids.add(s);
   return ids;
 };
 
@@ -80,7 +80,7 @@ const samePlace = (hits) => {
   return true;
 };
 
-const stop = (model, ref, { routeId = null, allowMany = false, group = false } = {}) => {
+const stop = (model, ref, { routeId = null, direction = null, allowMany = false, group = false } = {}) => {
   if (ref && typeof ref === "object" && Number.isFinite(Number(ref.lat)) && Number.isFinite(Number(ref.lon)) && !ref.id) {
     return { value: { id: null, name: str(ref.name) || null, lat: Number(ref.lat), lon: Number(ref.lon), new: true } };
   }
@@ -95,6 +95,12 @@ const stop = (model, ref, { routeId = null, allowMany = false, group = false } =
     const served = stopsOfRoute(model, routeId);
     const onRoute = hits.filter((s) => served.has(s.id));
     if (onRoute.length) hits = onRoute;
+  }
+  // The side of the street the line serves in that direction.
+  if (routeId && direction && direction !== "both" && hits.length > 1) {
+    const served = stopsOfRoute(model, routeId, direction);
+    const onSide = hits.filter((s) => served.has(s.id));
+    if (onSide.length) hits = onSide;
   }
   if (hits.length === 1) return { value: hits[0] };
   if (hits.length > 1 && allowMany) return { value: hits[0], many: hits };

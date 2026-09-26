@@ -46,15 +46,21 @@ const resolveSelection = (model, p, { routeId, direction = "both", scope = null 
 
   // The stop times refer to.
   let atStop = null;
+  let atIds = null;
   if (p.at_stop != null && p.at_stop !== "") {
-    const s = R.stop(model, p.at_stop, { routeId });
+    // The side of the street served in the direction; in both directions,
+    // the stops of that name at the same place (one per side) together.
+    const s = R.stop(model, p.at_stop, { routeId, direction, group: true });
     if (s.ambiguity) ambiguities.push({ param: "at_stop", ...s.ambiguity });
-    else atStop = s.value;
+    else {
+      atStop = s.value;
+      const base = s.many || [s.value];
+      atIds = new Set(base.flatMap((b) => [b.id, ...[...model.stops.values()].filter((x) => x.parent === b.id).map((x) => x.id)]));
+    }
   }
   const timeAt = (t) => {
     if (!atStop) return t.first;
-    const ids = new Set([atStop.id, ...[...model.stops.values()].filter((x) => x.parent === atStop.id).map((x) => x.id)]);
-    const k = t.stops.findIndex((id) => ids.has(id));
+    const k = t.stops.findIndex((id) => atIds.has(id));
     return k < 0 ? null : t.dep[k] ?? t.arr[k];
   };
   if (atStop) {

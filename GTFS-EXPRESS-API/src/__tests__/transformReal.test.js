@@ -86,3 +86,24 @@ describe("SNgo Vernon — real vehicle blocks", () => {
     expect(p.steps[0].warnings.join(" ")).toMatch(/vehicle blocks/);
   });
 });
+
+describe("libéA Albi — a stop on both sides of the street", () => {
+  const R = require("../services/transform/resolve");
+  const { resolveSelection } = require("../services/transform/selection");
+  const m = buildFeedModel(loadReal("albi"));
+
+  test("the direction picks the side the line serves; both directions take the two sides", () => {
+    // Najac: 21225 (towards Parking Mézard, direction 0), 21928 (arrivals, direction 1).
+    expect(R.stop(m, "Najac", { routeId: "114" }).ambiguity.code).toBe("stop_ambiguous");
+    expect(R.stop(m, "Najac", { routeId: "114", direction: "0" }).value.id).toBe("21225");
+    expect(R.stop(m, "Najac", { routeId: "114", direction: "1" }).value.id).toBe("21928");
+    const one = resolveSelection(m, { at_stop: "Najac", times: ["07:30"] }, { routeId: "114", direction: "0" });
+    expect(one.ambiguities).toEqual([]);
+    const trips = one.value.trips.map((id) => m.trips.get(id));
+    expect(trips.length).toBeGreaterThan(0);
+    expect(trips.every((t) => t.direction_id === "0" && t.first === 7.5 * 3600)).toBe(true);
+    const both = resolveSelection(m, { at_stop: "Najac", from: "07:00", to: "08:00" }, { routeId: "114", direction: "both" });
+    expect(both.ambiguities).toEqual([]);
+    expect(new Set(both.value.trips.map((id) => m.trips.get(id).direction_id))).toEqual(new Set(["0", "1"]));
+  });
+});
