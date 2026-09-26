@@ -164,6 +164,8 @@ module.exports = {
   // Reasoning effort of the planner (low|medium|high|xhigh|max). Unset keeps
   // the model's default; only sent to models that accept it.
   NETWORK_PLANNER_EFFORT: ["low", "medium", "high", "xhigh", "max"].includes(process.env.NETWORK_PLANNER_EFFORT) ? process.env.NETWORK_PLANNER_EFFORT : null,
+  // Change planner (a brief → a change plan on the loaded feed); defaults to the network planner's model.
+  TRANSFORM_PLANNER_MODEL: process.env.TRANSFORM_PLANNER_MODEL || null,
   // Plans. Free builds small networks; Pro/Team (an access code with the
   // matching tier in codes.json) lift the caps. Prices are display-only;
   // Stripe Checkout links carry the purchase when configured.

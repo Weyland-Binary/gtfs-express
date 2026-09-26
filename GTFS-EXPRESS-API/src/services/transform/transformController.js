@@ -12,6 +12,9 @@
  *   POST /transform/commit { previewId }   (edit mode) replay it on the feed as
  *                                     one undoable edit
  *   POST /transform/compare { otherSessionId }  semantic diff with another session
+ *   POST /transform/plan { brief, plan?, messages?, language?, documents? }
+ *                                     (SSE) the change planner: a brief → a plan,
+ *                                     previewed (transformPlannerService)
  */
 
 "use strict";
@@ -100,6 +103,71 @@ const commitHandler = (req, res) => {
   }
 };
 
+const encodeSSE = (event, data) => `event: ${event}\ndata: ${JSON.stringify(data == null ? {} : data)}\n\n`;
+
+/** POST /transform/plan — a planner turn (SSE): a brief → a change plan, previewed. */
+const planHandler = async (req, res) => {
+  const config = require("../../config");
+  if (!config.NL2SQL_CHAT_ENABLED) return res.status(503).json({ error: "NL2SQL_CHAT_DISABLED", message: "The AI assistant is disabled on this server." });
+  const ctx = requireSession(req, res);
+  if (!ctx) return;
+  const body = req.body || {};
+  const brief = typeof body.brief === "string" ? body.brief : "";
+  if (brief.trim().length < 3) return res.status(400).json({ error: "INVALID_INPUT", message: "brief is required (min 3 characters)." });
+  const plan = body.plan && typeof body.plan === "object" && Array.isArray(body.plan.operations) && JSON.stringify(body.plan).length < 400000 ? body.plan : null;
+  const history = Array.isArray(body.messages) ? body.messages.slice(-20) : [];
+  const language = typeof body.language === "string" ? body.language.slice(0, 8) : "en";
+  const documentIds = Array.isArray(body.documents) ? body.documents.filter((d) => typeof d === "string" && /^[a-f0-9]{24}$/.test(d)).slice(0, 5) : [];
+  const aiCostLimiter = require("../aiCostLimiter");
+  const freeTierLimiter = require("../freeTierLimiter");
+  const anonKey = `anon:${req.ip || "ip"}`;
+  const rateKey = req.betaTester?.code || anonKey;
+  const aiLimits = aiCostLimiter.betaLimitsFor(req.betaTester);
+  if (req.freeTier) {
+    const quota = freeTierLimiter.check({ sessionId: anonKey, ip: req.ip });
+    if (!quota.ok) return res.status(403).json({ error: "FREE_QUOTA_EXHAUSTED", message: "Free trial messages used up. Enter a beta access code to keep going." });
+    freeTierLimiter.consume({ sessionId: anonKey, ip: req.ip });
+  }
+  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders?.();
+  const abort = new AbortController();
+  let clientGone = false;
+  const onClose = () => {
+    if (res.writableEnded) return;
+    clientGone = true;
+    abort.abort();
+  };
+  res.on("close", onClose);
+  const emit = (event, data) => {
+    if (clientGone) return;
+    try {
+      res.write(encodeSSE(event, data));
+    } catch {
+      /* closed */
+    }
+  };
+  try {
+    const { planChanges } = require("./transformPlannerService");
+    const country = require("../sessionCountry").sessionCountryCode(ctx.sessionId);
+    await planChanges({ db: ctx.db, sessionId: ctx.sessionId, dataVersion: getDataVersion(ctx.db), country, brief, plan, history, language, documentIds, freeTier: Boolean(req.freeTier), rateKey, aiLimits, signal: abort.signal, emit, req });
+  } catch (err) {
+    emit("error", { code: err.code || "UPSTREAM_ERROR", message: err.message || "Planner request failed.", ...(err.retryAfterSec ? { retryAfterSec: err.retryAfterSec } : {}), ...(err.status ? { status: err.status } : {}) });
+    emit("done", { reason: "error" });
+  } finally {
+    res.off("close", onClose);
+    if (!clientGone) {
+      try {
+        res.end();
+      } catch {
+        /* closed */
+      }
+    }
+  }
+};
+
 const compareHandler = (req, res) => {
   const ctx = requireSession(req, res);
   if (!ctx) return;
@@ -113,4 +181,4 @@ const compareHandler = (req, res) => {
   res.json({ ...diff, lines: diff.items.map(describe) });
 };
 
-module.exports = { getOperations, getOverview, previewPlanHandler, commitHandler, compareHandler, overviewOf, validateDb, _internals: { crypto } };
+module.exports = { getOperations, getOverview, previewPlanHandler, commitHandler, compareHandler, planHandler, overviewOf, validateDb, _internals: { crypto } };

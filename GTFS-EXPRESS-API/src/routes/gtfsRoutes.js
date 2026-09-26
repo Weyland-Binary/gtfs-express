@@ -375,6 +375,8 @@ router.post("/realtime/validate", express.raw({ type: ["application/x-protobuf",
 
 const { planNetworkTurn } = require("../services/network/networkPlanController");
 router.post("/network/plan", chatAccessGate, planNetworkTurn);
+// The change planner: a brief → a change plan on the loaded feed (SSE, gated like the chat).
+router.post("/transform/plan", chatAccessGate, transformController.planHandler);
 // The specification documents the planner reads (PDF, Word, OpenDocument, text).
 const briefDocuments = require("../services/network/briefDocumentService");
 router.post("/network/documents", chatAccessGate, briefDocuments.postDocument);

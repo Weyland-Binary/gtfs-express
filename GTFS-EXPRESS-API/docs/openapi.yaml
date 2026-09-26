@@ -1360,6 +1360,42 @@ paths:
           $ref: "#/components/responses/OkJson"
         "400":
           $ref: "#/components/responses/BadRequest"
+  /gtfs/transform/plan:
+    post:
+      tags:
+        - Transform
+      summary: "The change planner (SSE, gated like the chat): a brief (text and attached documents) about the loaded feed → a change plan of typed operations, each citing the brief, previewed by the engine. Events: meta, token, tool_pending, plan, preview, questions, usage, error, done { ready, blocked, previewId, asked }."
+      security:
+        - SessionId: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - brief
+              properties:
+                brief:
+                  type: string
+                plan:
+                  type: object
+                  description: The current plan, when refining.
+                messages:
+                  type: array
+                  items:
+                    type: object
+                language:
+                  type: string
+                documents:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        "200":
+          description: Server-sent events.
+        "400":
+          $ref: "#/components/responses/BadRequest"
   /gtfs/transform/compare:
     post:
       tags:
