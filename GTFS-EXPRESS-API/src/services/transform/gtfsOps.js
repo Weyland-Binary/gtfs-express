@@ -152,8 +152,7 @@ const isolateDays = (db, model, tripIds, dows) => {
 const tripsIn = (model, { routeId, direction = "both", dows = null, from = 0, to = 48 * 3600, at = "first" } = {}) => {
   const want = dows ? new Set(dows) : null;
   const out = [];
-  for (const t of model.trips.values()) {
-    if (routeId && t.route_id !== routeId) continue;
+  for (const t of routeId ? require("./feedModel").tripsOfRoute(model, routeId) : model.trips.values()) {
     if (direction !== "both" && t.direction_id !== direction) continue;
     if (want && ![...serviceDows(model, t.service_id)].some((d) => want.has(d))) continue;
     const dep = at === "first" ? t.first : at;

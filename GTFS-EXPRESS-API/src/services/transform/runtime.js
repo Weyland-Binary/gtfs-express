@@ -141,8 +141,7 @@ const legSeconds = (model, a, b, { routeId = null, direction = null, at = null, 
 /** Typical dwell (s) at intermediate stops of a line (0 when times are pass-through). */
 const dwellSeconds = (model, routeId) => {
   const xs = [];
-  for (const t of model.trips.values()) {
-    if (t.route_id !== routeId) continue;
+  for (const t of require("./feedModel").tripsOfRoute(model, routeId)) {
     for (let k = 1; k + 1 < t.stops.length; k++) if (t.arr[k] != null && t.dep[k] != null) xs.push(t.dep[k] - t.arr[k]);
     if (xs.length > 2000) break;
   }

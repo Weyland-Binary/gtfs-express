@@ -15,6 +15,7 @@
  *     opts.deadheadKmh dead running speed (default 25 km/h; crow-fly × 1.3)
  *     opts.maxWaitMin  a vehicle waits at most this long for its next trip (default 240)
  *     opts.maxDeadheadKm  longest dead run between two trips (default 15 km)
+ *     opts.countOnly   only `vehicles` is needed: no blocks, no per-route split (faster on big networks)
  *
  * Frequency-based trips count one run per departure.
  */
@@ -101,28 +102,63 @@ const maxMatching = (adj, n) => {
     }
     return false;
   };
+  // A greedy start (each run takes its first free successor) leaves few augmenting phases.
+  for (let u = 0; u < n; u++) {
+    for (const v of adj[u]) {
+      if (matchR[v] === -1) {
+        matchL[u] = v;
+        matchR[v] = u;
+        break;
+      }
+    }
+  }
   while (bfs()) for (let u = 0; u < n; u++) if (matchL[u] === -1) dfs(u);
   return matchL;
 };
 
-const minFleet = (model, date, opts = {}) => {
+const minFleet = (model, date, opts = {}) => require("./feedModel").memo(model, `minFleet|${date}|${JSON.stringify(opts)}`, () => computeMinFleet(model, date, opts));
+
+const computeMinFleet = (model, date, opts = {}) => {
   const o = { ...DEFAULTS, ...opts, layover: { ...DEFAULTS.layover, ...(opts.layover || {}) } };
   const routes = opts.routes ? new Set(opts.routes) : null;
   const runs = runsOn(model, date, routes);
   const n = runs.length;
   if (!n) return { vehicles: 0, trips: 0, blocks: [], deadhead_km: 0, by_route: {} };
+  // Termini as integers and their dead-running distances in a matrix, filled
+  // on demand: the candidate scan below looks at millions of pairs on a city.
   const place = (id) => model.stops.get(id)?.parent || id;
-  const deadCache = new Map();
-  const deadhead = (a, b) => {
-    if (a === b || place(a) === place(b)) return 0;
-    const k = `${a}>${b}`;
-    if (!deadCache.has(k)) {
-      const x = model.stops.get(a);
-      const y = model.stops.get(b);
-      const m = x && y && x.lat != null && y.lat != null ? haversineMeters(x.lat, x.lon, y.lat, y.lon) : Infinity;
-      deadCache.set(k, m <= o.sameStopM ? 0 : m * o.detour);
+  const idOf = new Map();
+  const ends = [];
+  const intern = (stopId) => {
+    if (!idOf.has(stopId)) {
+      idOf.set(stopId, ends.length);
+      ends.push({ place: place(stopId), stop: model.stops.get(stopId) });
     }
-    return deadCache.get(k);
+    return idOf.get(stopId);
+  };
+  for (const r of runs) {
+    r.fi = intern(r.from);
+    r.ti = intern(r.to);
+  }
+  const P = ends.length;
+  const matrix = P <= 3000 ? new Float64Array(P * P).fill(-1) : null;
+  const other = matrix ? null : new Map();
+  const distance = (a, b) => {
+    if (a === b || ends[a].place === ends[b].place) return 0;
+    const x = ends[a].stop;
+    const y = ends[b].stop;
+    const m = x && y && x.lat != null && y.lat != null ? haversineMeters(x.lat, x.lon, y.lat, y.lon) : Infinity;
+    return m <= o.sameStopM ? 0 : m * o.detour;
+  };
+  const deadheadIdx = (a, b) => {
+    if (matrix) {
+      const k = a * P + b;
+      if (matrix[k] < 0) matrix[k] = distance(a, b);
+      return matrix[k];
+    }
+    const k = a * P + b;
+    if (!other.has(k)) other.set(k, distance(a, b));
+    return other.get(k);
   };
   const speed = (o.deadheadKmh * 1000) / 3600;
   const maxWait = o.maxWaitMin * 60;
@@ -143,16 +179,21 @@ const minFleet = (model, date, opts = {}) => {
     for (let j = lo; j < n && deps[j] <= r.arr + maxWait; j++) {
       const s = runs[j];
       if (o.interline === false && s.route !== r.route) continue;
-      const d = deadhead(r.to, s.from);
+      const d = deadheadIdx(r.ti, s.fi);
       if (!Number.isFinite(d) || d > o.maxDeadheadKm * 1000) continue;
       if (ready + d / speed <= s.dep) cands.push([j, d, s.dep]);
     }
     // Shortest dead running first, then the earliest departure: the matching
     // takes the first augmenting edges it finds, so blocks stay compact.
-    cands.sort((x, y) => x[1] - y[1] || x[2] - y[2]);
+    if (!o.countOnly) cands.sort((x, y) => x[1] - y[1] || x[2] - y[2]);
     adj[i] = cands.map((c) => c[0]);
   }
   const matchL = maxMatching(adj, n);
+  if (o.countOnly) {
+    let matched = 0;
+    for (let i = 0; i < n; i++) if (matchL[i] !== -1) matched += 1;
+    return { vehicles: n - matched, trips: n, blocks: null, deadhead_km: null, by_route: null };
+  }
   const hasPred = new Uint8Array(n);
   for (let i = 0; i < n; i++) if (matchL[i] !== -1) hasPred[matchL[i]] = 1;
   const blocks = [];
@@ -162,7 +203,7 @@ const minFleet = (model, date, opts = {}) => {
     const chain = [];
     for (let k = i; k !== -1; k = matchL[k]) {
       chain.push(k);
-      if (matchL[k] !== -1) deadM += deadhead(runs[k].to, runs[matchL[k]].from);
+      if (matchL[k] !== -1) deadM += deadheadIdx(runs[k].ti, runs[matchL[k]].fi);
     }
     blocks.push(chain.map((k) => runs[k].trip));
   }

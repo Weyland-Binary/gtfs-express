@@ -36,7 +36,7 @@
 
 const crypto = require("crypto");
 const { buildFeedModel } = require("./feedModel");
-const { sandboxOf, computeChangeset, toOps, applyOps, summarize } = require("./changeset");
+const { sandboxOf, trackChanges, writtenValues, computeChangeset, toOps, applyOps, summarize } = require("./changeset");
 const { semanticDiff, describe } = require("./semanticDiff");
 const registry = require("./operators");
 
@@ -101,12 +101,57 @@ const normalizeEnums = (db, tables) => {
   }
 };
 
+/**
+ * The feed as loaded, modelled once per session and data version: every
+ * plan previewed on it (the planner previews a plan several times) reuses
+ * the model and what was measured on it. Big feeds only (a small one is
+ * modelled in milliseconds); two entries, twenty minutes.
+ */
+const BEFORE = { ttlMs: 20 * 60 * 1000, minTrips: 5000 };
+const _befores = new Map();
+const beforeModel = (db, { sessionId, dataVersion, weekend }) => {
+  if (!sessionId || !dataVersion) return buildFeedModel(db, { weekend });
+  const key = `${sessionId}|${dataVersion}|${weekend.join(",")}`;
+  const now = Date.now();
+  for (const [k, v] of _befores) if (now - v.at > BEFORE.ttlMs) _befores.delete(k);
+  const hit = _befores.get(key);
+  if (hit) {
+    hit.at = now;
+    return hit.model;
+  }
+  const model = buildFeedModel(db, { weekend });
+  if (model.trips.size >= BEFORE.minTrips) {
+    for (const k of [..._befores.keys()]) if (k.startsWith(`${sessionId}|`)) _befores.delete(k);
+    _befores.set(key, { model, at: now });
+    while (_befores.size > 2) _befores.delete(_befores.keys().next().value);
+  }
+  return model;
+};
+
 const previewPlan = async (db, plan, { sessionId = null, dataVersion = null, validate = null, territory = null, tables = null, router = null, country = null, fetchImpl = null } = {}) => {
   prune();
+  // How long each phase took (ms), returned with the preview: big feeds are watched.
+  const timings = {};
+  let clock = Date.now();
+  const lap = (k) => {
+    const now = Date.now();
+    timings[k] = (timings[k] || 0) + now - clock;
+    clock = now;
+  };
   const ops = (Array.isArray(plan?.operations) ? plan.operations : []).slice(0, MAX_OPERATIONS);
   const weekend = Array.isArray(plan?.weekend) && plan.weekend.length ? plan.weekend : ["sat", "sun"];
-  const before = buildFeedModel(db, { weekend });
+  const before = beforeModel(db, { sessionId, dataVersion, weekend });
+  lap("model");
   const sandbox = sandboxOf(db);
+  // Only the rows the plan writes are compared afterwards (big feeds), and
+  // the model after a step re-reads only the trips whose stop_times it wrote.
+  trackChanges(sandbox);
+  const modelAfter = () => {
+    const st = writtenValues(db, sandbox, "stop_times", "trip_id");
+    const tr = writtenValues(db, sandbox, "trips", "trip_id");
+    return st && tr ? buildFeedModel(sandbox, { weekend, base: before, changedTrips: new Set([...st, ...tr]) }) : buildFeedModel(sandbox, { weekend });
+  };
+  lap("sandbox");
   // Facts from outside (road geometry) are gathered by resolve(), which may
   // be async; apply() stays synchronous and deterministic.
   const road = router || require("../network/roadRouter").createRouter({ mode: "straight" });
@@ -121,6 +166,7 @@ const previewPlan = async (db, plan, { sessionId = null, dataVersion = null, val
       continue;
     }
     let resolved;
+    lap("other");
     try {
       resolved = await def.resolve(model, op.params || {}, { db: sandbox, router: road, weekend, calendars: plan?.calendars || null, country: plan?.country || country, region: plan?.region || null, fetchImpl });
     } catch (err) {
@@ -132,11 +178,14 @@ const previewPlan = async (db, plan, { sessionId = null, dataVersion = null, val
       continue;
     }
     try {
+      lap("resolve");
       const out = sandbox.transaction(() => def.apply(sandbox, resolved.value, { model, weekend }))();
+      lap("apply");
       (def.tables || []).forEach((t) => touched.add(t));
       (out?.tables || []).forEach((t) => touched.add(t));
       steps.push({ id, type: def.type, status: out?.noop ? "skipped" : "applied", ambiguities: [], summary: out?.summary || null, warnings: [...(resolved.warnings || []), ...(out?.warnings || [])], source: op.source || null, clauses: op.clauses || [] });
-      model = buildFeedModel(sandbox, { weekend });
+      model = modelAfter();
+      lap("model");
     } catch (err) {
       steps.push({ id, type: def.type, status: "failed", ambiguities: [], summary: null, warnings: resolved.warnings || [], error: err.message, source: op.source || null });
     }
@@ -149,16 +198,20 @@ const previewPlan = async (db, plan, { sessionId = null, dataVersion = null, val
   let after = model;
   if (touched.has("calendar") || touched.has("calendar_dates")) {
     const { simplifyServices } = require("./scope");
-    const out = sandbox.transaction(() => simplifyServices(sandbox, new Set(before.services.keys())))();
-    if (out.merged || out.dropped) after = buildFeedModel(sandbox, { weekend });
+    const out = sandbox.transaction(() => simplifyServices(sandbox, new Set(before.services.keys()), model))();
+    if (out.merged || out.dropped) after = modelAfter();
   }
+  lap("steps");
   const changeset = computeChangeset(db, sandbox, [...touched]);
+  lap("changeset");
   const diff = semanticDiff(before, after);
-  const integrityBefore = integrityOf(db, before);
+  lap("diff");
+  const integrityBefore = require("./feedModel").memo(before, "integrity", () => integrityOf(db, before));
   const integrityAfter = integrityOf(sandbox, after);
   const newIntegrity = integrityAfter.filter((x) => (integrityBefore.find((y) => y.code === x.code)?.count || 0) < x.count);
 
   // What it costs to run and who it affects (the figures an amendment asks for).
+  lap("integrity");
   let impact = null;
   if (!changeset.empty) {
     try {
@@ -171,6 +224,7 @@ const previewPlan = async (db, plan, { sessionId = null, dataVersion = null, val
 
   // What consumers check beyond the spec (stops far from shapes, impossible
   // speeds, duplicate trips, colour contrast, overlapping blocks): new ones only.
+  lap("impact");
   let consumerChecks = null;
   if (!changeset.empty) {
     try {
@@ -182,6 +236,7 @@ const previewPlan = async (db, plan, { sessionId = null, dataVersion = null, val
   }
 
   // The network's quality on the planners' scale (tiers, frequency, span, spacing, speed, legibility).
+  lap("checks");
   let quality = null;
   if (!changeset.empty) {
     try {
@@ -192,6 +247,7 @@ const previewPlan = async (db, plan, { sessionId = null, dataVersion = null, val
     }
   }
 
+  lap("quality");
   let conformance = null;
   if (plan?.requirements) {
     const { checkFeedConformance } = require("./feedView");
@@ -209,6 +265,7 @@ const previewPlan = async (db, plan, { sessionId = null, dataVersion = null, val
   const blocked = steps.some((s) => s.status === "blocked" || s.status === "failed");
   const previewId = crypto.randomBytes(9).toString("hex");
   const { redoOps, undoOps } = toOps(changeset);
+  lap("conformance_validation");
   const lines = diff.items.map(describe);
   // What riders must be told (GTFS-RT alerts and a notice), from what really changes.
   let passenger = null;
@@ -222,7 +279,9 @@ const previewPlan = async (db, plan, { sessionId = null, dataVersion = null, val
   const title = String(plan?.title || "").slice(0, 120) || `${steps.filter((s) => s.status === "applied").length} change(s)`;
   if (!changeset.empty) _previews.set(previewId, { sessionId, dataVersion, at: Date.now(), redoOps, undoOps, tables: Object.keys(changeset.tables), title, blocked, changeset, passenger, timezone: agencyTimezone(db) });
   sandbox.close();
-  return { id: changeset.empty ? null : previewId, title, steps, blocked, empty: changeset.empty, changes: summarize(changeset), diff, lines, integrity: newIntegrity, checks: consumerChecks, impact, quality, conformance, validation, passenger };
+  lap("passenger");
+  timings.total = Object.values(timings).reduce((a, b) => a + b, 0);
+  return { id: changeset.empty ? null : previewId, title, steps, blocked, empty: changeset.empty, changes: summarize(changeset), diff, lines, integrity: newIntegrity, checks: consumerChecks, impact, quality, conformance, validation, passenger, timings };
 };
 
 // New errors by rule: what the change broke, not what was already broken.
@@ -279,4 +338,4 @@ const agencyTimezone = (db) => {
   }
 };
 
-module.exports = { previewPlan, commitPreview, previewChangeset, integrityOf, compareValidation, _internals: { _previews } };
+module.exports = { previewPlan, commitPreview, previewChangeset, integrityOf, compareValidation, _internals: { _previews, beforeModel, BEFORE, _befores } };

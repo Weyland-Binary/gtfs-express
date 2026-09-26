@@ -230,7 +230,9 @@ const lineScores = (L) => {
   return { frequency: clamp(freq), span: clamp(span), spacing: clamp(spacing), speed: clamp(speed), legibility: clamp(leg) };
 };
 
-const feedQuality = (model) => {
+const feedQuality = (model) => require("./feedModel").memo(model, "feedQuality", () => computeFeedQuality(model));
+
+const computeFeedQuality = (model) => {
   const dates = { weekday: repDate(model, WEEKDAY), saturday: repDate(model, ["sat"]), sunday: repDate(model, ["sun"]) };
   const lines = [...model.routes.values()].filter((r) => r.patterns.length).map((r) => lineQuality(model, r, dates));
   const findings = lines.flatMap(judge);

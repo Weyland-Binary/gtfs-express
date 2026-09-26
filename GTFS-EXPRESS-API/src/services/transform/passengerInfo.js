@@ -29,6 +29,7 @@
 
 "use strict";
 
+const { tripsOfRoute } = require("./feedModel");
 const { addDays, dowOf } = require("./feedModel")._internals;
 
 const EFFECT_RANK = ["NO_SERVICE", "DETOUR", "STOP_MOVED", "REDUCED_SERVICE", "ADDITIONAL_SERVICE", "MODIFIED_SERVICE", "OTHER_EFFECT"];
@@ -36,7 +37,7 @@ const NEAR_M = 400;
 
 const stopsServed = (model, routeId, date) => {
   const out = new Set();
-  for (const t of model.trips.values()) if (t.route_id === routeId && model.runsOn(t.service_id, date)) for (const s of t.stops) out.add(s);
+  for (const t of tripsOfRoute(model, routeId)) if (model.runsOn(t.service_id, date)) for (const s of t.stops) out.add(s);
   return out;
 };
 const distM = (a, b) => (a && b && a.lat != null && b.lat != null ? Math.hypot((a.lat - b.lat) * 111320, (a.lon - b.lon) * 111320 * Math.cos((a.lat * Math.PI) / 180)) : Infinity);

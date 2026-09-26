@@ -117,8 +117,7 @@ const direction = (model, routeId, ref) => {
   // A headsign or a terminus name: the direction whose trips go there.
   const k = nameKey(raw.replace(/^(vers|direction|to|towards)\s+/i, ""));
   const dirs = new Set();
-  for (const t of model.trips.values()) {
-    if (t.route_id !== routeId) continue;
+  for (const t of require("./feedModel").tripsOfRoute(model, routeId)) {
     const last = model.stops.get(t.stops[t.stops.length - 1]);
     if (nameKey(t.headsign).includes(k) || (last && nameKey(last.name).includes(k))) dirs.add(t.direction_id);
   }

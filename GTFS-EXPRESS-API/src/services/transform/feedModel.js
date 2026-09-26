@@ -29,6 +29,16 @@ const MODE_OF_TYPE = { 0: "tram", 1: "metro", 2: "rail", 3: "bus", 4: "ferry", 5
 const MAX_DAYS = 800;
 
 const timeToSec = (t) => {
+  // Fast path for the usual "HH:MM:SS" (millions of stop_times on a city feed).
+  if (typeof t === "string" && t.length === 8 && t.charCodeAt(2) === 58 && t.charCodeAt(5) === 58) {
+    const a = t.charCodeAt(0) - 48;
+    const b = t.charCodeAt(1) - 48;
+    const c = t.charCodeAt(3) - 48;
+    const e = t.charCodeAt(4) - 48;
+    const f = t.charCodeAt(6) - 48;
+    const g = t.charCodeAt(7) - 48;
+    if (a >= 0 && a <= 9 && b >= 0 && b <= 9 && c >= 0 && c <= 5 && e >= 0 && e <= 9 && f >= 0 && f <= 5 && g >= 0 && g <= 9) return (a * 10 + b) * 3600 + (c * 10 + e) * 60 + f * 10 + g;
+  }
   const m = /^(\d{1,3}):(\d{2})(?::(\d{2}))?$/.exec(String(t ?? "").trim());
   return m ? parseInt(m[1], 10) * 3600 + parseInt(m[2], 10) * 60 + (m[3] ? parseInt(m[3], 10) : 0) : null;
 };
@@ -57,7 +67,7 @@ const safeAll = (db, sql) => {
  * @param {import("better-sqlite3").Database} db
  * @param {{ weekend?: string[] }} opts
  */
-const buildFeedModel = (db, { weekend = ["sat", "sun"] } = {}) => {
+const buildFeedModel = (db, { weekend = ["sat", "sun"], base = null, changedTrips = null } = {}) => {
   const routes = new Map();
   for (const r of safeAll(db, "SELECT * FROM routes")) {
     const type = parseInt(r.route_type, 10);
@@ -98,8 +108,31 @@ const buildFeedModel = (db, { weekend = ["sat", "sun"] } = {}) => {
   for (const t of safeAll(db, "SELECT trip_id, route_id, service_id, direction_id, trip_headsign, block_id, shape_id, wheelchair_accessible FROM trips")) {
     trips.set(t.trip_id, { id: t.trip_id, route_id: t.route_id, service_id: t.service_id, direction_id: t.direction_id === null || t.direction_id === undefined || t.direction_id === "" ? "0" : String(t.direction_id), headsign: t.trip_headsign || "", block_id: t.block_id || null, shape_id: t.shape_id || null, wheelchair: t.wheelchair_accessible ?? null, stops: [], arr: [], dep: [], dist: [], timepoint: [] });
   }
-  const stRows = db.prepare("SELECT trip_id, stop_id, stop_sequence, arrival_time, departure_time, shape_dist_traveled, timepoint FROM stop_times ORDER BY trip_id, stop_sequence").iterate();
-  for (const st of stRows) {
+  // Incremental: a model of the same feed after a few writes (`base`, and the
+  // trips whose stop_times were written since) shares the stop sequences and
+  // times of every other trip, read-only, instead of reading them again.
+  const shared = new Set();
+  if (base && changedTrips) {
+    for (const t of trips.values()) {
+      const b = base.trips.get(t.id);
+      if (!b || changedTrips.has(t.id)) continue;
+      Object.assign(t, { stops: b.stops, arr: b.arr, dep: b.dep, dist: b.dist, timepoint: b.timepoint, first: b.first, lastArr: b.lastArr });
+      shared.add(t.id);
+    }
+  }
+  const stCols = "trip_id, stop_id, stop_sequence, arrival_time, departure_time, shape_dist_traveled, timepoint";
+  const stRows = function* () {
+    if (!shared.size) {
+      yield* db.prepare(`SELECT ${stCols} FROM stop_times ORDER BY trip_id, stop_sequence`).iterate();
+      return;
+    }
+    const ids = [...trips.keys()].filter((id) => !shared.has(id));
+    for (let i = 0; i < ids.length; i += 500) {
+      const chunk = ids.slice(i, i + 500);
+      yield* db.prepare(`SELECT ${stCols} FROM stop_times WHERE trip_id IN (${chunk.map(() => "?").join(", ")}) ORDER BY trip_id, stop_sequence`).iterate(...chunk);
+    }
+  };
+  for (const st of stRows()) {
     const t = trips.get(st.trip_id);
     if (!t) continue;
     t.stops.push(st.stop_id);
@@ -110,6 +143,7 @@ const buildFeedModel = (db, { weekend = ["sat", "sun"] } = {}) => {
   }
   // Interpolate missing times (GTFS allows empty times between timepoints).
   for (const t of trips.values()) {
+    if (shared.has(t.id)) continue;
     const n = t.stops.length;
     for (let i = 0; i < n; i++) {
       if (t.arr[i] == null && t.dep[i] != null) t.arr[i] = t.dep[i];
@@ -145,7 +179,8 @@ const buildFeedModel = (db, { weekend = ["sat", "sun"] } = {}) => {
   // Patterns: distinct stop sequences per route and direction.
   const patterns = new Map();
   for (const t of trips.values()) {
-    const key = `${t.route_id}|${t.direction_id}|${t.stops.join(">")}`;
+    const b = shared.has(t.id) ? base.trips.get(t.id) : null;
+    const key = b && b.route_id === t.route_id && b.direction_id === t.direction_id ? b.pattern : `${t.route_id}|${t.direction_id}|${t.stops.join(">")}`;
     t.pattern = key;
     if (!patterns.has(key)) patterns.set(key, { key, route_id: t.route_id, direction_id: t.direction_id, stops: t.stops, trips: [], shapes: new Set() });
     const p = patterns.get(key);
@@ -235,13 +270,41 @@ const tripStarts = (model, trip) => {
  * trip's first stop) or "reference" (at the stop most trips of the
  * direction serve: the trunk, where a headway is measured).
  */
+/**
+ * A measure of a model computed once (a model is never changed after it is
+ * built): the feed as loaded is measured once for every plan previewed on
+ * it. The result is shared: callers only read it.
+ */
+const memo = (model, key, fn) => {
+  if (!model._memo) Object.defineProperty(model, "_memo", { value: new Map(), enumerable: false });
+  if (!model._memo.has(key)) model._memo.set(key, fn());
+  return model._memo.get(key);
+};
+
+/**
+ * The trips of a route, from an index built once per model (a model is
+ * never changed after it is built: a change builds a new one). Big feeds
+ * have tens of thousands of trips; per-route measures must not scan them all.
+ */
+const tripsOfRoute = (model, routeId) => {
+  if (!model._tripsByRoute) {
+    const idx = new Map();
+    for (const t of model.trips.values()) {
+      if (!idx.has(t.route_id)) idx.set(t.route_id, []);
+      idx.get(t.route_id).push(t);
+    }
+    Object.defineProperty(model, "_tripsByRoute", { value: idx, enumerable: false });
+  }
+  return model._tripsByRoute.get(routeId) || [];
+};
+
 const departures = (model, routeId, date, { at = "first" } = {}) => {
   const out = new Map();
   const route = model.routes.get(routeId);
   if (!route) return out;
   const byDir = new Map();
-  for (const t of model.trips.values()) {
-    if (t.route_id !== routeId || !model.runsOn(t.service_id, date) || t.first == null) continue;
+  for (const t of tripsOfRoute(model, routeId)) {
+    if (!model.runsOn(t.service_id, date) || t.first == null) continue;
     if (!byDir.has(t.direction_id)) byDir.set(t.direction_id, []);
     byDir.get(t.direction_id).push(t);
   }
@@ -300,14 +363,15 @@ const routeStats = (model, routeId, date) => {
   const dirs = {};
   const intervals = [];
   const blocks = new Set();
-  for (const t of model.trips.values()) {
-    if (t.route_id !== routeId || !model.runsOn(t.service_id, date) || t.first == null) continue;
+  const ofRoute = tripsOfRoute(model, routeId);
+  for (const t of ofRoute) {
+    if (!model.runsOn(t.service_id, date) || t.first == null) continue;
     for (const off of tripStarts(model, t)) intervals.push([t.first + off, (t.lastArr ?? t.first) + off]);
     if (t.block_id) blocks.add(t.block_id);
   }
   for (const [dir, times] of first) {
     const trunk = ref.get(dir) || times;
-    const runs = [...model.trips.values()].filter((t) => t.route_id === routeId && t.direction_id === dir && model.runsOn(t.service_id, date) && t.first != null && t.lastArr != null).map((t) => t.lastArr - t.first);
+    const runs = ofRoute.filter((t) => t.direction_id === dir && model.runsOn(t.service_id, date) && t.first != null && t.lastArr != null).map((t) => t.lastArr - t.first);
     dirs[dir] = {
       trips: times.length,
       first: times.length ? secToTime(times[0]) : null,
@@ -329,4 +393,4 @@ const routeStats = (model, routeId, date) => {
   return { route_id: routeId, date, directions: dirs, trips: intervals.length, vehicles_peak: blocks.size && blocks.size < peak ? blocks.size : peak };
 };
 
-module.exports = { buildFeedModel, serviceDates, departures, routeStats, headwayIn, tripStarts, PERIODS, _internals: { timeToSec, secToTime, dowOf, addDays, ymdToDate, dateToYmd, median } };
+module.exports = { buildFeedModel, serviceDates, departures, routeStats, tripsOfRoute, memo, headwayIn, tripStarts, PERIODS, _internals: { timeToSec, secToTime, dowOf, addDays, ymdToDate, dateToYmd, median } };

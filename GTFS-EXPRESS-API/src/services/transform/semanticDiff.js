@@ -17,7 +17,7 @@
 
 "use strict";
 
-const { routeStats, PERIODS } = require("./feedModel");
+const { routeStats, tripsOfRoute, PERIODS } = require("./feedModel");
 
 const DAY_TYPES = [
   ["weekday", ["tue", "mon", "wed", "thu", "fri"]],
@@ -40,8 +40,7 @@ const MAX_PERIODS = 8;
 // a trip split off by a scoped change and its copy read the same).
 const serviceFingerprints = (model, routeId) => {
   const by = new Map();
-  for (const t of model.trips.values()) {
-    if (t.route_id !== routeId) continue;
+  for (const t of tripsOfRoute(model, routeId)) {
     if (!by.has(t.service_id)) by.set(t.service_id, []);
     const f = model.frequencies.get(t.id);
     by.get(t.service_id).push(`${t.direction_id}|${t.first}|${t.lastArr}|${t.pattern}|${f ? f.map((w) => `${w.start}-${w.end}/${w.headway}`).join(",") : ""}`);
@@ -50,6 +49,20 @@ const serviceFingerprints = (model, routeId) => {
 };
 
 const { dowOf, addDays } = require("./feedModel")._internals;
+
+/**
+ * A route's whole timetable as one string: its trips per service and the
+ * dates each service runs. Equal on both sides → nothing to compare date by
+ * date (most routes of a plan that changes one line).
+ */
+const routeSignature = (model, routeId) => {
+  const { activeDates } = require("./scope");
+  const fps = serviceFingerprints(model, routeId);
+  return [...fps.keys()]
+    .sort()
+    .map((sid) => `${sid}@${activeDates(model, sid).join(",")}#${fps.get(sid).sort().join(";")}`)
+    .join("|");
+};
 
 /**
  * The periods over which a route's timetable changed: dates grouped by
@@ -174,7 +187,8 @@ const semanticDiff = (before, after) => {
     // Service: the dates whose timetable changed, grouped into periods that
     // changed the same way ("weekdays from 7 Sept to 30 Oct"), each measured
     // on its middle date.
-    for (const g of changedPeriods(before, after, id)) {
+    const periods = routeSignature(before, id) === routeSignature(after, id) ? [] : changedPeriods(before, after, id);
+    for (const g of periods) {
       const x = routeStats(before, id, g.date);
       const y = routeStats(after, id, g.date);
       const dirs = new Set([...Object.keys(x.directions), ...Object.keys(y.directions)]);
@@ -236,11 +250,20 @@ const semanticDiff = (before, after) => {
     items.push({ code: "services_changed", count: svcChanged.length, services: svcChanged.slice(0, 20) });
   }
 
-  const sum = (m, key) => [...m.routes.keys()].reduce((n, r) => {
+  const statsOf = (m) => {
     const d = repDate(m, ["tue", "mon", "wed", "thu", "fri"]);
-    return d ? n + routeStats(m, r, d)[key] : n;
-  }, 0);
-  const totals = { routes: { before: before.routes.size, after: after.routes.size }, stops: { before: before.stops.size, after: after.stops.size }, trips_weekday: { before: sum(before, "trips"), after: sum(after, "trips") }, vehicles_peak_weekday: { before: sum(before, "vehicles_peak"), after: sum(after, "vehicles_peak") } };
+    const out = { trips: 0, vehicles_peak: 0 };
+    if (!d) return out;
+    for (const r of m.routes.keys()) {
+      const s = routeStats(m, r, d);
+      out.trips += s.trips;
+      out.vehicles_peak += s.vehicles_peak;
+    }
+    return out;
+  };
+  const sb = statsOf(before);
+  const sa = before === after ? sb : statsOf(after);
+  const totals = { routes: { before: before.routes.size, after: after.routes.size }, stops: { before: before.stops.size, after: after.stops.size }, trips_weekday: { before: sb.trips, after: sa.trips }, vehicles_peak_weekday: { before: sb.vehicles_peak, after: sa.vehicles_peak } };
   return { routes, stops, calendar, totals, items, empty: items.length === 0 };
 };
 

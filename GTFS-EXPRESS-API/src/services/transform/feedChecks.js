@@ -47,7 +47,10 @@ const contrast = (a, b) => {
   return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
 };
 
-const feedChecks = (db, model) => {
+// The model stands for the database it was built from: measured once per model.
+const feedChecks = (db, model) => require("./feedModel").memo(model, "feedChecks", () => computeFeedChecks(db, model));
+
+const computeFeedChecks = (db, model) => {
   const out = new Map();
   // Stops far from their shape (once per shape and pattern).
   const seen = new Set();

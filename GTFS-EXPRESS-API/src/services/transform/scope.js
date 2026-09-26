@@ -197,8 +197,7 @@ const resolveScope = async (model, p, ctx = {}, { daysRequired = false } = {}) =
 const tripsInScope = (model, { routeId = null, direction = "both" } = {}, scope = null) => {
   const bySvc = new Map();
   const out = [];
-  for (const t of model.trips.values()) {
-    if (routeId && t.route_id !== routeId) continue;
+  for (const t of routeId ? require("./feedModel").tripsOfRoute(model, routeId) : model.trips.values()) {
     if (direction !== "both" && t.direction_id !== direction) continue;
     if (!bySvc.has(t.service_id)) bySvc.set(t.service_id, activeDates(model, t.service_id).some((d) => inScope(scope, d, model, t.service_id)));
     if (bySvc.get(t.service_id)) out.push(t);
@@ -312,9 +311,9 @@ const isolateScope = (db, model, tripIds, scope) => {
  * and services left without trips are dropped. Keeps service ids from
  * multiplying with every scoped change.
  */
-const simplifyServices = (db, beforeIds) => {
+const simplifyServices = (db, beforeIds, current = null) => {
   const { buildFeedModel } = require("./feedModel");
-  const model = buildFeedModel(db);
+  const model = current || buildFeedModel(db);
   const created = [...model.services.keys()].filter((id) => !beforeIds.has(id));
   if (!created.length) return { merged: 0, dropped: 0 };
   const bySig = new Map();

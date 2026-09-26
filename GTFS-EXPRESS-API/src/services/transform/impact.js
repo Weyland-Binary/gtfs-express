@@ -47,7 +47,8 @@ const pair = (a, b, n = 0) => ({ before: round(a, n), after: round(b, n), delta:
 const repDate = (model, dows) => dows.map((d) => model.representative[d]).find(Boolean) || null;
 
 /** Per route: km and hours over the window, from each trip × its running dates. */
-const volumes = (model, from, to) => {
+const volumes = (model, from, to) => require("./feedModel").memo(model, `volumes|${from}|${to}`, () => computeVolumes(model, from, to));
+const computeVolumes = (model, from, to) => {
   const daysOf = new Map();
   for (const sid of model.services.keys()) daysOf.set(sid, S.activeDates(model, sid).filter((d) => d >= from && d <= to).length);
   const out = new Map();
@@ -64,7 +65,8 @@ const volumes = (model, from, to) => {
 };
 
 /** Stops served on a date, and those with frequent service (max gap ≤ 15 min 07–19). */
-const stopService = (model, date) => {
+const stopService = (model, date) => require("./feedModel").memo(model, `stopService|${date}`, () => computeStopService(model, date));
+const computeStopService = (model, date) => {
   const times = new Map();
   if (!date) return { served: new Set(), frequent: new Set() };
   for (const t of model.trips.values()) {
@@ -118,8 +120,8 @@ const impactOf = (before, after, { costPerKm = 4.2, costPerHour = 0, currency = 
   // per line (no interlining, as contracts count it) and for the network.
   const fleetB = wdB ? minFleet(before, wdB, { interline: false }) : { vehicles: 0, by_route: {} };
   const fleetA = wdA ? minFleet(after, wdA, { interline: false }) : { vehicles: 0, by_route: {} };
-  const netB = wdB ? minFleet(before, wdB).vehicles : 0;
-  const netA = wdA ? minFleet(after, wdA).vehicles : 0;
+  const netB = wdB ? minFleet(before, wdB, { countOnly: true }).vehicles : 0;
+  const netA = wdA ? minFleet(after, wdA, { countOnly: true }).vehicles : 0;
   const flags = [];
   const routes = [];
   const tot = { km: [0, 0], hours: [0, 0], trips: [0, 0] };
