@@ -15,7 +15,8 @@
  *   previewPlan(db, plan, opts)  → {
  *     id, steps: [{ id, type, status: applied|blocked|failed|skipped, ambiguities, summary, warnings }],
  *     blocked, changes: { table: { inserted, deleted, updated } }, diff: semanticDiff, lines: [text],
- *     integrity: [...], impact: impact.impactOf (km, hours, cost, fleet, stops losing service,
+ *     integrity: [...], checks: feedChecks.newChecks (consumer checks the plan makes worse),
+ *     impact: impact.impactOf (km, hours, cost, fleet, stops losing service,
  *     "major service change" flags), quality: feedQuality.compareQuality (score and dimensions
  *     before → after, findings added / resolved), conformance: { before, after }, validation?: { before, after, new_errors }
  *   }
@@ -151,6 +152,18 @@ const previewPlan = async (db, plan, { sessionId = null, dataVersion = null, val
     }
   }
 
+  // What consumers check beyond the spec (stops far from shapes, impossible
+  // speeds, duplicate trips, colour contrast, overlapping blocks): new ones only.
+  let consumerChecks = null;
+  if (!changeset.empty) {
+    try {
+      const { feedChecks, newChecks } = require("./feedChecks");
+      consumerChecks = newChecks(feedChecks(db, before), feedChecks(sandbox, after));
+    } catch (err) {
+      consumerChecks = [{ code: "error", count: 0, examples: [err.message] }];
+    }
+  }
+
   // The network's quality on the planners' scale (tiers, frequency, span, spacing, speed, legibility).
   let quality = null;
   if (!changeset.empty) {
@@ -183,7 +196,7 @@ const previewPlan = async (db, plan, { sessionId = null, dataVersion = null, val
   const title = String(plan?.title || "").slice(0, 120) || `${steps.filter((s) => s.status === "applied").length} change(s)`;
   if (!changeset.empty) _previews.set(previewId, { sessionId, dataVersion, at: Date.now(), redoOps, undoOps, tables: Object.keys(changeset.tables), title, blocked });
   sandbox.close();
-  return { id: changeset.empty ? null : previewId, title, steps, blocked, empty: changeset.empty, changes: summarize(changeset), diff, lines, integrity: newIntegrity, impact, quality, conformance, validation };
+  return { id: changeset.empty ? null : previewId, title, steps, blocked, empty: changeset.empty, changes: summarize(changeset), diff, lines, integrity: newIntegrity, checks: consumerChecks, impact, quality, conformance, validation };
 };
 
 // New errors by rule: what the change broke, not what was already broken.

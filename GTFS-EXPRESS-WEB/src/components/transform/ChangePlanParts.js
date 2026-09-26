@@ -505,6 +505,18 @@ export function ChecksPanel({ preview, validating, onValidate }) {
           </Typography>
         )}
       </Box>
+      <Box sx={{ p: 1.25, borderRadius: "12px", background: theme.palette.background.paper, boxShadow: `0 0 0 1px ${theme.palette.divider}` }} data-testid="change-consumer-checks">
+        <Typography sx={{ fontSize: "0.82rem", fontWeight: 800, mb: 0.5 }}>{t("transform.checks.consumers")}</Typography>
+        {(preview.checks || []).length ? (
+          preview.checks.map((c) => (
+            <Typography key={c.code} sx={{ fontSize: "0.76rem", color: "warning.main", lineHeight: 1.5 }}>
+              {tf(t, `transform.checks.consumer.${c.code}`, { before: c.before, after: c.count }, `${c.code}: ${c.before} → ${c.count}`)}
+            </Typography>
+          ))
+        ) : (
+          <Typography sx={{ fontSize: "0.76rem", color: "success.main" }}>{t("transform.checks.consumersOk")}</Typography>
+        )}
+      </Box>
       <Box sx={{ p: 1.25, borderRadius: "12px", background: theme.palette.background.paper, boxShadow: `0 0 0 1px ${theme.palette.divider}` }}>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.75 }}>
           <Typography sx={{ fontSize: "0.82rem", fontWeight: 800, flex: 1 }}>{t("transform.checks.validator")}</Typography>

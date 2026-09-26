@@ -58,3 +58,26 @@ describe("quality in a preview", () => {
     expect(p.quality.resolved.some((f) => f.code === "peak_headway_tier" && f.label === "B")).toBe(true);
   });
 });
+
+describe("consumer checks (beyond the validator)", () => {
+  const { feedChecks, newChecks, _internals } = require("../services/transform/feedChecks");
+
+  test("real problems of the Vernon feed are found; the sample is clean", () => {
+    const v = loadReal("vernon");
+    const codes = Object.fromEntries(feedChecks(v, buildFeedModel(v)).map((c) => [c.code, c.count]));
+    expect(codes.stop_far_from_shape).toBeGreaterThan(0);
+    expect(codes.duplicate_trips).toBeGreaterThan(0);
+    expect(codes.low_contrast).toBeGreaterThan(0);
+    const s = loadSample();
+    expect(feedChecks(s, buildFeedModel(s))).toEqual([]);
+    expect(_internals.contrast("FFFFFF", "000000")).toBeCloseTo(21, 0);
+  });
+
+  test("a preview lists what the plan makes worse, not what was already there", async () => {
+    const db = loadReal("vernon");
+    const p = await previewPlan(db, { operations: [{ type: "remove_stop", params: { route: [...buildFeedModel(db).routes.values()].find((r) => r.short_name === "1").id, stop: [...buildFeedModel(db).patterns.values()].find((x) => x.route_id.includes("Line:21:"))?.stops[3] } }] });
+    expect(Array.isArray(p.checks)).toBe(true);
+    expect(p.checks.find((c) => c.code === "low_contrast")).toBeUndefined();
+    expect(newChecks([{ code: "x", count: 2 }], [{ code: "x", count: 3 }, { code: "y", count: 1 }]).map((c) => c.code)).toEqual(["x", "y"]);
+  });
+});

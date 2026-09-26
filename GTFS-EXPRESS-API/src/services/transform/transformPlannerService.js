@@ -153,6 +153,7 @@ const summarizePreview = (p) => {
   }
   if (p.lines?.length) out.push(`Changes:\n${p.lines.slice(0, 40).map((l) => `  ${l}`).join("\n")}${p.lines.length > 40 ? `\n  … ${p.lines.length - 40} more` : ""}`);
   if (p.integrity?.length) out.push(`Integrity problems introduced: ${p.integrity.map((i) => `${i.code} ×${i.count}`).join(", ")}`);
+  if (p.checks?.length) out.push(`Consumer checks made worse (Google-style): ${p.checks.map((c) => `${c.code} ${c.before} → ${c.count}${c.examples?.[0] ? ` e.g. ${JSON.stringify(c.examples[0])}` : ""}`).join("; ")}`);
   const im = p.impact;
   if (im && im.totals) out.push(`Impact (${im.window.days} running days): km ${im.totals.km.before} → ${im.totals.km.after} (${im.totals.km.pct ?? 0}%), hours ${im.totals.hours.before} → ${im.totals.hours.after}, cost ${im.totals.cost.before} → ${im.totals.cost.after} ${im.currency}, vehicles at peak ${im.totals.fleet.before} → ${im.totals.fleet.after}${im.stops.lost.length ? `; stops no longer served: ${im.stops.lost.map((s) => s.name).slice(0, 10).join(", ")}` : ""}${im.flags.filter((f) => f.code !== "stop_unserved").length ? `; major-change flags: ${im.flags.filter((f) => f.code !== "stop_unserved").map((f) => `${f.code} ${f.label || ""}`).join(", ")}` : ""}`);
   const res = p.conformance?.after?.results || [];
