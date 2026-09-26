@@ -186,7 +186,10 @@ const daysOf = (raw, spec) => {
 };
 
 // Departures (seconds, at the first stop) of a line on a day, per direction.
-const departuresByDirection = (line, spec, day) => {
+// A feed view (transform/feedView) measures the real timetable instead:
+// headways at the trunk, spans at the termini, on the representative date.
+const departuresByDirection = (line, spec, day, purpose = "headway") => {
+  if (typeof spec.departuresOf === "function") return spec.departuresOf(line, day, purpose);
   const cal = new Map((spec.calendars || []).map((c) => [c.id, c]));
   const out = new Map((line.directions || []).map((d) => [d.id, []]));
   for (const svc of line.services || []) {
@@ -344,7 +347,7 @@ const CHECKS = {
       let lf = Infinity;
       let ll = -Infinity;
       for (const day of days) {
-        for (const [, deps] of departuresByDirection(l, spec, day)) {
+        for (const [, deps] of departuresByDirection(l, spec, day, "span")) {
           if (!deps.length) continue;
           lf = Math.min(lf, deps[0]);
           ll = Math.max(ll, deps[deps.length - 1]);
@@ -453,7 +456,7 @@ const fastestTrip = (tables, spec, a, b, params) => {
   }
   const day = daysOf(params.day || "weekday", spec)[0] || "mon";
   const col = { mon: "monday", tue: "tuesday", wed: "wednesday", thu: "thursday", fri: "friday", sat: "saturday", sun: "sunday" }[day];
-  const serviceIds = new Set((tables.calendar || []).filter((c) => c[col] === "1").map((c) => c.service_id));
+  const serviceIds = typeof spec.serviceIdsOn === "function" ? spec.serviceIdsOn(day) : new Set((tables.calendar || []).filter((c) => c[col] === "1").map((c) => c.service_id));
   const conns = buildConnections(tables, serviceIds);
   const walk = walkGraph(stops);
   const starts = stopsNear(stops, a.lat, a.lon);

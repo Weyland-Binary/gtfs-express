@@ -1341,7 +1341,7 @@ const resyncCacheForLogEntry = (sessionId, db, entry) => {
     // table reload (cardinalities are low, < a few thousand rows). Avoids
     // 13 near-identical sync helpers and keeps the generic dispatcher tight.
     syncFaresFlexCache(sessionId, db, entry.entity);
-  } else if (entry.entity === "sql_console") {
+  } else if (entry.entity === "sql_console" || entry.entity === "transform") {
     // entity_id is a comma-separated list of table names; rebuild every
     // touched cache slice. Lazy require avoids the circular dep with
     // sqlConsoleService.js (which transitively requires _editCore).

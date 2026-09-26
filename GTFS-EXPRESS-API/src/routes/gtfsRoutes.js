@@ -340,6 +340,14 @@ router.post("/network/estimate", networkController.estimateNetwork);
 router.post("/network/compile", networkController.compileNetwork);
 router.post("/network/evaluate", networkController.evaluateNetwork);
 router.post("/network/needs", networkController.networkNeeds);
+// The transformation engine: a change plan on the loaded feed (preview on a
+// sandbox, commit as one undoable edit).
+const transformController = require("../services/transform/transformController");
+router.get("/transform/operations", transformController.getOperations);
+router.get("/transform/overview", transformController.getOverview);
+router.post("/transform/preview", transformController.previewPlanHandler);
+router.post("/transform/commit", transformController.commitHandler);
+router.post("/transform/compare", transformController.compareHandler);
 router.post("/network/refine", networkController.refineNetwork);
 router.get("/network/spec", networkController.getNetworkSpec);
 router.put("/network/spec", networkController.putNetworkSpec);

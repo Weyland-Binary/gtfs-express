@@ -99,6 +99,8 @@ tags:
     description: GTFS-Realtime feeds checked against the loaded static feed.
   - name: Network Studio
     description: Build a GTFS from a Network Spec (stops, lines, services) — validation, geocoding, road routing, compilation.
+  - name: Transform
+    description: "Change plans on the loaded feed: typed, deterministic operations run on a sandbox, previewed (semantic diff, integrity, brief conformance, canonical validator) and committed as one undoable edit."
   - name: Project
     description: ".gtfsproj disk persistence: save, open, metadata."
   - name: Export
@@ -1262,6 +1264,125 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/OkJson"
+  /gtfs/transform/operations:
+    get:
+      tags:
+        - Transform
+      summary: "The catalogue of transformation operations: type, title, category, parameters (name, type, required, description) and examples."
+      security: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+  /gtfs/transform/overview:
+    get:
+      tags:
+        - Transform
+      summary: "The feed as the transformation engine reads it: counts, validity range, a representative date per weekday, and each route with its patterns, termini and service per day type (trips, first/last departures, headways by period, running time, vehicles at peak)."
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+  /gtfs/transform/preview:
+    post:
+      tags:
+        - Transform
+      summary: "Run a change plan on a sandbox copy of the feed. Nothing is written. Returns each step (applied, skipped, blocked with the questions to answer, failed), the rows changed per table, the semantic diff (per route, day type and period) with readable lines, new integrity problems, brief conformance before/after, and optionally the canonical validator's new errors. `id` is the preview to commit (null when nothing changes)."
+      security:
+        - SessionId: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - plan
+              properties:
+                plan:
+                  type: object
+                  required:
+                    - operations
+                  properties:
+                    title:
+                      type: string
+                    operations:
+                      type: array
+                      items:
+                        type: object
+                        required:
+                          - type
+                        properties:
+                          id:
+                            type: string
+                          type:
+                            type: string
+                          params:
+                            type: object
+                          source:
+                            type: object
+                            description: Where the brief asks for it (document, page, quote).
+                    requirements:
+                      type: object
+                      description: Clauses that must hold afterwards (same kinds as the Network Studio contract).
+                    weekend:
+                      type: array
+                      items:
+                        type: string
+                validate:
+                  type: boolean
+                  description: Also run the canonical validator on the feed before and after.
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /gtfs/transform/commit:
+    post:
+      tags:
+        - Transform
+      summary: "Apply a previewed plan to the feed as ONE undoable edit (edit mode). 404 PREVIEW_NOT_FOUND when expired or from another session, 409 PLAN_BLOCKED when a step is blocked or failed, 409 PREVIEW_STALE when the feed changed since the preview."
+      security:
+        - SessionId: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - previewId
+              properties:
+                previewId:
+                  type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /gtfs/transform/compare:
+    post:
+      tags:
+        - Transform
+      summary: "Semantic diff between this session's feed and another loaded session's feed (routes, stops, calendar, service per day type and period)."
+      security:
+        - SessionId: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - otherSessionId
+              properties:
+                otherSessionId:
+                  type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
   /gtfs/network/refine:
     post:
       tags:
