@@ -44,6 +44,45 @@ curl -sS -H "X-Session-ID: $SID" $BASE/network/report
 
 The planner (`POST /network/plan`, Server-Sent Events) turns a brief into a spec through the same tools; it is gated like the assistant (beta code or free trial).
 
+## 2b. Change an existing network (the transformation engine)
+
+A service change — a contract amendment, a works notice, next term's timetable — is a **change plan**: typed operations from a catalogue (frequency, span, trips added or withdrawn, extensions, cut-backs, detours, stops, calendars and holidays, lines created, merged or split, running times, connections, fares, vehicle blocks…), each with its scope (from a date, a period, school days, public holidays) and the words of the brief it implements. The engine applies them deterministically on a copy, never guesses (a missing or ambiguous parameter is a question), and shows what really changes before anything is written.
+
+```bash
+# The catalogue (types, parameters, examples)
+curl -sS -H "X-Session-ID: $SID" $BASE/transform/operations
+
+# The feed's health on one yardstick: quality (planners' thresholds), fewest vehicles, consumer checks
+curl -sS -H "X-Session-ID: $SID" $BASE/transform/quality
+
+# Preview a plan: steps (applied / blocked with questions / failed), rows changed, the semantic diff,
+# integrity, consumer checks, impact (km, hours, cost, fleet, stops losing service), quality before → after,
+# conformance to the brief's clauses, the passenger alerts, phase timings. Nothing is written.
+curl -sS -H "X-Session-ID: $SID" -H "Content-Type: application/json" -d '{"plan": {
+  "title": "Avenant n°1 art. 3",
+  "operations": [{ "id": "op1", "type": "set_headway",
+    "params": { "route": "C", "days": "weekday", "period": "school_days", "region": "C",
+                "from_date": "2026-11-02", "from": "07:00", "to": "09:00", "headway_min": 10 },
+    "source": { "quote": "à compter du 2 novembre, un bus toutes les 10 minutes entre 7h et 9h" } }],
+  "requirements": { "clauses": [{ "id": "c1", "kind": "headway_max", "params": { "line": "C", "day": "weekday", "from": "07:00", "to": "09:00", "minutes": 10 } }] }
+}}' $BASE/transform/preview
+
+# Apply it as ONE undoable edit (edit mode), or take it back
+curl -sS -H "X-Session-ID: $SID" -H "Content-Type: application/json" -d '{"previewId":"…"}' $BASE/transform/commit
+curl -sS -X POST -H "X-Session-ID: $SID" $BASE/edit/undo
+
+# The change for other tools (GTFS Diff v1 CSV / v2 draft JSON), and what riders must be told
+# (GTFS-RT service alerts as JSON or protobuf, a notice in French or English)
+curl -sS -H "X-Session-ID: $SID" $BASE/transform/preview/$PREVIEW/gtfs-diff/csv
+curl -sS -H "X-Session-ID: $SID" "$BASE/transform/preview/$PREVIEW/alerts?language=fr&cause=CONSTRUCTION&format=pb" > alerts.pb
+
+# Other operators' timetables to align connections on (kept only where they call near the network)
+curl -sS -H "X-Session-ID: $SID" -H "Content-Type: application/json" -d '{"url":"https://…/ter-gtfs.zip","name":"TER"}' $BASE/transform/references
+curl -sS -H "X-Session-ID: $SID" "$BASE/transform/references/$REF/departures?stop=Albi%20Ville&towards=Toulouse&dates=2027-01-05&from=06:30&to=09:00"
+```
+
+The change planner (`POST /transform/plan`, Server-Sent Events) turns a brief — text or attached documents — into a plan with the same tools, previews it, fixes its own mistakes and asks the user what only they can decide. A network designed from scratch in the Network Studio is changed the same way once compiled. Level-1 evaluation on real briefs: `eval/transform/run.mjs` (ten service-change notices on the real Albi feed, each with an oracle measured on the resulting GTFS).
+
 ## 3. Publish
 
 ```bash
