@@ -123,7 +123,8 @@ const changedPeriods = (before, after, routeId) => {
     const whole = g.dates.length >= possible * 0.8;
     // Days whose timetable is only partly changed (holidays, one-offs) stay single dates.
     const period = whole ? null : { from: g.dates[0], to: g.dates[g.dates.length - 1], count: g.dates.length };
-    out.push({ day, date: g.dates[Math.floor(g.dates.length / 2)], period });
+    // span: the first and last dates that changed, whole or not (for passenger information).
+    out.push({ day, date: g.dates[Math.floor(g.dates.length / 2)], period, span: { from: g.dates[0], to: g.dates[g.dates.length - 1], count: g.dates.length } });
   }
   return out;
 };
@@ -189,7 +190,7 @@ const semanticDiff = (before, after) => {
       if (!dayChanges.length && x.vehicles_peak === y.vehicles_peak) items.push({ code: "service_retimed", ...base });
       entry.status = "changed";
       if (!entry.days[g.day]) entry.days[g.day] = { date: g.date, dates: g.period, before: x, after: y, changes: dayChanges };
-      entry.periods.push({ day: g.day, date: g.date, dates: g.period, before: x, after: y, changes: dayChanges });
+      entry.periods.push({ day: g.day, date: g.date, dates: g.period, span: g.span, before: x, after: y, changes: dayChanges });
     }
     if (entry.attributes.length || added.length || removed.length) entry.status = "changed";
     routes.push(entry);

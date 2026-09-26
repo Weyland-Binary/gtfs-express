@@ -235,6 +235,16 @@ const slug = (v) =>
 /** A new stop (location_type 0). Returns its id. */
 const createStop = (db, { id = null, name, lat, lon, code = null, parent_station = null, wheelchair_boarding = null, platform_code = null, zone_id = null } = {}) => {
   if (!name || !Number.isFinite(Number(lat)) || !Number.isFinite(Number(lon))) throw new Error("a new stop needs a name and coordinates");
+  // The same stop given again (an earlier step of the plan created it, or it
+  // exists): same name within 10 m is that stop, not a duplicate.
+  if (!id) {
+    const d = 0.0001;
+    for (const s of db.prepare("SELECT stop_id, stop_lat, stop_lon FROM stops WHERE stop_name = ? AND COALESCE(location_type, '0') IN ('0', '') AND stop_lat BETWEEN ? AND ? AND stop_lon BETWEEN ? AND ?").all(name, Number(lat) - d, Number(lat) + d, Number(lon) - 2 * d, Number(lon) + 2 * d)) {
+      const dy = (Number(s.stop_lat) - Number(lat)) * 111320;
+      const dx = (Number(s.stop_lon) - Number(lon)) * 111320 * Math.cos((Number(lat) * Math.PI) / 180);
+      if (Math.hypot(dx, dy) <= 10) return s.stop_id;
+    }
+  }
   const sid = id && !db.prepare("SELECT 1 FROM stops WHERE stop_id = ?").get(id) ? id : uniqueId(db, "stops", "stop_id", `NEW_${slug(name) || "STOP"}`);
   const row = { stop_id: sid, stop_name: name, stop_lat: Math.round(Number(lat) * 1e6) / 1e6, stop_lon: Math.round(Number(lon) * 1e6) / 1e6, location_type: "0", stop_code: code, parent_station, wheelchair_boarding, platform_code, zone_id };
   const cols = db.prepare("PRAGMA table_info(stops)").all().map((c) => c.name).filter((c) => row[c] !== undefined && row[c] !== null);

@@ -348,6 +348,7 @@ router.get("/transform/overview", transformController.getOverview);
 router.get("/transform/quality", transformController.getQuality);
 router.post("/transform/preview", transformController.previewPlanHandler);
 router.get("/transform/preview/:id/gtfs-diff/:format", transformController.exportDiffHandler);
+router.get("/transform/preview/:id/alerts", transformController.exportAlertsHandler);
 router.post("/transform/commit", transformController.commitHandler);
 router.post("/transform/compare", transformController.compareHandler);
 router.post("/network/refine", networkController.refineNetwork);

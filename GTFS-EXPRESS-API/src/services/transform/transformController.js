@@ -129,6 +129,33 @@ const exportDiffHandler = (req, res) => {
   res.send(toGtfsDiffCsv(p.changeset));
 };
 
+/**
+ * GET /transform/preview/:id/alerts?language=fr&cause=CONSTRUCTION&format=json|pb|txt
+ * What riders must be told about a previewed plan: GTFS-RT service alerts
+ * (FeedMessage as JSON, or protobuf) and a notice to post.
+ */
+const exportAlertsHandler = (req, res) => {
+  const ctx = requireSession(req, res);
+  if (!ctx) return;
+  const id = String(req.params.id || "");
+  const format = String(req.query.format || "json");
+  if (!/^[a-f0-9]{18}$/.test(id) || !["json", "pb", "txt"].includes(format)) return res.status(400).json({ error: "INVALID_INPUT", message: "A preview id and a format (json, pb or txt) are required." });
+  const p = engine.previewChangeset(ctx.sessionId, id);
+  if (!p) return res.status(404).json({ error: "PREVIEW_NOT_FOUND", message: "This preview expired or belongs to another session: preview the plan again." });
+  const { renderAlerts, encodeFeed } = require("./passengerInfo");
+  const out = renderAlerts(p.passenger, { language: typeof req.query.language === "string" ? req.query.language : "en", cause: typeof req.query.cause === "string" ? req.query.cause : null, timezone: p.timezone, title: p.title });
+  if (format === "pb") {
+    res.setHeader("Content-Type", "application/x-protobuf");
+    res.setHeader("Content-Disposition", `attachment; filename="alerts-${id}.pb"`);
+    return res.send(encodeFeed(out.feed));
+  }
+  if (format === "txt") {
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    return res.send(out.notice.text);
+  }
+  res.json({ alerts: p.passenger, feed: out.feed, notice: out.notice });
+};
+
 const encodeSSE = (event, data) => `event: ${event}\ndata: ${JSON.stringify(data == null ? {} : data)}\n\n`;
 
 /** POST /transform/plan — a planner turn (SSE): a brief → a change plan, previewed. */
@@ -207,4 +234,4 @@ const compareHandler = (req, res) => {
   res.json({ ...diff, lines: diff.items.map(describe) });
 };
 
-module.exports = { getOperations, getOverview, getQuality, exportDiffHandler, previewPlanHandler, commitHandler, compareHandler, planHandler, overviewOf, validateDb, _internals: { crypto } };
+module.exports = { getOperations, getOverview, getQuality, exportDiffHandler, exportAlertsHandler, previewPlanHandler, commitHandler, compareHandler, planHandler, overviewOf, validateDb, _internals: { crypto } };

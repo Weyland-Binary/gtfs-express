@@ -5,6 +5,8 @@
  *   fetchOperations()               GET  /transform/operations   the catalogue
  *   fetchOverview()                 GET  /transform/overview     lines and their service
  *   fetchHealth()                   GET  /transform/quality      quality, minimum fleet, consumer checks
+ *   fetchAlerts(id, { language })   GET  /transform/preview/:id/alerts   passenger information of a preview
+ *   downloadPreviewExport(id, kind) alerts-pb | alerts-json | diff-csv | diff-json → a file
  *   previewChangePlan(plan, opts)   POST /transform/preview      sandbox run, nothing written
  *   commitChangePlan(previewId)     POST /transform/commit       one undoable edit (edit mode)
  *   streamChangePlan({...})         POST /transform/plan         the change planner (SSE)
@@ -30,6 +32,30 @@ const post = (path, body) => fetchWithSession(`${API_BASE_URL}${path}`, { method
 export const fetchOperations = () => fetchWithSession(`${API_BASE_URL}/transform/operations`).then(json);
 export const fetchOverview = () => fetchWithSession(`${API_BASE_URL}/transform/overview`).then(json);
 export const fetchHealth = () => fetchWithSession(`${API_BASE_URL}/transform/quality`).then(json);
+export const fetchAlerts = (previewId, { language = "en", cause = null } = {}) => fetchWithSession(`${API_BASE_URL}/transform/preview/${previewId}/alerts?language=${encodeURIComponent(language)}${cause ? `&cause=${encodeURIComponent(cause)}` : ""}`).then(json);
+
+const EXPORTS = {
+  "alerts-pb": (id, lang) => [`/transform/preview/${id}/alerts?format=pb&language=${lang}`, `alerts-${id}.pb`],
+  "alerts-json": (id, lang) => [`/transform/preview/${id}/alerts?format=json&language=${lang}`, `alerts-${id}.json`],
+  "diff-csv": (id) => [`/transform/preview/${id}/gtfs-diff/csv`, `gtfs-diff-${id}.csv`],
+  "diff-json": (id) => [`/transform/preview/${id}/gtfs-diff/json`, `gtfs-diff-${id}.json`],
+};
+/** Download one export of a preview as a file. */
+export const downloadPreviewExport = async (previewId, kind, { language = "en" } = {}) => {
+  const [path, filename] = EXPORTS[kind](previewId, encodeURIComponent(language));
+  const res = await fetchWithSession(`${API_BASE_URL}${path}`);
+  if (!res.ok) await json(res);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return filename;
+};
 export const previewChangePlan = (plan, { validate = false } = {}) => post("/transform/preview", { plan, validate });
 export const commitChangePlan = (previewId) => post("/transform/commit", { previewId });
 

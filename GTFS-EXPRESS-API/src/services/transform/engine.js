@@ -210,10 +210,19 @@ const previewPlan = async (db, plan, { sessionId = null, dataVersion = null, val
   const previewId = crypto.randomBytes(9).toString("hex");
   const { redoOps, undoOps } = toOps(changeset);
   const lines = diff.items.map(describe);
+  // What riders must be told (GTFS-RT alerts and a notice), from what really changes.
+  let passenger = null;
+  if (!changeset.empty) {
+    try {
+      passenger = require("./passengerInfo").passengerAlerts(before, after, diff);
+    } catch (err) {
+      passenger = null;
+    }
+  }
   const title = String(plan?.title || "").slice(0, 120) || `${steps.filter((s) => s.status === "applied").length} change(s)`;
-  if (!changeset.empty) _previews.set(previewId, { sessionId, dataVersion, at: Date.now(), redoOps, undoOps, tables: Object.keys(changeset.tables), title, blocked, changeset });
+  if (!changeset.empty) _previews.set(previewId, { sessionId, dataVersion, at: Date.now(), redoOps, undoOps, tables: Object.keys(changeset.tables), title, blocked, changeset, passenger, timezone: agencyTimezone(db) });
   sandbox.close();
-  return { id: changeset.empty ? null : previewId, title, steps, blocked, empty: changeset.empty, changes: summarize(changeset), diff, lines, integrity: newIntegrity, checks: consumerChecks, impact, quality, conformance, validation };
+  return { id: changeset.empty ? null : previewId, title, steps, blocked, empty: changeset.empty, changes: summarize(changeset), diff, lines, integrity: newIntegrity, checks: consumerChecks, impact, quality, conformance, validation, passenger };
 };
 
 // New errors by rule: what the change broke, not what was already broken.
@@ -259,7 +268,15 @@ const previewChangeset = (sessionId, previewId) => {
   prune();
   const p = _previews.get(previewId);
   if (!p || (p.sessionId && p.sessionId !== sessionId)) return null;
-  return { changeset: p.changeset, title: p.title };
+  return { changeset: p.changeset, title: p.title, passenger: p.passenger || [], timezone: p.timezone || null };
+};
+
+const agencyTimezone = (db) => {
+  try {
+    return db.prepare("SELECT agency_timezone FROM agency WHERE agency_timezone IS NOT NULL AND agency_timezone <> '' LIMIT 1").get()?.agency_timezone || null;
+  } catch {
+    return null;
+  }
 };
 
 module.exports = { previewPlan, commitPreview, previewChangeset, integrityOf, compareValidation, _internals: { _previews } };

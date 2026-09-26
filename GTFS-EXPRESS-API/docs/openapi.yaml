@@ -1293,6 +1293,41 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/OkJson"
+  /gtfs/transform/preview/{id}/alerts:
+    get:
+      tags:
+        - Transform
+      summary: "What riders must be told about a previewed plan, from what it really changes: GTFS-Realtime service alerts (one per line and period; lines changed the same way share one; effect NO_SERVICE, DETOUR, STOP_MOVED, REDUCED_SERVICE, ADDITIONAL_SERVICE, MODIFIED_SERVICE or OTHER_EFFECT; active period in the agency's timezone; lines and stops concerned) and a notice to post, in French or English. format=json (the structured alerts, the FeedMessage in the protobuf JSON mapping, the notice), pb (the FeedMessage as application/x-protobuf) or txt (the notice)."
+      security:
+        - SessionId: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: format
+          in: query
+          schema:
+            type: string
+            enum: [json, pb, txt]
+        - name: language
+          in: query
+          schema:
+            type: string
+            example: fr
+        - name: cause
+          in: query
+          schema:
+            type: string
+            enum: [OTHER_CAUSE, TECHNICAL_PROBLEM, STRIKE, DEMONSTRATION, ACCIDENT, HOLIDAY, WEATHER, MAINTENANCE, CONSTRUCTION, POLICE_ACTIVITY, MEDICAL_EMERGENCY]
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          description: Bad preview id or format.
+        "404":
+          description: The preview expired or belongs to another session.
   /gtfs/transform/preview:
     post:
       tags:

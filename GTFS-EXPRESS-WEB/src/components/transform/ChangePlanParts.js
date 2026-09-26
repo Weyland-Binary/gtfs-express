@@ -27,6 +27,7 @@ import RemoveCircleOutlineIcon from "@mui/icons-material/RemoveCircleOutline";
 import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { soft } from "../network/StudioUI";
+import { fetchAlerts, downloadPreviewExport } from "../../utils/transformApi";
 
 export const STATUS = {
   applied: { color: "success", Icon: CheckCircleOutlineIcon },
@@ -375,6 +376,7 @@ export function ChangesPanel({ preview }) {
   return (
     <Box data-testid="change-diff" sx={{ display: "flex", flexDirection: "column", gap: 1.25 }}>
       <ImpactCard impact={preview.impact} />
+      <PublishPanel preview={preview} />
       {totals && (
         <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
           {[["trips", totals.trips_weekday], ["vehicles", totals.vehicles_peak_weekday], ["routes", totals.routes], ["stops", totals.stops]].map(([k, x]) => (
@@ -406,6 +408,59 @@ export function ChangesPanel({ preview }) {
           ))}
         </Box>
       )}
+    </Box>
+  );
+}
+
+/**
+ * Publishing the change: what riders must be told (the notice and the
+ * GTFS-RT service alerts, from what the plan really changes) and the
+ * change itself as a GTFS Diff for other tools.
+ */
+export function PublishPanel({ preview }) {
+  const { t, language } = useLanguage();
+  const theme = useTheme();
+  const [notice, setNotice] = useState(null);
+  const [error, setError] = useState(null);
+  const [copied, setCopied] = useState(false);
+  const id = preview?.id || null;
+  const count = (preview?.passenger || []).length;
+  const lang = String(language || "en").slice(0, 2) === "fr" ? "fr" : "en";
+  useEffect(() => {
+    setNotice(null);
+    setError(null);
+    if (!id || !count) return undefined;
+    let live = true;
+    fetchAlerts(id, { language: lang })
+      .then((d) => live && setNotice(d.notice))
+      .catch((err) => live && setError(err.message));
+    return () => {
+      live = false;
+    };
+  }, [id, count, lang]);
+  if (!id) return null;
+  const download = (kind) => downloadPreviewExport(id, kind, { language: lang }).catch((err) => setError(err.message));
+  const copy = () => {
+    if (!notice?.text || !navigator.clipboard) return;
+    navigator.clipboard.writeText(notice.text).then(() => setCopied(true), () => {});
+  };
+  return (
+    <Box data-testid="change-publish" sx={{ p: 1.25, borderRadius: "12px", background: theme.palette.background.paper, boxShadow: `0 0 0 1px ${theme.palette.divider}` }}>
+      <Typography sx={{ fontSize: "0.82rem", fontWeight: 800 }}>{t("transform.publish.title")}</Typography>
+      <Typography sx={{ fontSize: "0.68rem", color: "text.secondary", mb: 0.75 }}>{t("transform.publish.subtitle", { count })}</Typography>
+      {error && <Alert severity="warning" sx={{ py: 0, mb: 0.75, fontSize: "0.72rem" }}>{error}</Alert>}
+      {notice?.text && (
+        <Box component="pre" data-testid="change-publish-notice" sx={{ m: 0, mb: 0.75, p: 1, borderRadius: "10px", background: soft(theme), fontFamily: "inherit", fontSize: "0.74rem", lineHeight: 1.5, whiteSpace: "pre-wrap", maxHeight: 220, overflowY: "auto" }}>
+          {notice.text}
+        </Box>
+      )}
+      <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
+        {notice?.text && <Chip size="small" variant="outlined" label={copied ? t("transform.publish.copied") : t("transform.publish.copy")} onClick={copy} data-testid="change-publish-copy" />}
+        {count > 0 && <Chip size="small" variant="outlined" label={t("transform.publish.alertsPb")} onClick={() => download("alerts-pb")} data-testid="change-publish-alerts" />}
+        {count > 0 && <Chip size="small" variant="outlined" label={t("transform.publish.alertsJson")} onClick={() => download("alerts-json")} />}
+        <Chip size="small" variant="outlined" label={t("transform.publish.diffCsv")} onClick={() => download("diff-csv")} data-testid="change-publish-diff" />
+        <Chip size="small" variant="outlined" label={t("transform.publish.diffJson")} onClick={() => download("diff-json")} />
+      </Box>
     </Box>
   );
 }

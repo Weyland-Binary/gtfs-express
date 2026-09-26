@@ -127,4 +127,27 @@ describe("transform API: GTFS Diff export", () => {
     expect((await api(sessionId).get("/transform/preview/aaaaaaaaaaaaaaaaaa/gtfs-diff/csv")).status).toBe(404);
     expect((await api(sessionId).get(`/transform/preview/${id}/gtfs-diff/xml`)).status).toBe(400);
   });
+
+  test("a preview's passenger information: alerts as JSON, GTFS-RT protobuf, a notice", async () => {
+    const pv = await api(sessionId).post("/transform/preview", { plan: { title: "S1 renforcée", operations: [{ type: "set_headway", params: { route: "S1", days: "weekday", from_date: "2026-10-05", from: "07:00", to: "09:00", headway_min: 4 } }] } });
+    const id = pv.body.id;
+    expect(pv.body.passenger.length).toBeGreaterThan(0);
+    const j = await api(sessionId).get(`/transform/preview/${id}/alerts?language=fr&cause=MAINTENANCE`);
+    expect(j.status).toBe(200);
+    expect(j.body.feed.entity[0].alert.effect).toBe("ADDITIONAL_SERVICE");
+    expect(j.body.feed.entity[0].alert.cause).toBe("MAINTENANCE");
+    expect(j.body.notice.text).toMatch(/Ligne S1 : service renforcé à partir du 5 octobre 2026/);
+    const pb = await api(sessionId).get(`/transform/preview/${id}/alerts?format=pb`).buffer(true).parse((res, cb) => {
+      const chunks = [];
+      res.on("data", (c) => chunks.push(c));
+      res.on("end", () => cb(null, Buffer.concat(chunks)));
+    });
+    expect(pb.headers["content-type"]).toMatch(/application\/x-protobuf/);
+    const { transit_realtime: rt } = require("gtfs-realtime-bindings");
+    expect(rt.FeedMessage.decode(pb.body).entity.length).toBe(j.body.feed.entity.length);
+    const txt = await api(sessionId).get(`/transform/preview/${id}/alerts?format=txt&language=en`);
+    expect(txt.text).toMatch(/^Service change — S1 renforcée/);
+    expect((await api(sessionId).get(`/transform/preview/${id}/alerts?format=xml`)).status).toBe(400);
+    expect((await api(sessionId).get("/transform/preview/aaaaaaaaaaaaaaaaaa/alerts")).status).toBe(404);
+  });
 });

@@ -22,13 +22,14 @@ const api = {
   fetchOperations: vi.fn(),
   fetchOverview: vi.fn(),
   fetchHealth: vi.fn(),
+  fetchAlerts: vi.fn(),
   previewChangePlan: vi.fn(),
   commitChangePlan: vi.fn(),
   streamChangePlan: vi.fn(),
 };
 vi.mock("../utils/transformApi", async () => {
   const real = await vi.importActual("../utils/transformApi");
-  return { ...real, fetchOperations: (...a) => api.fetchOperations(...a), fetchOverview: (...a) => api.fetchOverview(...a), fetchHealth: (...a) => api.fetchHealth(...a), previewChangePlan: (...a) => api.previewChangePlan(...a), commitChangePlan: (...a) => api.commitChangePlan(...a), streamChangePlan: (...a) => api.streamChangePlan(...a) };
+  return { ...real, fetchOperations: (...a) => api.fetchOperations(...a), fetchOverview: (...a) => api.fetchOverview(...a), fetchHealth: (...a) => api.fetchHealth(...a), fetchAlerts: (...a) => api.fetchAlerts(...a), previewChangePlan: (...a) => api.previewChangePlan(...a), commitChangePlan: (...a) => api.commitChangePlan(...a), streamChangePlan: (...a) => api.streamChangePlan(...a) };
 });
 
 import ChangeStudio from "../components/transform/ChangeStudio";
@@ -55,6 +56,7 @@ const readyPreview = (plan) => ({
   diff: { items: [{ code: "service_headway", label: "S1", day: "weekday", period: "am_peak", direction: "0", before: 10, after: 6, dates: null }], totals: { trips_weekday: { before: 100, after: 120 }, vehicles_peak_weekday: { before: 10, after: 12 }, routes: { before: 3, after: 3 }, stops: { before: 20, after: 20 } } },
   integrity: [],
   conformance: null,
+  passenger: [{ id: "alert-1", effect: "ADDITIONAL_SERVICE" }],
 });
 
 const mount = (onClose = () => {}) =>
@@ -74,6 +76,7 @@ describe("ChangeStudio", () => {
     api.fetchHealth.mockResolvedValue({ score: 79, grade: "B", dimensions: [{ id: "frequency", score: 70 }], lines: [{ id: "S1", tier: "structuring" }], fleet: { date: "20261006", vehicles: 32, vehicles_line_by_line: 43, deadhead_km: 266 }, checks: [{ code: "low_contrast", count: 2 }] });
     api.previewChangePlan.mockImplementation(async (plan) => (plan.operations[0].params.days ? readyPreview(plan) : blockedPreview(plan)));
     api.commitChangePlan.mockResolvedValue({ ok: true, description: "S1", tables: ["trips"] });
+    api.fetchAlerts.mockResolvedValue({ notice: { language: "en", title: "Service change", text: "Service change\n\nLine S1: more service" } });
   });
 
   it("adds an operation by hand, answers the engine's question, shows the changes and applies one edit", async () => {
@@ -107,6 +110,10 @@ describe("ChangeStudio", () => {
     // The changes, phrased from the codes.
     fireEvent.click(screen.getByTestId("change-tab-changes"));
     expect(screen.getByTestId("change-diff-line").textContent).toBe("transform.diff.headway");
+    // What riders must be told, ready to publish.
+    expect((await screen.findByTestId("change-publish-notice")).textContent).toMatch(/Line S1: more service/);
+    expect(api.fetchAlerts).toHaveBeenCalledWith("bbbbbbbbbbbbbbbbbb", { language: "en" });
+    expect(screen.getByTestId("change-publish-alerts")).toBeTruthy();
 
     // Apply: edit mode, a fresh preview on the edit database, one commit.
     fireEvent.click(screen.getByTestId("change-apply"));
