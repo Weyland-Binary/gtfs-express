@@ -95,3 +95,28 @@ describe("transform API: preview → commit → undo → redo", () => {
     expect(r.status).toBe(400);
   });
 });
+
+describe("transform API: GTFS Diff export", () => {
+  let sessionId;
+  beforeAll(async () => {
+    ({ sessionId } = await seedSession());
+  });
+  afterAll(() => teardownSession(sessionId));
+
+  test("a preview exports as GTFS Diff v1 CSV and v2 JSON; unknown or foreign previews are refused", async () => {
+    const pv = await api(sessionId).post("/transform/preview", { plan: { title: "rename", operations: [{ type: "set_headway", params: { route: "S1", days: "weekday", from: "07:00", to: "08:00", headway_min: 6 } }] } });
+    const id = pv.body.id;
+    const csv = await api(sessionId).get(`/transform/preview/${id}/gtfs-diff/csv`);
+    expect(csv.status).toBe(200);
+    expect(csv.headers["content-type"]).toMatch(/text\/csv/);
+    const lines = csv.text.trim().split("\n");
+    expect(lines[0]).toBe("id,file,action,target,identifier,initial_value,new_value,note");
+    expect(lines.some((l) => /,trips\.txt,add,row,/.test(l))).toBe(true);
+    expect(lines.some((l) => /,stop_times\.txt,delete,row,/.test(l))).toBe(true);
+    const json = await api(sessionId).get(`/transform/preview/${id}/gtfs-diff/json`);
+    expect(json.body.summary.rows_added).toBeGreaterThan(0);
+    expect(json.body.file_diffs.map((f) => f.file_name)).toEqual(expect.arrayContaining(["trips.txt", "stop_times.txt"]));
+    expect((await api(sessionId).get("/transform/preview/aaaaaaaaaaaaaaaaaa/gtfs-diff/csv")).status).toBe(404);
+    expect((await api(sessionId).get(`/transform/preview/${id}/gtfs-diff/xml`)).status).toBe(400);
+  });
+});

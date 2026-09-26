@@ -194,7 +194,7 @@ const previewPlan = async (db, plan, { sessionId = null, dataVersion = null, val
   const { redoOps, undoOps } = toOps(changeset);
   const lines = diff.items.map(describe);
   const title = String(plan?.title || "").slice(0, 120) || `${steps.filter((s) => s.status === "applied").length} change(s)`;
-  if (!changeset.empty) _previews.set(previewId, { sessionId, dataVersion, at: Date.now(), redoOps, undoOps, tables: Object.keys(changeset.tables), title, blocked });
+  if (!changeset.empty) _previews.set(previewId, { sessionId, dataVersion, at: Date.now(), redoOps, undoOps, tables: Object.keys(changeset.tables), title, blocked, changeset });
   sandbox.close();
   return { id: changeset.empty ? null : previewId, title, steps, blocked, empty: changeset.empty, changes: summarize(changeset), diff, lines, integrity: newIntegrity, checks: consumerChecks, impact, quality, conformance, validation };
 };
@@ -237,4 +237,12 @@ const commitPreview = (sessionId, db, previewId, { dataVersion = null } = {}) =>
   return { editId, description: p.title, tables: p.tables };
 };
 
-module.exports = { previewPlan, commitPreview, integrityOf, compareValidation, _internals: { _previews } };
+/** The changeset of a stored preview (for exports), when it belongs to the session. */
+const previewChangeset = (sessionId, previewId) => {
+  prune();
+  const p = _previews.get(previewId);
+  if (!p || (p.sessionId && p.sessionId !== sessionId)) return null;
+  return { changeset: p.changeset, title: p.title };
+};
+
+module.exports = { previewPlan, commitPreview, previewChangeset, integrityOf, compareValidation, _internals: { _previews } };

@@ -11,6 +11,7 @@
  *                                     blocked with questions, failed), row counts,
  *                                     semantic diff, integrity, brief conformance,
  *                                     and the canonical validator before/after
+ *   GET  /transform/preview/:id/gtfs-diff/csv|json  the preview as GTFS Diff (v1 CSV / v2 draft)
  *   POST /transform/commit { previewId }   (edit mode) replay it on the feed as
  *                                     one undoable edit
  *   POST /transform/compare { otherSessionId }  semantic diff with another session
@@ -113,6 +114,21 @@ const commitHandler = (req, res) => {
   }
 };
 
+/** GET /transform/preview/:id/gtfs-diff/csv|json — a preview as GTFS Diff (v1 CSV, v2 draft JSON). */
+const exportDiffHandler = (req, res) => {
+  const ctx = requireSession(req, res);
+  if (!ctx) return;
+  const id = String(req.params.id || "");
+  if (!/^[a-f0-9]{18}$/.test(id) || !["csv", "json"].includes(req.params.format)) return res.status(400).json({ error: "INVALID_INPUT", message: "A preview id and a format (csv or json) are required." });
+  const p = engine.previewChangeset(ctx.sessionId, id);
+  if (!p) return res.status(404).json({ error: "PREVIEW_NOT_FOUND", message: "This preview expired or belongs to another session: preview the plan again." });
+  const { toGtfsDiffCsv, toGtfsDiffJson } = require("./interop");
+  if (req.params.format === "json") return res.json(toGtfsDiffJson(p.changeset, { title: p.title, createdAt: new Date().toISOString() }));
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="gtfs-diff-${id}.csv"`);
+  res.send(toGtfsDiffCsv(p.changeset));
+};
+
 const encodeSSE = (event, data) => `event: ${event}\ndata: ${JSON.stringify(data == null ? {} : data)}\n\n`;
 
 /** POST /transform/plan — a planner turn (SSE): a brief → a change plan, previewed. */
@@ -191,4 +207,4 @@ const compareHandler = (req, res) => {
   res.json({ ...diff, lines: diff.items.map(describe) });
 };
 
-module.exports = { getOperations, getOverview, getQuality, previewPlanHandler, commitHandler, compareHandler, planHandler, overviewOf, validateDb, _internals: { crypto } };
+module.exports = { getOperations, getOverview, getQuality, exportDiffHandler, previewPlanHandler, commitHandler, compareHandler, planHandler, overviewOf, validateDb, _internals: { crypto } };

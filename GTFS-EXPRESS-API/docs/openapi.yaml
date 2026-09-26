@@ -1347,6 +1347,32 @@ paths:
           $ref: "#/components/responses/OkJson"
         "400":
           $ref: "#/components/responses/BadRequest"
+  /gtfs/transform/preview/{id}/gtfs-diff/{format}:
+    get:
+      tags:
+        - Transform
+      summary: "A preview's row-level changes in the GTFS Diff format (MobilityData / transport.data.gouv.fr): v1 CSV (id, file, action, target, identifier, initial_value, new_value, note — updates carry the changed fields before and after, a compare-and-set) or the v2 draft JSON (file_diffs with row_changes, ≤ 50 rows per file)."
+      security:
+        - SessionId: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: format
+          in: path
+          required: true
+          schema:
+            type: string
+            enum:
+              - csv
+              - json
+      responses:
+        "200":
+          description: The GTFS Diff (text/csv or JSON).
+        "404":
+          description: The preview expired or belongs to another session.
   /gtfs/transform/commit:
     post:
       tags:
