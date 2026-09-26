@@ -312,6 +312,7 @@ export function ImpactCard({ impact }) {
     ["hours", impact.totals.hours],
     ["cost", impact.totals.cost, impact.currency],
     ["fleet", impact.totals.fleet],
+    ...(impact.totals.fleet_interlined ? [["fleetInterlined", impact.totals.fleet_interlined]] : []),
     ["frequentStops", impact.totals.frequent_stops],
   ];
   const lost = impact.stops?.lost || [];

@@ -4,7 +4,7 @@
  *
  *   impactOf(before, after, { costPerKm, costPerHour, currency }) → {
  *     window: { from, to, days },                 // the year counted (the BEFORE feed's first 365 days)
- *     totals: { km, hours, cost, fleet, trips_weekday } × { before, after, delta, pct },
+ *     totals: { km, hours, cost, fleet, fleet_interlined, trips_weekday, frequent_stops } × { before, after, delta, pct },
  *     routes: [{ id, label, status, km, hours, fleet, span_weekday, flags }],
  *     stops:  { lost: [...], lost_days: [...], lost_frequent: [...], gained: [...] },
  *     flags:  [{ code, route?, … }]               // "major service change" thresholds
@@ -12,8 +12,10 @@
  *
  * Kilometres and hours are exact over the window: every trip × the dates its
  * service really runs (calendar and exceptions; school periods, holidays),
- * × its departures when frequency-based — not a weekday × 365 guess. Peak
- * vehicles are measured on the representative weekday. The flags follow the
+ * × its departures when frequency-based — not a weekday × 365 guess.
+ * Vehicles: the minimum fleet that runs the representative weekday
+ * (blocking.minFleet: layover ≥ max(5 min, 12 %), dead running), per line
+ * and, with interlining, for the network. The flags follow the
  * usual "major service change" definitions (US Title VI policies, and the
  * figures French DSP amendments quantify): a line added or removed, its
  * revenue hours or its kilometres changed by 25 % or more, its weekday span
@@ -27,6 +29,7 @@
 const { routeStats, _internals: fm } = require("./feedModel");
 const { _internals: fv } = require("./feedView");
 const S = require("./scope");
+const { minFleet } = require("./blocking");
 
 const MAJOR_PCT = 25;
 const MAJOR_SPAN_H = 4;
@@ -111,9 +114,15 @@ const impactOf = (before, after, { costPerKm = 4.2, costPerHour = 0, currency = 
   const va = volumes(after, from, to);
   const wdB = repDate(before, DAY_TYPES[0][1]);
   const wdA = repDate(after, DAY_TYPES[0][1]) || wdB;
+  // Vehicles: the minimum fleet that runs the representative weekday (blocking.js),
+  // per line (no interlining, as contracts count it) and for the network.
+  const fleetB = wdB ? minFleet(before, wdB, { interline: false }) : { vehicles: 0, by_route: {} };
+  const fleetA = wdA ? minFleet(after, wdA, { interline: false }) : { vehicles: 0, by_route: {} };
+  const netB = wdB ? minFleet(before, wdB).vehicles : 0;
+  const netA = wdA ? minFleet(after, wdA).vehicles : 0;
   const flags = [];
   const routes = [];
-  const tot = { km: [0, 0], hours: [0, 0], fleet: [0, 0], trips: [0, 0] };
+  const tot = { km: [0, 0], hours: [0, 0], trips: [0, 0] };
   for (const id of new Set([...before.routes.keys(), ...after.routes.keys()])) {
     const rb = before.routes.get(id);
     const ra = after.routes.get(id);
@@ -126,11 +135,11 @@ const impactOf = (before, after, { costPerKm = 4.2, costPerHour = 0, currency = 
     tot.km[1] += ka.km;
     tot.hours[0] += kb.hours;
     tot.hours[1] += ka.hours;
-    tot.fleet[0] += sb?.vehicles_peak || 0;
-    tot.fleet[1] += sa?.vehicles_peak || 0;
+    const fb = Math.ceil(fleetB.by_route[id] || 0);
+    const fa = Math.ceil(fleetA.by_route[id] || 0);
     tot.trips[0] += sb?.trips || 0;
     tot.trips[1] += sa?.trips || 0;
-    const r = { id, label, status: !rb ? "added" : !ra ? "removed" : "kept", km: pair(kb.km, ka.km), hours: pair(kb.hours, ka.hours, 1), fleet: pair(sb?.vehicles_peak || 0, sa?.vehicles_peak || 0), span_weekday: pair(spanHours(sb) || 0, spanHours(sa) || 0, 1), flags: [] };
+    const r = { id, label, status: !rb ? "added" : !ra ? "removed" : "kept", km: pair(kb.km, ka.km), hours: pair(kb.hours, ka.hours, 1), fleet: pair(fb, fa), span_weekday: pair(spanHours(sb) || 0, spanHours(sa) || 0, 1), flags: [] };
     const hadService = kb.km > 0;
     const hasService = ka.km > 0;
     if (!rb || (!hadService && hasService)) r.flags.push("route_added");
@@ -173,7 +182,8 @@ const impactOf = (before, after, { costPerKm = 4.2, costPerHour = 0, currency = 
       km: pair(tot.km[0], tot.km[1]),
       hours: pair(tot.hours[0], tot.hours[1]),
       cost: pair(tot.km[0] * costPerKm + tot.hours[0] * costPerHour, tot.km[1] * costPerKm + tot.hours[1] * costPerHour),
-      fleet: pair(tot.fleet[0], tot.fleet[1]),
+      fleet: pair(fleetB.vehicles, fleetA.vehicles),
+      fleet_interlined: pair(netB, netA),
       trips_weekday: pair(tot.trips[0], tot.trips[1]),
       frequent_stops: pair(frequent.before, frequent.after),
     },
