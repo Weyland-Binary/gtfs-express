@@ -1237,6 +1237,31 @@ paths:
           $ref: "#/components/responses/OkJson"
         "400":
           $ref: "#/components/responses/BadRequest"
+  /gtfs/network/needs:
+    post:
+      tags:
+        - Network Studio
+      summary: "What the system still needs from the user to design well: each need (territory, brief, operator, holidays, school zone, service level, caps, costs, typical trips, unlocated stops…) with its state (missing, defaulted, unconfirmed) and impact (high, medium, low), plus the service levers: fleet and yearly cost as planned and with other peak headways or without weekend service."
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                spec:
+                  type: object
+                requirements:
+                  type: object
+                place:
+                  type: string
+                quality:
+                  type: object
+                  description: The client's latest quality report (operations, conformance), optional.
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
   /gtfs/network/refine:
     post:
       tags:

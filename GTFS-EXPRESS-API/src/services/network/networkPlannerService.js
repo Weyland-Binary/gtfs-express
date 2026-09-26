@@ -41,6 +41,7 @@ const compiler = require("./compiler");
 const territoryService = require("./territoryService");
 const design = require("./networkDesignService");
 const conformance = require("./conformanceService");
+const dataNeeds = require("./dataNeedsService");
 const { haversineMeters } = require("../../utils/geoUtils");
 
 const MAX_ROUNDS = 20;
@@ -94,7 +95,7 @@ Limits: ≤ ${LIMITS.lines} lines, ≤ ${LIMITS.stops} stops, ≤ ${LIMITS.stops
 ## 1. Understand (set_requirements, ask_user)
 Attached documents (PDF, Word, text: a tender, a study, a cahier des charges) ARE the specification. Read them entirely — text, tables, maps' captions, annexes — before anything else: lines and stops requested, service levels by period, hours, days, calendars and school periods, fleet, budget, accessibility, deadlines, priorities, what must be kept. Put each requirement in set_requirements (cite the page or section in the reason when you can), and write every verifiable requirement as a CLAUSE (below): the server checks the plan against each clause, so the network provably does what was asked. When a document and the chat disagree, the latest chat message wins; when two parts of a document disagree, ask.
 On a NEW brief (no [Current spec] block), your FIRST call is set_requirements: what the brief states (operator, area, lines with termini and vias, modes, service days and hours, headways, holidays, budget or fleet constraints, must-serve places), what you ASSUME with a confidence level, and the OPEN QUESTIONS with their impact. Everything the brief states is law; do not "improve" it silently. On a refinement, call set_requirements again only when the request changes the scope (new lines, new area, new service policy).
-An open question has impact "high" when two plausible answers give materially different networks: which town when the name is ambiguous, the termini or the order of stops of a requested line, whether existing lines must be kept, a fleet or budget cap, school-only service. Then call ask_user with those questions (1–3, each with options and a default), end your turn, and continue with the answers next time. Everything else gets a sensible default (below), listed as an assumption the user can contest.
+An open question has impact "high" when two plausible answers give materially different networks: which town when the name is ambiguous, the termini or the order of stops of a requested line, whether existing lines must be kept, a fleet or budget cap, school-only service. Then call ask_user with those questions (1–3, each with options and a default), end your turn, and continue with the answers next time. When a question is about frequency, fleet or budget and a spec exists, call service_levers first and put the figures in the question's "why" (what each option costs in vehicles and per year). Everything else gets a sensible default (below), listed as an assumption the user can contest.
 
 ### Clauses (set_requirements.clauses)
 Each clause: { id (stable), kind, level ("must" when the brief imposes it, "should" when it is a wish or your assumption), status ("stated" from the brief, "assumed" from you), text (one line in the user's language), source (document + page, chat, answer, default), params }. Kinds and params:
@@ -422,7 +423,8 @@ const createTools = (ctx) => {
       ctx.emit("quality", report);
       ctx.emit("step", { kind: "quality", score: report.score, grade: report.grade, majors: report.majors, ...(report.conformance ? { brief: report.conformance.summary.must } : {}) });
       if (ctx.territory) ctx.emit("coverage", territoryService.coverageOf(ctx.spec, ctx.territory));
-      return { content: [conformance.summarizeConformance(report.conformance), design.summarizeReport(report)].join("\n\n") };
+      const needs = dataNeeds.computeNeeds({ spec: ctx.spec, requirements: ctx.requirements, territory: ctx.territory, quality: report, maxLines: ctx.maxLines });
+      return { content: [conformance.summarizeConformance(report.conformance), design.summarizeReport(report), dataNeeds.summarizeNeeds(needs)].join("\n\n") };
     },
   };
 
@@ -531,7 +533,21 @@ const createTools = (ctx) => {
     },
   };
 
-  const tools = [setRequirements, askUser, getTerritory, suggestCorridors, findExistingFeeds, importExistingNetwork, findExistingStops, geocodeStops, setSpec, refineStops, estimateRoutes, evaluatePlan, coverageScore];
+  const serviceLevers = {
+    definition: {
+      name: "service_levers",
+      description: "What the main service choices cost on the current spec: the fleet at peak and the yearly cost as planned, and with a peak headway of 10, 15 or 20 min, without Saturday or without Sunday service (deltas included). Use it to put figures on a question about frequency, fleet or budget ('10 min at peak: +4 vehicles, +310 k€/year') and to fit a cap.",
+      input_schema: { type: "object", properties: {} },
+    },
+    run() {
+      if (!ctx.spec || !ctx.spec.lines.length) return { content: "Error: call set_spec first.", isError: true };
+      const levers = dataNeeds.serviceLevers(ctx.spec, { geometry: ctx.geometry, country: ctx.territory?.country || null });
+      ctx.emit("levers", levers);
+      return { content: dataNeeds.summarizeLevers(levers) };
+    },
+  };
+
+  const tools = [setRequirements, askUser, getTerritory, suggestCorridors, findExistingFeeds, importExistingNetwork, findExistingStops, geocodeStops, setSpec, refineStops, estimateRoutes, evaluatePlan, coverageScore, serviceLevers];
   return { definitions: tools.map((t) => t.definition), byName: Object.fromEntries(tools.map((t) => [t.definition.name, t])) };
 };
 
@@ -791,7 +807,8 @@ const planNetwork = async ({ brief, spec = null, history = [], language = "en", 
     // Nothing to show (no text, no plan, no question): the studio says so instead of an empty turn.
     const empty = !finalText.trim() && !ctx.spec && !ctx.asked;
     const conforms = ctx.quality?.conformance ? ctx.quality.conformance.conforms : null;
-    emit("done", { reason: incomplete ? "incomplete" : empty ? "empty" : "complete", specOk: ctx.specOk, specChanged: ctx.specChanged, asked: ctx.asked, ready: verdict.ready, clean: verdict.clean, conforms, not_ready_reasons: verdict.reasons, quality, requirements: ctx.requirements });
+    const needs = dataNeeds.computeNeeds({ spec: ctx.spec, requirements: ctx.requirements, territory: ctx.territory, quality: ctx.quality, maxLines: ctx.maxLines });
+    emit("done", { reason: incomplete ? "incomplete" : empty ? "empty" : "complete", specOk: ctx.specOk, specChanged: ctx.specChanged, asked: ctx.asked, ready: verdict.ready, clean: verdict.clean, conforms, not_ready_reasons: verdict.reasons, quality, requirements: ctx.requirements, needs });
     recordEvent("network.plan", { ...(req ? extractReqMeta(req) : {}), model, rounds, toolCalls, specOk: ctx.specOk, asked: ctx.asked, ready: verdict.ready, clean: verdict.clean, incomplete, truncations, score: quality?.score ?? null, ...usageTotals, durationMs: Date.now() - startedAt, anon: freeTier });
     return { text: finalText, spec: ctx.spec, specOk: ctx.specOk, ready: verdict.ready, clean: verdict.clean, quality: ctx.quality, requirements: ctx.requirements };
   } catch (err) {

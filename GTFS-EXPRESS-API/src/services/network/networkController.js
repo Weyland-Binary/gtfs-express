@@ -177,6 +177,34 @@ const geometryFromClient = (raw) => {
   return { lines: [...byLine.values()] };
 };
 
+/**
+ * POST /network/needs { spec, requirements?, place?, quality? } → what the
+ * system still needs from the user (by impact), with the levers' figures.
+ */
+const networkNeeds = (req, res) => {
+  const raw = req.body?.spec && typeof req.body.spec === "object" ? req.body.spec : null;
+  const place = typeof req.body?.place === "string" ? req.body.place.trim() : "";
+  const territory = place.length >= 2 ? territoryService.getCachedTerritory(place) : null;
+  const requirements = req.body?.requirements && typeof req.body.requirements === "object" && JSON.stringify(req.body.requirements).length < 60000 ? req.body.requirements : null;
+  const dataNeeds = require("./dataNeedsService");
+  const norm = raw ? normalizeSpec(raw) : null;
+  // The client's quality report (operations, conformance) when it has one; else the operations alone.
+  let quality = req.body?.quality && typeof req.body.quality === "object" ? req.body.quality : null;
+  if (!quality && norm && norm.spec.lines.length) {
+    try {
+      quality = { operations: require("./operationsService").estimateOperations(norm.spec, null, { country: territory?.country || null }) };
+    } catch {
+      quality = null;
+    }
+  }
+  const limits = planLimits(req);
+  // The raw spec says which settings the user left out (the normaliser fills them).
+  const spec = raw ? { ...(norm?.spec || {}), feed: raw.feed, agency: raw.agency || {}, stops: norm?.spec.stops || [], lines: norm?.spec.lines || [] } : null;
+  const needs = dataNeeds.computeNeeds({ spec, requirements, territory, quality, maxLines: Number.isFinite(limits.maxLines) ? limits.maxLines : null });
+  const levers = norm && norm.ok ? dataNeeds.serviceLevers(norm.spec, { country: territory?.country || null }) : null;
+  res.json({ ...needs, levers });
+};
+
 /** POST /network/evaluate { spec, place?, geometry?, requirements? } → the design quality report of a plan, with its conformance to the brief. */
 const evaluateNetwork = async (req, res) => {
   const spec = specFromBody(req.body, res);
@@ -273,4 +301,4 @@ const getNetworkReport = (req, res) => {
   res.json(stored);
 };
 
-module.exports = { validateNetworkSpec, geocodeStops, estimateNetwork, compileNetwork, evaluateNetwork, refineNetwork, getNetworkSpec, putNetworkSpec, getNetworkReport, getTerritory, getCoverage, getCatalog, importCatalogFeed, _internals: { planLimits, compileSpec, geometryFromClient } };
+module.exports = { networkNeeds, validateNetworkSpec, geocodeStops, estimateNetwork, compileNetwork, evaluateNetwork, refineNetwork, getNetworkSpec, putNetworkSpec, getNetworkReport, getTerritory, getCoverage, getCatalog, importCatalogFeed, _internals: { planLimits, compileSpec, geometryFromClient } };

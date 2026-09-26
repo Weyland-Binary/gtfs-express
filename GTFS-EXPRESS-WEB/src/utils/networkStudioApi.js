@@ -49,6 +49,9 @@ export const fetchCoverage = (spec, place) => post("/network/coverage", { spec, 
 /** The design quality report of a plan; `geometry` is the studio's routed lines ([{lineId, directionId, distance_km, running_min}]). */
 export const evaluateSpec = (spec, place = null, geometry = null, requirements = null) => post("/network/evaluate", { spec, place, geometry, ...(requirements ? { requirements } : {}) });
 /** Snap the planned stops onto the territory's existing stops and fill the long gaps. */
+/** What the system still needs from the user (by impact), with the service levers' figures. */
+export const fetchNeeds = (spec, { requirements = null, place = null, quality = null } = {}) =>
+  post("/network/needs", { spec, ...(requirements ? { requirements } : {}), ...(place ? { place } : {}), ...(quality ? { quality: { operations: quality.operations || null, conformance: quality.conformance || null } } : {}) });
 export const refineSpec = (spec, place) => post("/network/refine", { spec, place });
 /** The public GTFS feeds covering a place (Mobility Database catalog). */
 export const fetchCatalog = async (place) => {

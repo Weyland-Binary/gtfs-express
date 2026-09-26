@@ -32,7 +32,8 @@ import DirectionsBusFilledOutlinedIcon from "@mui/icons-material/DirectionsBusFi
 import AddLocationAltOutlinedIcon from "@mui/icons-material/AddLocationAltOutlined";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { useFeatures } from "../../utils/featuresApi";
-import { validateSpec, estimateSpec, compileSpec, streamPlan, loadDraft, saveDraft, fetchCoverage, evaluateSpec, refineSpec, uploadBriefDocument, deleteBriefDocument } from "../../utils/networkStudioApi";
+import { validateSpec, estimateSpec, compileSpec, streamPlan, loadDraft, saveDraft, fetchCoverage, evaluateSpec, refineSpec, uploadBriefDocument, deleteBriefDocument, fetchNeeds } from "../../utils/networkStudioApi";
+import NeedsPanel, { NeedsChip } from "./NeedsPanel";
 import JourneySteps from "./JourneySteps";
 import StudioWelcome from "./StudioWelcome";
 import TerritoryPanel from "./TerritoryPanel";
@@ -120,6 +121,10 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
   const [briefOpen, setBriefOpen] = useState(false);
   const [prefilled, setPrefilled] = useState([]); // settings filled from the territory
   const [addingStops, setAddingStops] = useState(false); // click the map to add stops
+  const [needs, setNeeds] = useState(null); // what the system still needs from the user
+  const [levers, setLevers] = useState(null); // what the service choices cost
+  const [needsOpen, setNeedsOpen] = useState(false);
+  const needsTimer = useRef(null);
   const [corridors, setCorridors] = useState([]);
   const [autoProject, setAutoProject] = useState(readAutoProject);
   const [ready, setReady] = useState(false);
@@ -199,6 +204,21 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
       return r.spec;
     });
   }, [territoryKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // What the system still needs from the user, and the levers' figures (debounced).
+  useEffect(() => {
+    if (!open || streaming) return undefined;
+    clearTimeout(needsTimer.current);
+    needsTimer.current = setTimeout(() => {
+      fetchNeeds(spec, { requirements, place: territory?.place?.query || null, quality })
+        .then((r) => {
+          setNeeds({ needs: r.needs || [], counts: r.counts || {} });
+          setLevers(r.levers || null);
+        })
+        .catch(() => {});
+    }, 900);
+    return () => clearTimeout(needsTimer.current);
+  }, [open, streaming, spec, requirements, territory, quality]);
 
   // Coverage of the plan against the territory (debounced, after validation).
   useEffect(() => {
@@ -393,6 +413,9 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
               case "coverage":
                 setCoverage(data);
                 break;
+              case "levers":
+                setLevers(data);
+                break;
               case "error":
                 patch(() => ({ error: data.message || data.code, status: "error" }));
                 break;
@@ -401,6 +424,7 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
                 setReadiness({ clean: Boolean(data.clean), reasons: data.not_ready_reasons || [] });
                 // The record of the brief after this turn (clauses merged, the user's decisions kept).
                 if (data.requirements) setRequirements(data.requirements);
+                if (data.needs) setNeeds(data.needs);
                 if (data.ready) {
                   setReady(true);
                   // Auto-projection only for a clean plan the turn actually changed: a plan
@@ -533,7 +557,26 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
   // The journey: territory → specification → design → projection.
   const readyDocCount = documents.filter((d) => d.status === "ready").length;
   const hasLines = (spec.lines || []).length > 0;
-  const journeyDone = { territory: Boolean(territory), brief: readyDocCount > 0 || Boolean(requirements) || turns.some((x) => x.role === "user"), design: Boolean(validation?.ok && hasLines), projection: false };
+  // The brief step is done when the brief exists AND nothing high-impact about it is missing.
+  const briefGap = (needs?.needs || []).some((n) => n.impact === "high" && ["brief", "questions"].includes(n.id));
+  const journeyDone = { territory: Boolean(territory), brief: (readyDocCount > 0 || Boolean(requirements) || turns.some((x) => x.role === "user")) && !briefGap, design: Boolean(validation?.ok && hasLines), projection: false };
+  // A need's action takes the user where it is given.
+  const onNeedAction = (n) => {
+    setNeedsOpen(false);
+    if (n.action === "territory") {
+      setTab("map");
+      setTimeout(() => focusTestId("territory-query"), 0);
+    } else if (n.action === "settings") setTab("lines");
+    else if (n.action === "map") {
+      setTab("map");
+      const first = (spec.stops || []).find((s) => !(Number.isFinite(s.lat) && Number.isFinite(s.lon)));
+      if (first) setPlacingStopId(first.id);
+    } else if (n.action === "plan") window.dispatchEvent(new CustomEvent(PRICING_EVENT, { detail: { reason: "network_limit" } }));
+    else if (n.action === "brief") {
+      if ((requirements?.clauses || []).length && n.id !== "brief" && n.id !== "questions") setBriefOpen(true);
+      else focusTestId("plan-brief");
+    }
+  };
   const onJourneyStep = (step) => {
     if (step === "territory") focusTestId("territory-query");
     else if (step === "brief") {
@@ -568,6 +611,7 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
             <JourneySteps done={journeyDone} onStep={onJourneyStep} />
           </Box>
         )}
+        <NeedsChip needs={needs} onClick={() => setNeedsOpen(true)} />
         {plan && plan.max_lines != null && plan.name === "free" && (
           <Tooltip title={t("network.plan.freeHint", { max: plan.max_lines })}>
             <Chip size="small" icon={<LockOutlinedIcon sx={{ fontSize: 13 }} />} label={t("network.plan.free", { max: plan.max_lines })} color={plan.over_limit ? "warning" : "default"} onClick={() => window.dispatchEvent(new CustomEvent(PRICING_EVENT, { detail: { reason: plan.over_limit ? "network_limit" : null } }))} data-testid="network-plan-chip" sx={{ height: 22, fontSize: "0.66rem", fontWeight: 700 }} />
@@ -769,6 +813,12 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
       {/* Quality report */}
       <Dialog open={qualityOpen} onClose={() => setQualityOpen(false)} maxWidth="sm" fullWidth data-testid="network-quality-dialog">
         <Box sx={{ p: 2 }}>{quality && <QualityCard quality={quality} />}</Box>
+      </Dialog>
+      {/* What we need from you */}
+      <Dialog open={needsOpen} onClose={() => setNeedsOpen(false)} maxWidth="sm" fullWidth data-testid="network-needs-dialog">
+        <Box sx={{ p: 2 }}>
+          <NeedsPanel needs={needs} levers={levers} onAction={onNeedAction} />
+        </Box>
       </Dialog>
       {/* The brief, clause by clause */}
       <Dialog open={briefOpen} onClose={() => setBriefOpen(false)} maxWidth="sm" fullWidth data-testid="network-brief-dialog">
