@@ -43,6 +43,7 @@ import SqlConsole from "./SqlConsole/SqlConsole";
 import ShapeStudio from "./shapeStudio/ShapeStudio";
 import FeedDiffPage from "./diff/FeedDiffPage";
 import NetworkStudio from "./network/NetworkStudio";
+import ChangeStudio from "./transform/ChangeStudio";
 import NetworkReportDialog from "./network/NetworkReportDialog";
 import { fetchNetworkReport } from "../utils/networkStudioApi";
 import SharedFeedLanding from "./share/SharedFeedLanding";
@@ -201,6 +202,14 @@ function GTFSApp() {
     const handler = () => setStudioOpen(true);
     window.addEventListener("gtfs:open-network-studio", handler);
     return () => window.removeEventListener("gtfs:open-network-studio", handler);
+  }, []);
+  // Change Studio (change the loaded network the way a brief asks): the
+  // header button, the command palette, the chat, or "gtfs:open-change-studio".
+  const [changeStudioOpen, setChangeStudioOpen] = useState(false);
+  useEffect(() => {
+    const handler = () => setChangeStudioOpen(true);
+    window.addEventListener("gtfs:open-change-studio", handler);
+    return () => window.removeEventListener("gtfs:open-change-studio", handler);
   }, []);
   // The network report on demand (the chat, the dashboard): the brief
   // re-measured on the feed as it is now, after the edits.
@@ -2146,6 +2155,7 @@ function GTFSApp() {
       <CommandPalette />
       <ShortcutsHelpDialog />
       <NetworkStudio open={studioOpen} onClose={() => setStudioOpen(false)} onCreated={handleNetworkCreated} />
+      {agencies.length > 0 && <ChangeStudio open={changeStudioOpen} onClose={() => setChangeStudioOpen(false)} />}
       <NetworkReportDialog
         open={Boolean(networkReport)}
         report={networkReport}

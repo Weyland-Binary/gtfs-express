@@ -21,6 +21,7 @@ import FactCheckOutlinedIcon from "@mui/icons-material/FactCheckOutlined";
 import StorageIcon from "@mui/icons-material/Storage";
 import EditLocationAltIcon from "@mui/icons-material/EditLocationAlt";
 import CompareArrowsIcon from "@mui/icons-material/CompareArrows";
+import AutoFixHighOutlinedIcon from "@mui/icons-material/AutoFixHighOutlined";
 import { useThemeMode } from "../../contexts/ThemeContext";
 import GlobalSearch from "../GlobalSearch";
 import LanguageSelector from "./LanguageSelector";
@@ -292,6 +293,18 @@ function Header({
           {agenciesLoaded && <ProjectMenu />}
           {agenciesLoaded && <TablesBrowserButton />}
           {agenciesLoaded && <ShareButton />}
+          {agenciesLoaded && (
+            <Tooltip title={t("transform.headerHint")}>
+              <IconButton
+                size="small"
+                onClick={() => window.dispatchEvent(new CustomEvent("gtfs:open-change-studio"))}
+                aria-label={t("transform.headerButton")}
+                data-testid="open-change-studio"
+              >
+                <AutoFixHighOutlinedIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          )}
           {agenciesLoaded && <EditModeToggle />}
           {agenciesLoaded && reportBadge && (
             <Tooltip
