@@ -228,7 +228,7 @@ const createTools = (ctx) => {
   };
 
   const runPreview = async () => {
-    const p = await engine.previewPlan(ctx.db, ctx.plan, { sessionId: ctx.sessionId, dataVersion: ctx.dataVersion, router: ctx.router, country: ctx.country });
+    const p = await engine.previewPlan(ctx.db, ctx.plan, { sessionId: ctx.sessionId, dataVersion: ctx.dataVersion, router: ctx.router, country: ctx.country, fetchImpl: ctx.fetchImpl });
     ctx.preview = p;
     ctx.emit("plan", ctx.plan);
     ctx.emit("preview", p);
@@ -414,7 +414,7 @@ const buildMessages = ({ history, brief, plan, preview, overview, language, docu
 };
 
 /** One planner turn on a session's feed. Emits SSE-style events through `emit`. */
-const planChanges = async ({ db, sessionId = null, dataVersion = null, country = null, brief, plan = null, history = [], language = "en", documentIds = [], freeTier = false, rateKey, aiLimits = {}, signal, emit, req = null }) => {
+const planChanges = async ({ db, sessionId = null, dataVersion = null, country = null, fetchImpl = null, brief, plan = null, history = [], language = "en", documentIds = [], freeTier = false, rateKey, aiLimits = {}, signal, emit, req = null }) => {
   const text = String(brief || "").trim();
   if (text.length < 3) throw Object.assign(new Error("brief is required (≥ 3 characters)."), { code: "INVALID_INPUT", status: 400 });
   if (text.length > MAX_BRIEF_CHARS) throw Object.assign(new Error(`brief is too long (max ${MAX_BRIEF_CHARS} characters).`), { code: "INVALID_INPUT", status: 400 });
@@ -424,7 +424,7 @@ const planChanges = async ({ db, sessionId = null, dataVersion = null, country =
   const model = freeTier ? nl2sqlChatService.resolveChatModel({ freeTier: true }) : config.TRANSFORM_PLANNER_MODEL || config.NETWORK_PLANNER_MODEL || nl2sqlChatService.resolveChatModel({});
   const startedAt = Date.now();
   const feedModel = buildFeedModel(db);
-  const ctx = { db, sessionId, dataVersion, country, model: feedModel, plan: plan && Array.isArray(plan.operations) ? plan : null, planChanged: false, preview: null, asked: false, emit, router: deps.createRouter() };
+  const ctx = { db, sessionId, dataVersion, country, fetchImpl, model: feedModel, plan: plan && Array.isArray(plan.operations) ? plan : null, planChanged: false, preview: null, asked: false, emit, router: deps.createRouter() };
   const tools = createTools(ctx);
   const docs = briefDocuments.getDocuments(documentIds);
   const context = [`[Today] ${new Date().toISOString().slice(0, 10)}`];
@@ -434,7 +434,7 @@ const planChanges = async ({ db, sessionId = null, dataVersion = null, country =
   // The current plan is previewed again: the model sees where it stands.
   let preview = null;
   if (ctx.plan) {
-    preview = await engine.previewPlan(db, ctx.plan, { sessionId, dataVersion, router: ctx.router, country });
+    preview = await engine.previewPlan(db, ctx.plan, { sessionId, dataVersion, router: ctx.router, country, fetchImpl });
     ctx.preview = preview;
   }
   const messages = buildMessages({ history, brief: text, plan: ctx.plan, preview, overview: feedOverview(feedModel), language, documents: docs.found, context });
