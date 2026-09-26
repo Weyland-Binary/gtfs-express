@@ -77,10 +77,13 @@ describe("add_stop", () => {
     expect(p.steps[0].status).toBe("blocked");
     const q = await previewPlan(sb, { operations: [{ type: "add_stop", params: { route: "S1", stop: { name: "Market", ...mid(stopAt(3), stopAt(4)) }, after: pat.stops[3], before: pat.stops[4], days: "sunday", direction: "0" } }] });
     expect(q.blocked).toBe(false);
-    expect(q.diff.items.filter((i) => i.day === "weekday" || i.day === "saturday")).toEqual([]);
+    // Weekdays and Saturdays keep their timetable; 4 July (a Saturday on the
+    // Sunday timetable) changes with the Sunday trips, and says so.
+    expect(q.diff.items.filter((i) => i.day === "weekday" || (i.day === "saturday" && !i.dates))).toEqual([]);
+    expect(q.diff.items.some((i) => i.day === "saturday" && i.dates?.from === "20260704")).toBe(true);
     // Sunday trips run on a Sunday-only service: no split, only they change.
     expect(q.changes.calendar).toBeUndefined();
-    expect(q.diff.items.some((i) => i.day === "sunday" && i.code === "service_running")).toBe(true);
+    expect(q.diff.items.some((i) => i.day === "sunday" && ["service_running", "service_retimed"].includes(i.code))).toBe(true);
     sb.close();
   });
 

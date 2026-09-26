@@ -15,8 +15,8 @@
  * serving it). Times of the other stops stay (a skipped stop does not make
  * the published timetable earlier: mode "absorb"), unless `mode: "shift"`.
  *
- * Both accept `days` to change only the trips of some days (the others are
- * split off untouched).
+ * Both accept a scope (days, dates, periods: see scope.js) to change only
+ * the trips of some days (the others are split off untouched).
  */
 
 "use strict";
@@ -25,6 +25,7 @@ const R = require("../resolve");
 const G = require("../gtfsOps");
 const P = require("../patternOps");
 const geo = require("../geometry");
+const S = require("../scope");
 
 const FAR_DETOUR_M = 1500;
 
@@ -33,19 +34,18 @@ const name = (model, id) => model.stops.get(id)?.name || id;
 
 const patternsOf = (model, routeId, direction) => model.routes.get(routeId).patterns.filter((p) => direction === "both" || p.direction_id === direction);
 
-// Trips of a pattern restricted to days (all when days is null).
-const tripsOf = (model, pattern, dows) => (dows ? pattern.trips.filter((id) => [...G.serviceDows(model, model.trips.get(id).service_id)].some((d) => dows.includes(d))) : pattern.trips);
+// Trips of a pattern running at least once in the scope (all when unscoped).
+const tripsOf = (model, pattern, scope) => (S.isAll(scope) ? pattern.trips : pattern.trips.filter((id) => {
+  const sid = model.trips.get(id).service_id;
+  return S.activeDates(model, sid).some((d) => S.inScope(scope, d, model, sid));
+}));
 
-const commonResolve = (model, p, ambiguities) => {
-  let days = null;
-  if (p.days != null && p.days !== "" && p.days !== "all") {
-    const d = R.days(p.days);
-    if (d.ambiguity) ambiguities.push({ param: "days", ...d.ambiguity });
-    else days = d.value;
-  }
+const commonResolve = async (model, p, ctx, ambiguities) => {
+  const sc = await S.resolveScope(model, p, ctx);
+  ambiguities.push(...sc.ambiguities);
   const mode = p.mode == null || p.mode === "" ? null : String(p.mode);
   if (mode && !["shift", "absorb"].includes(mode)) ambiguities.push({ param: "mode", code: "mode_invalid", message: `mode is "shift" or "absorb".`, options: ["shift", "absorb"] });
-  return { days, mode };
+  return { scope: sc.value || null, mode };
 };
 
 // ── add_stop ─────────────────────────────────────────────────────────────
@@ -82,7 +82,7 @@ const resolveAdd = async (model, p, ctx) => {
   const warnings = [];
   const route = R.route(model, p.route);
   if (route.ambiguity) ambiguities.push({ param: "route", ...route.ambiguity });
-  const { days, mode } = commonResolve(model, p, ambiguities);
+  const { scope, mode } = await commonResolve(model, p, ctx, ambiguities);
   // The stop: an existing one, or a new one from coordinates.
   let stop = null;
   if (p.stop == null || p.stop === "") ambiguities.push({ param: "stop", code: "stop_missing", message: "Which stop (an existing stop, or a name with coordinates for a new one)?" });
@@ -113,7 +113,7 @@ const resolveAdd = async (model, p, ctx) => {
 
   const plans = [];
   for (const pat of patternsOf(model, route.value.id, direction)) {
-    const trips = tripsOf(model, pat, days);
+    const trips = tripsOf(model, pat, scope);
     if (!trips.length) continue;
     if (stop.id && pat.stops.includes(stop.id)) {
       warnings.push(`A pattern of direction ${pat.direction_id} already serves ${stop.name}.`);
@@ -152,7 +152,7 @@ const resolveAdd = async (model, p, ctx) => {
     if (next) pairs.push([stop, next]);
   }
   const legs = ctx?.router ? await P.routeLegs(ctx.router, pairs) : new Map();
-  return { value: { routeId: route.value.id, label: label(route.value), stop, days, mode: mode || "shift", plans, legs }, ambiguities: [], warnings };
+  return { value: { routeId: route.value.id, label: label(route.value), stop, scope, mode: mode || "shift", plans, legs }, ambiguities: [], warnings };
 };
 
 const applyAdd = (db, v, { model }) => {
@@ -162,25 +162,25 @@ const applyAdd = (db, v, { model }) => {
   let trips = 0;
   const sources = {};
   for (const pl of v.plans) {
-    if (v.days) G.isolateDays(db, model, pl.trips, v.days);
+    const scoped = S.isolateScope(db, model, pl.trips, v.scope);
     const stops = model.patterns.get(pl.pattern).stops;
     const positions = stops.map((s, i) => ({ stop_id: s, from: i }));
     positions.splice(pl.index, 0, { stop_id: stopId, from: null });
-    const out = P.resequence(db, model, pl.trips, { positions, mode: v.mode, legs: v.legs, coords });
+    const out = P.resequence(db, model, scoped, { positions, mode: v.mode, legs: v.legs, coords });
     trips += out.trips;
     warnings.push(...out.warnings);
     for (const [k, n] of Object.entries(out.sources)) sources[k] = (sources[k] || 0) + n;
   }
   const how = P.describeSources(sources);
   return {
-    summary: `Line ${v.label}: ${v.stop.name}${v.stop.id ? "" : " (new stop)"} added to ${trips} trip(s) in ${v.plans.length} pattern(s)${v.days ? ` on ${v.days.join(", ")}` : ""}${how ? `; times: ${how}` : ""}.`,
+    summary: `Line ${v.label}: ${v.stop.name}${v.stop.id ? "" : " (new stop)"} added to ${trips} trip(s) in ${v.plans.length} pattern(s)${S.isAll(v.scope) ? "" : ` (${S.describeScope(v.scope)})`}${how ? `; times: ${how}` : ""}.`,
     warnings: [...new Set(warnings)],
   };
 };
 
 // ── remove_stop ──────────────────────────────────────────────────────────
 
-const resolveRemove = (model, p) => {
+const resolveRemove = async (model, p, ctx) => {
   const ambiguities = [];
   const warnings = [];
   let route = null;
@@ -189,7 +189,7 @@ const resolveRemove = (model, p) => {
     if (r.ambiguity) ambiguities.push({ param: "route", ...r.ambiguity });
     else route = r.value;
   }
-  const { days, mode } = commonResolve(model, p, ambiguities);
+  const { scope, mode } = await commonResolve(model, p, ctx, ambiguities);
   const s = R.stop(model, p.stop, { routeId: route?.id });
   if (s.ambiguity) ambiguities.push({ param: "stop", ...s.ambiguity });
   let direction = "both";
@@ -210,7 +210,7 @@ const resolveRemove = (model, p) => {
     if (direction !== "both" && pat.direction_id !== direction) continue;
     const idx = pat.stops.map((x, i) => (ids.has(x) ? i : -1)).filter((i) => i >= 0);
     if (!idx.length) continue;
-    const trips = tripsOf(model, pat, days);
+    const trips = tripsOf(model, pat, scope);
     if (!trips.length) continue;
     if (pat.stops.length - idx.length < 2) {
       ambiguities.push({ param: "stop", code: "pattern_too_short", message: `A pattern of line ${label(model.routes.get(pat.route_id))} would be left with fewer than two stops: remove the trips (remove_trips) or the line instead.` });
@@ -222,25 +222,25 @@ const resolveRemove = (model, p) => {
     routes.add(pat.route_id);
   }
   if (ambiguities.length) return { ambiguities, warnings };
-  if (!plans.length) return { ambiguities: [{ param: "stop", code: "stop_not_served", message: `${target.name} is not served${route ? ` by line ${label(route)}` : ""}${days ? " on these days" : ""}.` }], warnings };
-  return { value: { stop: { id: target.id, name: target.name }, routes: [...routes], days, mode: mode || "absorb", plans }, ambiguities: [], warnings };
+  if (!plans.length) return { ambiguities: [{ param: "stop", code: "stop_not_served", message: `${target.name} is not served${route ? ` by line ${label(route)}` : ""}${S.isAll(scope) ? "" : " in this period"}.` }], warnings };
+  return { value: { stop: { id: target.id, name: target.name }, routes: [...routes], scope, mode: mode || "absorb", plans }, ambiguities: [], warnings };
 };
 
 const applyRemove = (db, v, { model }) => {
   const warnings = [];
   let trips = 0;
   for (const pl of v.plans) {
-    if (v.days) G.isolateDays(db, model, pl.trips, v.days);
+    const scoped = S.isolateScope(db, model, pl.trips, v.scope);
     const stops = model.patterns.get(pl.pattern).stops;
     const positions = stops.map((s, i) => ({ stop_id: s, from: i })).filter((_, i) => !pl.drop.includes(i));
-    const out = P.resequence(db, model, pl.trips, { positions, mode: v.mode });
+    const out = P.resequence(db, model, scoped, { positions, mode: v.mode });
     trips += out.trips;
     warnings.push(...out.warnings);
   }
   const lines = v.routes.map((id) => label(model.routes.get(id))).join(", ");
   const unused = !db.prepare("SELECT 1 FROM stop_times WHERE stop_id = ? LIMIT 1").get(v.stop.id);
   if (unused) warnings.push(`${v.stop.name} is no longer served by any trip (kept in stops.txt).`);
-  return { summary: `${v.stop.name} removed from ${trips} trip(s) of line(s) ${lines}${v.days ? ` on ${v.days.join(", ")}` : ""}; ${v.mode === "absorb" ? "other stops keep their times" : "later stops shifted"}.`, warnings: [...new Set(warnings)] };
+  return { summary: `${v.stop.name} removed from ${trips} trip(s) of line(s) ${lines}${S.isAll(v.scope) ? "" : ` (${S.describeScope(v.scope)})`}; ${v.mode === "absorb" ? "other stops keep their times" : "later stops shifted"}.`, warnings: [...new Set(warnings)] };
 };
 
 const TABLES = ["stops", "trips", "stop_times", "shapes", "calendar", "calendar_dates", "frequencies", "transfers"];
@@ -259,6 +259,7 @@ module.exports = [
       { name: "before", type: "stop", required: false, description: "Insert right before this stop." },
       { name: "direction", type: "direction", required: false, description: "0, 1 or both (default)." },
       { name: "days", type: "days", required: false, description: "Only the trips of these days (default: all)." },
+      ...S.SCOPE_PARAMS,
       { name: "mode", type: "enum", enum: ["shift", "absorb"], required: false, description: "shift (default): later stops move by the extra time; absorb: keep later times when the old ones allow it." },
     ],
     example: { route: "3", stop: { name: "Hôpital Nord", lat: 45.77, lon: 4.86 }, direction: "both" },
@@ -276,6 +277,7 @@ module.exports = [
       { name: "route", type: "route", required: false, description: "Only this line (default: every line serving the stop)." },
       { name: "direction", type: "direction", required: false, description: "0, 1 or both (default)." },
       { name: "days", type: "days", required: false, description: "Only the trips of these days." },
+      ...S.SCOPE_PARAMS,
       { name: "mode", type: "enum", enum: ["absorb", "shift"], required: false, description: "absorb (default): later stops keep their times; shift: they move by the time saved." },
     ],
     example: { stop: "Mairie", route: "5" },

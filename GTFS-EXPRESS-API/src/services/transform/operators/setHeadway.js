@@ -25,17 +25,19 @@
 
 const R = require("../resolve");
 const G = require("../gtfsOps");
+const S = require("../scope");
 const { _internals: fm } = require("../feedModel");
 
 const { secToTime } = fm;
 
-const resolve = (model, p) => {
+const resolve = async (model, p, ctx) => {
   const ambiguities = [];
-  const warnings = [];
   const route = R.route(model, p.route);
   if (route.ambiguity) ambiguities.push({ param: "route", ...route.ambiguity });
-  const days = R.days(p.days);
-  if (days.ambiguity) ambiguities.push({ param: "days", ...days.ambiguity });
+  const sc = await S.resolveScope(model, p, ctx, { daysRequired: true });
+  ambiguities.push(...sc.ambiguities);
+  const warnings = [...sc.warnings];
+  const scope = sc.value;
   const win = R.window(p.from, p.to);
   if (win.ambiguity) ambiguities.push({ param: "from", ...win.ambiguity });
   const hw = R.positive(p.headway_min, "headway_min", { max: 240 });
@@ -56,9 +58,10 @@ const resolve = (model, p) => {
   const dirs = direction === "both" ? [...new Set([...model.trips.values()].filter((t) => t.route_id === route.value.id).map((t) => t.direction_id))] : [direction];
   const perDir = [];
   for (const d of dirs) {
-    const inWin = G.tripsIn(model, { routeId: route.value.id, direction: d, dows: days.value, from: win.value.from, to: win.value.to });
-    const freqTrips = [...model.trips.values()].filter((t) => t.route_id === route.value.id && t.direction_id === d && model.frequencies.has(t.id) && [...G.serviceDows(model, t.service_id)].some((x) => days.value.includes(x)) && model.frequencies.get(t.id).some((f) => f.start < win.value.to && f.end > win.value.from));
-    const onDays = G.tripsIn(model, { routeId: route.value.id, direction: d, dows: days.value });
+    const onDaysAll = S.tripsInScope(model, { routeId: route.value.id, direction: d }, scope).sort((a, b) => a.first - b.first);
+    const inWin = onDaysAll.filter((t) => t.first != null && t.first >= win.value.from && t.first < win.value.to);
+    const freqTrips = onDaysAll.filter((t) => model.frequencies.has(t.id) && model.frequencies.get(t.id).some((f) => f.start < win.value.to && f.end > win.value.from));
+    const onDays = onDaysAll;
     if (!inWin.length && !freqTrips.length && !onDays.length) {
       ambiguities.push({ param: "days", code: "no_service_on_days", message: `Line ${route.value.short_name || route.value.id} has no trip in direction ${d} on these days: adding a new day of service is another operation (add_day_service).` });
       continue;
@@ -77,7 +80,7 @@ const resolve = (model, p) => {
     perDir.push({ direction: d, inWin: inWin.filter((t) => !model.frequencies.has(t.id)).map((t) => t.id), freqTrips: freqTrips.map((t) => t.id), nearest: onDays.map((t) => t.id) });
   }
   if (ambiguities.length) return { ambiguities, warnings };
-  return { value: { routeId: route.value.id, label: route.value.short_name || route.value.id, dows: days.value, from: win.value.from, to: win.value.to, headway: Math.round(hw.value * 60), start, patternMode: p.patterns || "main", perDir }, ambiguities: [], warnings };
+  return { value: { routeId: route.value.id, label: route.value.short_name || route.value.id, scope, dows: scope.dows || G.DOW, from: win.value.from, to: win.value.to, headway: Math.round(hw.value * 60), start, patternMode: p.patterns || "main", perDir }, ambiguities: [], warnings };
 };
 
 // Bresenham-like cycle through patterns in proportion to their share.
@@ -103,8 +106,8 @@ const apply = (db, v, { model }) => {
   for (const d of v.perDir) {
     // Frequency-based trips: split their windows around [from, to).
     for (const tid of d.freqTrips) {
-      const isolated = G.isolateDays(db, model, [tid], v.dows);
-      for (const id of isolated.values()) {
+      const isolated = S.isolateScope(db, model, [tid], v.scope);
+      for (const id of isolated) {
         const rows = db.prepare("SELECT * FROM frequencies WHERE trip_id = ? ORDER BY start_time").all(id);
         db.prepare("DELETE FROM frequencies WHERE trip_id = ?").run(id);
         const ins = db.prepare("INSERT INTO frequencies (trip_id, start_time, end_time, headway_secs, exact_times) VALUES (?, ?, ?, ?, ?)");
@@ -125,7 +128,7 @@ const apply = (db, v, { model }) => {
 
     // Explicit trips: isolate the days, find the primary service of each day.
     const originals = d.inWin.length ? d.inWin : [];
-    G.isolateDays(db, model, originals, v.dows);
+    S.isolateScope(db, model, originals, v.scope);
     const svcOf = new Map(originals.map((id) => [id, db.prepare("SELECT service_id FROM trips WHERE trip_id = ?").get(id).service_id]));
     const bySvc = new Map();
     for (const [id, s] of svcOf) {
@@ -156,7 +159,7 @@ const apply = (db, v, { model }) => {
       if (!pool.length) continue;
       const serviceId = s || (() => {
         const near = pool.sort((a, b) => Math.abs(a.first - v.from) - Math.abs(b.first - v.from))[0];
-        G.isolateDays(db, model, [near.id], v.dows);
+        S.isolateScope(db, model, [near.id], v.scope);
         return db.prepare("SELECT service_id FROM trips WHERE trip_id = ?").get(near.id).service_id;
       })();
       // Patterns: main only, or cycling through them in proportion.
@@ -185,7 +188,7 @@ const apply = (db, v, { model }) => {
   G.dropUnusedServices(db, [...touchedServices]);
   const minutes = Math.round(v.headway / 60);
   return {
-    summary: `Line ${v.label}: every ${minutes} min from ${secToTime(v.from).slice(0, 5)} to ${secToTime(v.to).slice(0, 5)} on ${v.dows.join(", ")} — ${created} trip(s) created, ${removed} replaced.`,
+    summary: `Line ${v.label}: every ${minutes} min from ${secToTime(v.from).slice(0, 5)} to ${secToTime(v.to).slice(0, 5)} (${S.describeScope(v.scope)}) — ${created} trip(s) created, ${removed} replaced.`,
     warnings: [...new Set(warnings)],
     noop: created === 0 && removed === 0 && !v.perDir.some((x) => x.freqTrips.length),
   };
@@ -199,6 +202,7 @@ module.exports = {
   params: [
     { name: "route", type: "route", required: true, description: "The line (short name, id or long name)." },
     { name: "days", type: "days", required: true, description: "weekday | saturday | sunday | daily | mon…sun, or a list." },
+    ...S.SCOPE_PARAMS,
     { name: "from", type: "time", required: true, description: "Start of the window (HH:MM)." },
     { name: "to", type: "time", required: true, description: "End of the window (HH:MM), exclusive." },
     { name: "headway_min", type: "number", required: true, description: "Minutes between departures." },

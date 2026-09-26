@@ -3,13 +3,11 @@
  * tested once, on a sandbox database:
  *
  *   serviceDows(model, serviceId)           days of the week a service runs
- *   restrictService(db, serviceId, dows)    the same service on some days only
- *                                           (calendar + its exceptions), reused
- *                                           when it already exists
  *   isolateDays(db, model, tripIds, dows)   trips that run on more days than
  *                                           asked are split: the asked days get
  *                                           their own service, the other days
  *                                           keep an untouched copy of the trip
+ *                                           (see scope.js for dates and periods)
  *   cloneTrip(db, tripId, opts)             a trip with its stop_times (and
  *                                           frequencies), shifted in time
  *   deleteTrips(db, tripIds)                trips and everything that hangs on them
@@ -29,10 +27,9 @@ const { _internals: fm } = require("./feedModel");
 
 const { secToTime, dowOf } = fm;
 const DOW = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
-const COL = { mon: "monday", tue: "tuesday", wed: "wednesday", thu: "thursday", fri: "friday", sat: "saturday", sun: "sunday" };
 
 const uniqueId = (db, table, column, base) => {
-  const clean = String(base).replace(/[^A-Za-z0-9_.:-]/g, "_").slice(0, 60) || "X";
+  const clean = String(base).replace(/[^A-Za-z0-9_.:~-]/g, "_").slice(0, 60) || "X";
   const taken = db.prepare(`SELECT 1 FROM ${table} WHERE ${column} = ? LIMIT 1`);
   if (!taken.get(clean)) return clean;
   for (let n = 2; n < 100000; n++) if (!taken.get(`${clean}_${n}`)) return `${clean}_${n}`;
@@ -55,29 +52,6 @@ const serviceDows = (model, serviceId) => {
   const max = Math.max(0, ...count.values());
   return new Set([...count.entries()].filter(([, n]) => n >= 2 && n >= max / 4).map(([k]) => k));
 };
-
-/**
- * A service equal to `serviceId` on `dows` only. Weekly days outside
- * `dows` are cleared; added and removed dates outside them are dropped.
- * Reuses a service created earlier for the same restriction.
- */
-const restrictService = (db, serviceId, dows) => {
-  const keep = new Set(dows);
-  const id = uniqueIdFor(db, `${serviceId}__${DOW.filter((d) => keep.has(d)).join("")}`);
-  if (db.prepare("SELECT 1 FROM calendar WHERE service_id = ?").get(id) || db.prepare("SELECT 1 FROM calendar_dates WHERE service_id = ? LIMIT 1").get(id)) return id;
-  const cal = db.prepare("SELECT * FROM calendar WHERE service_id = ?").get(serviceId);
-  if (cal) {
-    const row = { ...cal, service_id: id };
-    for (const d of DOW) row[COL[d]] = keep.has(d) && String(cal[COL[d]]) === "1" ? 1 : 0;
-    const cols = Object.keys(row);
-    db.prepare(`INSERT INTO calendar (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`).run(cols.map((c) => row[c]));
-  }
-  const ins = db.prepare("INSERT OR IGNORE INTO calendar_dates (service_id, date, exception_type) VALUES (?, ?, ?)");
-  for (const r of db.prepare("SELECT date, exception_type FROM calendar_dates WHERE service_id = ?").all(serviceId)) if (keep.has(dowOf(String(r.date)))) ins.run(id, r.date, r.exception_type);
-  return id;
-};
-// The restricted id is deterministic (idempotent across runs of the same plan).
-const uniqueIdFor = (db, base) => String(base).replace(/[^A-Za-z0-9_.:-]/g, "_").slice(0, 80);
 
 const tripColumns = (db) => db.prepare("PRAGMA table_info(trips)").all().map((c) => c.name);
 const stColumns = (db) => db.prepare("PRAGMA table_info(stop_times)").all().map((c) => c.name);
@@ -143,29 +117,14 @@ const dropUnusedServices = (db, serviceIds) => {
 
 /**
  * Split trips that run on more days than `dows`: afterwards every returned
- * trip runs on `dows` only (a service restricted to them), and an untouched
- * copy keeps the other days. Returns Map(oldTripId → tripId running on dows).
+ * trip runs on `dows` only, and an untouched copy keeps the other days.
+ * (scope.isolateScope with a days-only scope.) Returns Map(tripId → tripId).
  */
 const isolateDays = (db, model, tripIds, dows) => {
-  const want = new Set(dows);
-  const out = new Map();
-  for (const tid of tripIds) {
-    const t = model.trips.get(tid);
-    if (!t) continue;
-    const runs = serviceDows(model, t.service_id);
-    const inside = [...runs].filter((d) => want.has(d));
-    const outside = [...runs].filter((d) => !want.has(d));
-    if (!outside.length) {
-      out.set(tid, tid);
-      continue;
-    }
-    const restId = restrictService(db, t.service_id, outside);
-    cloneTrip(db, tid, { newId: uniqueId(db, "trips", "trip_id", `${tid}__${outside.join("")}`), serviceId: restId });
-    const onId = restrictService(db, t.service_id, inside);
-    db.prepare("UPDATE trips SET service_id = ? WHERE trip_id = ?").run(onId, tid);
-    out.set(tid, tid);
-  }
-  return out;
+  const { isolateScope } = require("./scope");
+  const want = DOW.filter((d) => dows.includes(d));
+  const ids = isolateScope(db, model, tripIds, want.length === 7 ? null : { dows: want });
+  return new Map(ids.map((id) => [id, id]));
 };
 
 /**
@@ -267,4 +226,4 @@ const createStop = (db, { id = null, name, lat, lon, code = null, parent_station
 
 const newShapeId = (db, base) => uniqueId(db, "shapes", "shape_id", base);
 
-module.exports = { uniqueId, serviceDows, restrictService, cloneTrip, deleteTrips, dropUnusedServices, isolateDays, tripsIn, shiftTime, stopTimesOf, rewriteTrip, createStop, newShapeId, slug, DOW };
+module.exports = { uniqueId, serviceDows, cloneTrip, deleteTrips, dropUnusedServices, isolateDays, tripsIn, shiftTime, stopTimesOf, rewriteTrip, createStop, newShapeId, slug, DOW };

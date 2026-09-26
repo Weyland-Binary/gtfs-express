@@ -82,7 +82,7 @@ const integrityOf = (db, model = null) => {
  * Run the plan on a sandbox and describe the result. `opts.validate`
  * (async function(db) → report) runs the canonical validator on both sides.
  */
-const previewPlan = async (db, plan, { sessionId = null, dataVersion = null, validate = null, territory = null, tables = null, router = null } = {}) => {
+const previewPlan = async (db, plan, { sessionId = null, dataVersion = null, validate = null, territory = null, tables = null, router = null, country = null, fetchImpl = null } = {}) => {
   prune();
   const ops = (Array.isArray(plan?.operations) ? plan.operations : []).slice(0, MAX_OPERATIONS);
   const weekend = Array.isArray(plan?.weekend) && plan.weekend.length ? plan.weekend : ["sat", "sun"];
@@ -103,7 +103,7 @@ const previewPlan = async (db, plan, { sessionId = null, dataVersion = null, val
     }
     let resolved;
     try {
-      resolved = await def.resolve(model, op.params || {}, { db: sandbox, router: road, weekend });
+      resolved = await def.resolve(model, op.params || {}, { db: sandbox, router: road, weekend, calendars: plan?.calendars || null, country: plan?.country || country, region: plan?.region || null, fetchImpl });
     } catch (err) {
       steps.push({ id, type: def.type, status: "failed", ambiguities: [], summary: null, warnings: [], error: err.message });
       continue;
@@ -122,7 +122,14 @@ const previewPlan = async (db, plan, { sessionId = null, dataVersion = null, val
       steps.push({ id, type: def.type, status: "failed", ambiguities: [], summary: null, warnings: resolved.warnings || [], error: err.message, source: op.source || null });
     }
   }
-  const after = model;
+  // Scoped changes split services: merge the ones that ended up running the
+  // same dates as another, drop the ones left without trips.
+  let after = model;
+  if (touched.has("calendar") || touched.has("calendar_dates")) {
+    const { simplifyServices } = require("./scope");
+    const out = sandbox.transaction(() => simplifyServices(sandbox, new Set(before.services.keys())))();
+    if (out.merged || out.dropped) after = buildFeedModel(sandbox, { weekend });
+  }
   const changeset = computeChangeset(db, sandbox, [...touched]);
   const diff = semanticDiff(before, after);
   const integrityBefore = integrityOf(db, before);
