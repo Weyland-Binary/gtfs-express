@@ -294,6 +294,20 @@ describe("network planner", () => {
     expect(firstMsg).toMatch(/- A_peak \[must, waived by the user\] headway_max/);
   });
 
+  test("patch_spec changes only what is asked on the current spec, and reports the diff", async () => {
+    const valid = { ...SPEC_WITH_NAMES, stops: [...SPEC_WITH_NAMES.stops.slice(0, 2), { name: "Hôpital", lat: 47.8, lon: 1.06 }] };
+    const current = require("../services/network/networkSpec").normalizeSpec(valid).spec;
+    __script.push({ toolUses: [{ id: "p1", name: "patch_spec", input: { ops: [{ op: "upsert_lines", lines: [{ short_name: "A", services: [{ calendar: "weekday", periods: [{ from: "07:00", to: "19:00", headway_min: 10 }] }] }] }, { op: "insert_stop", line: "Z", stop: "Mairie" }] } }] }, { text: "Fréquence passée à 10 min." });
+    const { events } = await runPlan({ spec: current, brief: "Passe la ligne A à 10 minutes." });
+    const res = __captured[__captured.length - 1].messages.at(-1).content[0].content;
+    expect(res).toMatch(/Applied 1 op\(s\), rejected 1: #1 insert_stop: no line "Z"/);
+    expect(res).toMatch(/Changed: lines changed: A/);
+    const spec = events.filter((e) => e.event === "spec").at(-1).data.spec;
+    expect(spec.lines[0].services[0].periods[0].headway_min).toBe(10);
+    expect(spec.lines[0].directions[0].stops).toEqual(current.lines[0].directions[0].stops);
+    expect(events.at(-1).data.specChanged).toBe(true);
+  });
+
   test("POST /network/plan streams the events over SSE and validates its input", async () => {
     __script.push({ text: "ok" });
     const res = await request(app).post("/gtfs/network/plan").send({ brief: "Un réseau de deux lignes à Tours", language: "fr" });
