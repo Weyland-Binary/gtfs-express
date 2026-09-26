@@ -150,6 +150,10 @@ app.post("/gtfs/upload", uploadLimiter);
 app.get("/gtfs/load-sample", sampleLimiter);
 // Opening a share creates a session like the sample does: same budget.
 app.post("/gtfs/share/:token/open", sampleLimiter);
+// Building a network creates a session and runs the validator like an upload;
+// importing a catalog feed downloads up to 80 MB: both take the upload budget.
+app.post("/gtfs/network/compile", uploadLimiter);
+app.post("/gtfs/network/catalog/import", uploadLimiter);
 
 // 🚦 Strict rate limiting for revalidation: max 5 calls/min per session.
 // Revalidation runs all validator rules — CPU-intensive operation.

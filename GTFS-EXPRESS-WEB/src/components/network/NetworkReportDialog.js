@@ -8,6 +8,7 @@
 import React from "react";
 import { Box, Button, Chip, Dialog, Link, Typography, alpha, useTheme } from "@mui/material";
 import CheckCircleOutlineIcon from "@mui/icons-material/CheckCircleOutline";
+import HelpOutlineIcon from "@mui/icons-material/HelpOutline";
 import ErrorOutlineIcon from "@mui/icons-material/ErrorOutline";
 import TroubleshootOutlinedIcon from "@mui/icons-material/TroubleshootOutlined";
 import BuildCircleOutlinedIcon from "@mui/icons-material/BuildCircleOutlined";
@@ -43,7 +44,11 @@ export default function NetworkReportDialog({ open, report, onClose, onRefine })
         )}
         {report.design ? <QualityCard quality={report.design} dense /> : null}
         <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.6 }}>
-          <Chip size="small" icon={v.errors ? <ErrorOutlineIcon sx={{ fontSize: 14 }} /> : <CheckCircleOutlineIcon sx={{ fontSize: 14 }} />} color={v.errors ? "error" : "success"} variant="outlined" label={v.errors ? t("report.validation.errors", { errors: v.errors, warnings: v.warnings }) : t("report.validation.ok", { warnings: v.warnings })} data-testid="report-validation" sx={{ height: 24, fontSize: "0.7rem", fontWeight: 700 }} />
+          {v.unverified ? (
+            <Chip size="small" icon={<HelpOutlineIcon sx={{ fontSize: 14 }} />} variant="outlined" label={t("network.result.validationUnverified")} data-testid="report-validation" sx={{ height: 24, fontSize: "0.7rem", fontWeight: 700 }} />
+          ) : (
+            <Chip size="small" icon={v.errors ? <ErrorOutlineIcon sx={{ fontSize: 14 }} /> : <CheckCircleOutlineIcon sx={{ fontSize: 14 }} />} color={v.errors ? "error" : "success"} variant="outlined" label={v.errors ? t("report.validation.errors", { errors: v.errors, warnings: v.warnings }) : t("report.validation.ok", { warnings: v.warnings })} data-testid="report-validation" sx={{ height: 24, fontSize: "0.7rem", fontWeight: 700 }} />
+          )}
           {audit && <Chip size="small" icon={<TroubleshootOutlinedIcon sx={{ fontSize: 14 }} />} variant="outlined" color={audit.counts?.warning ? "warning" : "default"} label={t("report.audit", { warnings: audit.counts?.warning ?? 0, infos: audit.counts?.info ?? 0 })} data-testid="report-audit" sx={{ height: 24, fontSize: "0.7rem", fontWeight: 700 }} />}
           {report.routing_fallback_legs > 0 && <Chip size="small" variant="outlined" color="warning" label={t("report.fallback", { count: report.routing_fallback_legs })} sx={{ height: 24, fontSize: "0.7rem" }} />}
         </Box>

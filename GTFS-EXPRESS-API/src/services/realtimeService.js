@@ -18,6 +18,8 @@
 
 "use strict";
 
+const { safeFetch, assertPublicUrl } = require("../utils/safeFetch");
+
 const { requireSession } = require("./edit/_editCore");
 const { haversineMeters } = require("../utils/geoUtils");
 
@@ -209,12 +211,14 @@ const checkFeed = (feed, idx, { now = Math.floor(Date.now() / 1000) } = {}) => {
   return { summary, counts, findings: list, ok: counts.error === 0 };
 };
 
-const fetchFeed = async (url, fetchImpl) => {
-  if (!/^https?:\/\//i.test(String(url))) throw Object.assign(new Error("url must be http(s)."), { status: 400, code: "INVALID_INPUT" });
+const fetchFeed = async (url, fetchImpl = null) => {
+  // A user-supplied url: public internet only (no SSRF into the server's network).
+  assertPublicUrl(url);
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), FETCH_TIMEOUT_MS);
   try {
-    const res = await fetchImpl(url, { signal: ctl.signal, headers: { "User-Agent": "gtfs-express/1.0 (realtime check)", Accept: "application/x-protobuf, application/octet-stream, application/json;q=0.8" } });
+    const headers = { "User-Agent": "gtfs-express/1.0 (realtime check)", Accept: "application/x-protobuf, application/octet-stream, application/json;q=0.8" };
+    const res = fetchImpl ? await fetchImpl(url, { signal: ctl.signal, headers }) : await safeFetch(url, { timeoutMs: FETCH_TIMEOUT_MS, maxBytes: MAX_BYTES, headers, signal: ctl.signal });
     if (!res.ok) throw Object.assign(new Error(`Realtime feed: HTTP ${res.status}`), { status: 502, code: "FEED_UNAVAILABLE" });
     const ct = res.headers?.get?.("content-type") || "";
     const buf = Buffer.from(await res.arrayBuffer());
@@ -235,7 +239,7 @@ const validateRealtime = async (req, res) => {
     let feed;
     if (Buffer.isBuffer(req.body) && req.body.length) feed = decodeFeed({ buffer: req.body });
     else if (req.body && typeof req.body === "object" && req.body.feed) feed = decodeFeed({ json: req.body.feed });
-    else if (req.body && typeof req.body.url === "string") feed = await fetchFeed(req.body.url.trim(), validateRealtime._fetch || fetch);
+    else if (req.body && typeof req.body.url === "string") feed = await fetchFeed(req.body.url.trim(), validateRealtime._fetch || null);
     else return res.status(400).json({ error: "INVALID_INPUT", message: "Send a protobuf body, { feed } as JSON, or { url }." });
     const result = checkFeed(feed, staticIndex(ctx.db));
     res.json(result);

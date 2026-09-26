@@ -22,6 +22,8 @@
 
 "use strict";
 
+const { safeFetch, assertPublicUrl } = require("../../utils/safeFetch");
+
 const path = require("path");
 const os = require("os");
 const fsp = require("fs/promises");
@@ -154,11 +156,14 @@ const findFeeds = async (territory, { fetchImpl = null, force = false } = {}) =>
 };
 
 /** Download a GTFS zip (bounded) and read the tables the reverse compiler needs. */
+// Test seam: a fetch that replaces the guarded download (tests only).
+const transport = { fetchImpl: null };
+
 const downloadTables = async (url, { fetchImpl = null } = {}) => {
-  const doFetch = fetchImpl || (typeof fetch === "function" ? fetch : null);
-  if (!doFetch) throw Object.assign(new Error("No fetch implementation."), { status: 500 });
-  if (!/^https?:\/\//i.test(String(url))) throw Object.assign(new Error("url must be http(s)."), { status: 400, code: "INVALID_INPUT" });
-  const res = await withTimeout(doFetch, url);
+  // The url comes from a user or from the model: public internet only.
+  assertPublicUrl(url);
+  const injected = fetchImpl || transport.fetchImpl;
+  const res = injected ? await withTimeout(injected, url) : await safeFetch(url, { timeoutMs: FETCH_TIMEOUT_MS, maxBytes: MAX_ZIP_BYTES });
   if (!res.ok) throw Object.assign(new Error(`Feed download: HTTP ${res.status}`), { status: 502, code: "FEED_UNAVAILABLE" });
   const buf = Buffer.from(await res.arrayBuffer());
   if (buf.length > MAX_ZIP_BYTES) throw Object.assign(new Error(`The feed is larger than ${Math.round(MAX_ZIP_BYTES / 1e6)} MB.`), { status: 413, code: "FEED_TOO_LARGE" });
@@ -340,4 +345,4 @@ const importFeed = async (url, { fetchImpl = null, maxLines = LIMITS.lines } = {
   return specFromTables(tables, { maxLines });
 };
 
-module.exports = { findFeeds, importFeed, specFromTables, downloadTables, loadCatalog, _internals: { parseCsvText, reset: () => { _catalog = null; } } };
+module.exports = { findFeeds, importFeed, specFromTables, downloadTables, loadCatalog, _internals: { parseCsvText, transport, reset: () => { _catalog = null; } } };

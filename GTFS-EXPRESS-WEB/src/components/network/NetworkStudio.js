@@ -24,6 +24,7 @@ import DataObjectOutlinedIcon from "@mui/icons-material/DataObjectOutlined";
 import ErrorOutlineIcon from "@mui/icons-material/ErrorOutline";
 import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 import CheckCircleOutlineIcon from "@mui/icons-material/CheckCircleOutline";
+import HelpOutlineIcon from "@mui/icons-material/HelpOutline";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import LockOutlinedIcon from "@mui/icons-material/LockOutlined";
@@ -477,8 +478,10 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
   const disabledReason = !chatEnabled ? t("network.assistantOff") : !canPlan ? t("network.assistantNeedsCode") : null;
 
   const validationSummary = (report) => {
-    const counts = report?.counts || {};
-    const errors = counts.errors ?? (report?.valid === false ? 1 : 0);
+    // A validator that did not run is not a pass.
+    if (!report || report.unverified) return { unverified: true, errors: 0, warnings: 0 };
+    const counts = report.counts || {};
+    const errors = counts.errors ?? (report.valid === false ? 1 : 0);
     return { errors, warnings: counts.warnings ?? 0 };
   };
 
@@ -727,7 +730,11 @@ export default function NetworkStudio({ open, onClose, onCreated }) {
             {(() => {
               const v = validationSummary(compile.result.validationReport);
               return (
-                <Chip size="small" icon={v.errors ? <ErrorOutlineIcon sx={{ fontSize: 14 }} /> : <CheckCircleOutlineIcon sx={{ fontSize: 14 }} />} color={v.errors ? "error" : "success"} variant="outlined" label={v.errors ? t("network.result.validationErrors", { errors: v.errors, warnings: v.warnings }) : t("network.result.validationOk", { warnings: v.warnings })} sx={{ alignSelf: "flex-start", height: 24, fontSize: "0.7rem", fontWeight: 700 }} />
+                v.unverified ? (
+                  <Chip size="small" icon={<HelpOutlineIcon sx={{ fontSize: 14 }} />} variant="outlined" label={t("network.result.validationUnverified")} data-testid="network-validation-unverified" sx={{ alignSelf: "flex-start", height: 24, fontSize: "0.7rem", fontWeight: 700 }} />
+                ) : (
+                  <Chip size="small" icon={v.errors ? <ErrorOutlineIcon sx={{ fontSize: 14 }} /> : <CheckCircleOutlineIcon sx={{ fontSize: 14 }} />} color={v.errors ? "error" : "success"} variant="outlined" label={v.errors ? t("network.result.validationErrors", { errors: v.errors, warnings: v.warnings }) : t("network.result.validationOk", { warnings: v.warnings })} sx={{ alignSelf: "flex-start", height: 24, fontSize: "0.7rem", fontWeight: 700 }} />
+                )
               );
             })()}
             {compile.result.stats?.routing_fallback_legs > 0 && <Typography sx={{ fontSize: "0.74rem", color: "warning.dark" }}>{t("network.result.fallback", { count: compile.result.stats.routing_fallback_legs })}</Typography>}

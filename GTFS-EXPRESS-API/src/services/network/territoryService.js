@@ -32,6 +32,8 @@ const { countryContext, summarizeCountry } = require("./countryService");
 
 const TIMEOUT_MS = 20000;
 const CACHE_TTL_MS = 60 * 60 * 1000;
+// A dossier with failed sources is kept briefly: the next request retries them.
+const PARTIAL_CACHE_TTL_MS = 5 * 60 * 1000;
 const MAX_STOPS = 800;
 const MAX_LINES = 150;
 const MAX_POIS = 400;
@@ -443,7 +445,7 @@ const buildTerritory = async (query, { fetchImpl = null, force = false } = {}) =
   if (q.length < 2) throw Object.assign(new Error("place is required (≥ 2 characters)."), { status: 400, code: "INVALID_INPUT" });
   const key = cacheKey(q);
   const cached = _cache.get(key);
-  if (cached && !force && Date.now() - cached.at < CACHE_TTL_MS) return { ...cached.dossier, fromCache: true };
+  if (cached && !force && Date.now() - cached.at < (cached.ttl || CACHE_TTL_MS)) return { ...cached.dossier, fromCache: true };
   const doFetch = fetchImpl || (typeof fetch === "function" ? fetch : null);
   if (!doFetch) throw Object.assign(new Error("No fetch implementation."), { status: 500 });
   const warnings = [];
@@ -517,9 +519,11 @@ const buildTerritory = async (query, { fetchImpl = null, force = false } = {}) =
     school_holidays: schoolHolidays,
     sources: uniqueSources([SOURCES.osm, SOURCES.nominatim, SOURCES.overpass, ...(population?.source === "wikidata" || areaKm2 ? [SOURCES.wikidata] : []), ...(holidays.length ? [SOURCES.nager] : []), ...(schoolHolidays.length ? [SOURCES.openholidays] : []), ...(tz.timezone ? [SOURCES.openmeteo] : []), ...(country?.sources || [])]),
     warnings,
+    // Some sources failed or were skipped: the figures built on it are partial.
+    partial: warnings.length > 0,
     generatedAt: new Date().toISOString(),
   };
-  _cache.set(key, { at: Date.now(), dossier });
+  _cache.set(key, { at: Date.now(), ttl: warnings.length ? PARTIAL_CACHE_TTL_MS : CACHE_TTL_MS, dossier });
   return { ...dossier, fromCache: false };
 };
 

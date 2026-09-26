@@ -633,10 +633,12 @@ const revalidate = async (req, res) => {
       req.headers && req.headers["accept-language"],
     );
 
+    const countryCode = require("./sessionCountry").sessionCountryCode(sessionId);
     const report = await runValidation(info.path, {
       profile,
       locale,
       strictMdCanonical: true,
+      ...(countryCode ? { countryCode } : {}),
     });
 
     const elapsed = Date.now() - started;
@@ -734,10 +736,12 @@ const revalidateCanonical = async (req, res) => {
     const locale = pickLocaleFromAcceptLanguage(
       req.headers && req.headers["accept-language"],
     );
+    const countryCode = require("./sessionCountry").sessionCountryCode(sessionId);
     const report = await runValidation(info.path, {
       profile,
       locale,
       strictMdCanonical: true,
+      ...(countryCode ? { countryCode } : {}),
     });
     const { toCanonicalReport } = require("../utils/canonicalReport");
     const canonical = toCanonicalReport(report);

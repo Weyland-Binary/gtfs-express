@@ -16,6 +16,7 @@ const TIMEOUT_MS = 10000;
 const WAYPOINTS_PER_REQUEST = 25;
 const DETOUR_FACTOR = 1.3;
 const _cache = new Map();
+const MAX_CACHE = 5000; // routed directions kept (oldest dropped first)
 
 const key = (points) => points.map((p) => `${p.lat.toFixed(5)},${p.lon.toFixed(5)}`).join(";");
 
@@ -77,7 +78,12 @@ const createRouter = ({ mode = null, fetchImpl = null, baseUrl = null } = {}) =>
       out.legs.push(...part.legs);
     }
     out.distanceM = out.legs.reduce((a, l) => a + l.distanceM, 0);
-    _cache.set(k, out);
+    // A straight-line fallback is a stopgap for a router that was down: never
+    // kept, so the next call routes along the roads again.
+    if (!out.fallbacks) {
+      if (_cache.size >= MAX_CACHE) _cache.delete(_cache.keys().next().value);
+      _cache.set(k, out);
+    }
     return out;
   };
   return { route, mode: routing };

@@ -1554,17 +1554,23 @@ const loadSample = async (req, res) => {
 // once, validate, migrate to SQLite, persist the session meta and the
 // validation report, log the upload. The caller created `uploadPath` and
 // owns its cleanup when this throws.
-const ingestPreparedDir = async ({ sessionId, uploadPath, source = "generated", sourceName = null, req = null }) => {
+const ingestPreparedDir = async ({ sessionId, uploadPath, source = "generated", sourceName = null, req = null, countryCode = null }) => {
+  const cc = require("./sessionCountry").normalizeCountryCode(countryCode);
   markUploadStarted(sessionId);
   let committed = false;
   try {
     const preloaded = await loadData(uploadPath);
     let validationReport = null;
+    let engineError = null;
     try {
-      validationReport = await runValidation(uploadPath, { preloadedData: preloaded, strictMdCanonical: true });
+      validationReport = await runValidation(uploadPath, { preloadedData: preloaded, strictMdCanonical: true, ...(cc ? { countryCode: cc } : {}) });
     } catch (vErr) {
+      engineError = vErr.message || "validator failed";
       console.warn(`ingestPreparedDir validation error for ${sessionId} (non-fatal):`, vErr.message);
     }
+    // A validator that did not run proves nothing: the feed is "unverified",
+    // never reported as valid (re-validation in the app gives the verdict).
+    const unverified = validationReport ? null : { valid: null, unverified: true, engineError, errors: {}, counts: { errors: 0, warnings: 0, infos: 0 } };
     let migrationMs = 0;
     const migrate = getMigrateUploadToDb();
     const result = await migrate(sessionId);
@@ -1595,11 +1601,12 @@ const ingestPreparedDir = async ({ sessionId, uploadPath, source = "generated", 
       created_at: new Date().toISOString(),
       source,
       source_name: sourceName,
+      ...(cc ? { country_code: cc } : {}),
       size_kb: sizeKb,
       agency: { names: agencyNames, ids: agencyIds, urls: null, count: agencies.length },
       counts: { routes: routes.length, stops: stops.length, trips: trips.length, has_shapes: hasShapes },
-      validation: summarizeValidation(validationReport || { valid: true, errors: {}, counts: { errors: 0, warnings: 0, infos: 0 } }),
-      compliance: validationReport && validationReport.valid === false ? "non_compliant" : "compliant",
+      validation: { ...summarizeValidation(validationReport || unverified), ...(unverified ? { unverified: true } : {}) },
+      compliance: unverified ? "unverified" : validationReport.valid === false ? "non_compliant" : "compliant",
     });
     if (validationReport) saveValidationReport(sessionId, validationReport);
     committed = true;
@@ -1635,7 +1642,7 @@ const ingestPreparedDir = async ({ sessionId, uploadPath, source = "generated", 
       console.warn("Could not log generated-session stat:", logErr.message);
     }
     return {
-      validationReport: validationReport || { valid: true, errors: {} },
+      validationReport: validationReport || unverified,
       migration_ms: migrationMs,
       counts: { agencies: agencies.length, routes: routes.length, stops: stops.length, trips: trips.length, stop_times: (preloaded.stopTimes || []).length },
     };

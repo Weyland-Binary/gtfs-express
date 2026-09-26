@@ -654,10 +654,12 @@ const runPreExportValidation = async (
 ) => {
   const info = await loadValidationDataFromSession(sessionId);
   try {
+    const countryCode = require("./sessionCountry").sessionCountryCode(sessionId);
     const report = await runValidation(info.path, {
       profile,
       locale,
       strictMdCanonical: true,
+      ...(countryCode ? { countryCode } : {}),
     });
     return report;
   } finally {

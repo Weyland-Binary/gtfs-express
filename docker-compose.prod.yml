@@ -79,6 +79,20 @@ services:
       - NL2SQL_RATE_LIMIT=${NL2SQL_RATE_LIMIT:-}
       - NL2SQL_DAILY_LIMIT_PER_CODE=${NL2SQL_DAILY_LIMIT_PER_CODE:-}
       - NL2SQL_DAILY_BUDGET_TOTAL=${NL2SQL_DAILY_BUDGET_TOTAL:-}
+      # Network Studio — planificateur et fournisseurs de données. Vides →
+      # défauts de config.js : Opus 5.5, et les instances PUBLIQUES de démo
+      # (OSRM profil voiture, Photon, Nominatim, Overpass) qui ne tiennent pas
+      # une charge de production : pointer vers des instances auto-hébergées
+      # (OSRM/Valhalla avec profil bus) avant toute ouverture à volume.
+      - NETWORK_PLANNER_MODEL=${NETWORK_PLANNER_MODEL:-}
+      - NETWORK_PLANNER_EFFORT=${NETWORK_PLANNER_EFFORT:-}
+      - NETWORK_FREE_MAX_LINES=${NETWORK_FREE_MAX_LINES:-}
+      - NETWORK_PRO_MAX_LINES=${NETWORK_PRO_MAX_LINES:-}
+      - NETWORK_ROUTING_ENABLED=${NETWORK_ROUTING_ENABLED:-}
+      - OSRM_URL=${OSRM_URL:-}
+      - GEOCODER_URL=${GEOCODER_URL:-}
+      - NOMINATIM_URL=${NOMINATIM_URL:-}
+      - OVERPASS_URL=${OVERPASS_URL:-}
       # Tier beta — caps confortables pour les détenteurs d'un X-Beta-Code.
       # Vides → défauts config.js (30000 req/h, 200 uploads/h, 600 SQL/min,
       # 30 reval/min, 300 IA/h, 2000 IA/jour par code). Bucket dédié par code,

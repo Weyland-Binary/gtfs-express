@@ -297,6 +297,8 @@ describe("existing feeds", () => {
   test("HTTP: GET /network/catalog and POST /network/catalog/import; evaluate carries accessibility", async () => {
     const realFetch = global.fetch;
     global.fetch = fakeFetch;
+    // The feed download goes through the guarded transport, not global fetch.
+    catalog._internals.transport.fetchImpl = fakeFetch;
     try {
       const list = await request(app).get("/gtfs/network/catalog").query({ place: "Bourg" });
       expect(list.status).toBe(200);
@@ -314,6 +316,7 @@ describe("existing feeds", () => {
       expect(ev.body.operations.fleet_total).toBeGreaterThan(0);
     } finally {
       global.fetch = realFetch;
+      catalog._internals.transport.fetchImpl = null;
     }
   });
 });

@@ -313,7 +313,8 @@ const writeGtfsDir = async (tables, dir) => {
 
 const validationSummary = (report) => {
   const counts = report?.counts || {};
-  return { errors: counts.errors ?? (report?.valid === false ? 1 : 0), warnings: counts.warnings ?? 0, valid: report ? report.valid !== false : null };
+  if (!report || report.unverified) return { errors: null, warnings: null, valid: null, unverified: true };
+  return { errors: counts.errors ?? (report.valid === false ? 1 : 0), warnings: counts.warnings ?? 0, valid: report.valid !== false };
 };
 
 /**
@@ -373,7 +374,9 @@ const createSessionFromSpec = async (rawSpec, { router = null, routing = null, s
   try {
     await writeGtfsDir(compiled.tables, uploadPath);
     await fsp.writeFile(path.join(uploadPath, SPEC_FILE), JSON.stringify({ spec: norm.spec, savedAt: new Date().toISOString() }), "utf8");
-    const ingested = await ingestPreparedDir({ sessionId, uploadPath, source: "network_studio", sourceName: norm.spec.agency.name, req });
+    // The territory's country gives the validator its national rules.
+    const territoryCountry = territoryPlace ? require("./territoryService").getCachedTerritory(territoryPlace)?.place?.country_code || null : null;
+    const ingested = await ingestPreparedDir({ sessionId, uploadPath, source: "network_studio", sourceName: norm.spec.agency.name, req, countryCode: territoryCountry });
     const report = buildReport({ spec: norm.spec, compiled, ingested, sessionId, territoryPlace, requirements });
     await fsp.writeFile(path.join(uploadPath, REPORT_FILE), JSON.stringify(report), "utf8").catch(() => {});
     return { sessionId, ...ingested, spec: norm.spec, issues: norm.issues, estimate: norm.estimate, stats: compiled.stats, warnings: compiled.warnings, geometry: compiled.geometry, report };

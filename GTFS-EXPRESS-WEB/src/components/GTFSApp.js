@@ -676,7 +676,8 @@ function GTFSApp() {
       if (editing) await exitEditMode();
       setSessionId(result.sessionId);
       setFeedEpoch((e) => e + 1);
-      if (result.validationReport) {
+      // An "unverified" report (the validator did not run) is no verdict: none is shown.
+      if (result.validationReport && !result.validationReport.unverified) {
         setValidationReport(result.validationReport);
         setValidationBaseline(summarizeReport(result.validationReport));
       } else {
@@ -711,7 +712,8 @@ function GTFSApp() {
       if (editing) await exitEditMode();
       setSessionId(result.sessionId);
       setFeedEpoch((e) => e + 1);
-      if (result.validationReport) {
+      // An "unverified" report (the validator did not run) is no verdict: none is shown.
+      if (result.validationReport && !result.validationReport.unverified) {
         setValidationReport(result.validationReport);
         setValidationBaseline(summarizeReport(result.validationReport));
       } else {

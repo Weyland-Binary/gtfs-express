@@ -32,6 +32,7 @@ const { ensureDbHandle } = require("./db/connection");
 const { dumpDbToCsvFiles } = require("./exportService");
 const { auditForSession } = require("./qualityAuditService");
 const { recordEvent, extractReqMeta } = require("./eventLogger");
+const { loadReport } = require("./validationReportStore");
 
 const SHARES_DIR = config.SHARES_DIR || path.join(path.dirname(GTFS_UPLOAD_DIR), "shares");
 const SHARE_TTL_DAYS = Number(config.SHARE_TTL_DAYS) > 0 ? Number(config.SHARE_TTL_DAYS) : 90;
@@ -114,8 +115,41 @@ const snapshotSession = async (sessionId, sessionDir, dir) => {
   } else {
     for (const f of await fsp.readdir(sessionDir)) if (f.endsWith(".txt") || f === "locations.geojson") await fsp.copyFile(path.join(sessionDir, f), path.join(dir, f));
   }
-  for (const f of ["_network_spec.json", "_network_report.json"]) if (fs.existsSync(path.join(sessionDir, f))) await fsp.copyFile(path.join(sessionDir, f), path.join(dir, f));
+  // The design travels with the feed, without what belongs to the author's
+  // brief (budget and fleet caps, constraints, assumptions): a share is public.
+  const spec = readJson(path.join(sessionDir, "_network_spec.json"));
+  if (spec) await fsp.writeFile(path.join(dir, "_network_spec.json"), JSON.stringify(publicSpec(spec)), "utf8");
+  const report = readJson(path.join(sessionDir, "_network_report.json"));
+  if (report) await fsp.writeFile(path.join(dir, "_network_report.json"), JSON.stringify(publicReport(report)), "utf8");
   return db;
+};
+
+const PRIVATE_FINDINGS = new Set(["fleet_over", "budget_over"]);
+
+/** The stored spec without the brief's operating figures (costs, caps). */
+const publicSpec = (stored) => {
+  if (!stored || typeof stored !== "object" || !stored.spec) return stored;
+  const { operations, ...spec } = stored.spec; // eslint-disable-line no-unused-vars
+  return { ...stored, spec };
+};
+
+/** The network report without the brief's private parts. */
+const publicReport = (report) => {
+  if (!report || typeof report !== "object") return report;
+  const out = { ...report };
+  if (report.requirements) out.requirements = { operator: report.requirements.operator || null, area: report.requirements.area || null, objectives: (report.requirements.objectives || []).slice(0, 6) };
+  if (report.design) {
+    const design = { ...report.design };
+    if (design.operations) {
+      const { limits, ...ops } = design.operations; // eslint-disable-line no-unused-vars
+      design.operations = ops;
+    }
+    if (Array.isArray(design.dimensions)) design.dimensions = design.dimensions.map((d) => ({ ...d, findings: (d.findings || []).filter((f) => !PRIVATE_FINDINGS.has(f.code)) }));
+    if (Array.isArray(design.recommendations)) design.recommendations = design.recommendations.filter((r) => !PRIVATE_FINDINGS.has(r?.code));
+    out.design = design;
+  }
+  if (report.conformance) out.conformance = { summary: report.conformance.summary || null };
+  return out;
 };
 
 /** The card of a snapshot folder: counts, validation, audit, design. */
@@ -142,7 +176,11 @@ const cardOf = async ({ dir, sessionId, sessionDir, db }) => {
     }
   }
   const counts = { routes: await csvCount(path.join(dir, "routes.txt")), stops: await csvCount(path.join(dir, "stops.txt")), trips: await csvCount(path.join(dir, "trips.txt")), stop_times: await csvCount(path.join(dir, "stop_times.txt")) };
-  const validation = networkReport?.validation ? { ...networkReport.validation, infos: networkReport.validation.infos ?? 0 } : sessionMeta.errors_count != null ? { errors: sessionMeta.errors_count, warnings: sessionMeta.warnings_count || 0, infos: sessionMeta.notices_count || 0, valid: sessionMeta.errors_count === 0 } : null;
+  // The latest verdict on the shared state: the session's last validation
+  // (re-validated after edits), else the upload's summary, else the build's.
+  const live = loadReport(sessionId)?.report || null;
+  const metaValidation = sessionMeta.validation && sessionMeta.validation.errors_count != null && !sessionMeta.validation.unverified ? { errors: sessionMeta.validation.errors_count, warnings: sessionMeta.validation.warnings_count || 0, infos: sessionMeta.validation.notices_count || 0, valid: sessionMeta.validation.errors_count === 0 } : null;
+  const validation = live && !live.unverified ? validationSummary(live) : metaValidation || (networkReport?.validation && !networkReport.validation.unverified ? { ...networkReport.validation, infos: networkReport.validation.infos ?? 0 } : null);
   return {
     agencyName,
     sessionMeta,
@@ -364,4 +402,4 @@ const postOpenShare = async (req, res) => {
 
 const getShareZip = (req, res) => streamShareZip(req.params.token, res, { version: req.query?.v ?? null });
 
-module.exports = { createShare, readShare, openShare, publishVersion, streamShareZip, cleanupExpiredShares, postShare, postShareVersion, getShare, postOpenShare, getShareZip, SHARES_DIR, SHARE_TTL_DAYS, _internals: { validationSummary, TOKEN_RE, changelogBetween } };
+module.exports = { createShare, readShare, openShare, publishVersion, streamShareZip, cleanupExpiredShares, postShare, postShareVersion, getShare, postOpenShare, getShareZip, SHARES_DIR, SHARE_TTL_DAYS, _internals: { validationSummary, TOKEN_RE, changelogBetween, publicSpec, publicReport } };
