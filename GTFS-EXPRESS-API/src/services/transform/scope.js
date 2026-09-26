@@ -24,6 +24,9 @@
  *                                             an untouched copy runs the other dates
  *   serviceForDates(db, model, base, dates) → a service running exactly those dates
  *                                             (reused when one already does)
+ *   dayGroups(model, tripIds, scope)        → the distinct timetables of these trips over
+ *                                             the scope: dates grouped by the services running
+ *   withdrawOnDates(db, model, tripIds, dates) → the trips stop running on those dates
  *   simplifyServices(db, before)            → services a plan created that duplicate
  *                                             another's dates are merged into it
  *   describeScope(scope)                    → "weekdays, 2026-09-01 → 2026-12-31"
@@ -286,6 +289,69 @@ const simplifyServices = (db, beforeIds) => {
   return { merged, dropped };
 };
 
+/**
+ * The distinct timetables a set of trips makes over the scope: the dates
+ * grouped by which services of these trips run that day. On a real feed a
+ * weekday is often several services at once (all-year + school-days +
+ * Wednesday-only), and periods differ (September, school term, holidays):
+ * each combination is its own group, to be changed on its own dates.
+ * → [{ dates: [YYYYMMDD], services: [serviceId], trips: [tripId] }] (largest first)
+ */
+const dayGroups = (model, tripIds, scope = null) => {
+  const bySvc = new Map();
+  for (const id of tripIds) {
+    const t = model.trips.get(id);
+    if (!t) continue;
+    if (!bySvc.has(t.service_id)) bySvc.set(t.service_id, []);
+    bySvc.get(t.service_id).push(id);
+  }
+  const perDate = new Map();
+  for (const sid of bySvc.keys()) {
+    for (const d of activeDates(model, sid)) {
+      if (!inScope(scope, d, model, sid)) continue;
+      if (!perDate.has(d)) perDate.set(d, []);
+      perDate.get(d).push(sid);
+    }
+  }
+  const groups = new Map();
+  for (const [d, sids] of [...perDate.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+    const key = sids.sort().join(",");
+    if (!groups.has(key)) groups.set(key, { dates: [], services: sids, trips: sids.flatMap((sid) => bySvc.get(sid)) });
+    groups.get(key).dates.push(d);
+  }
+  return [...groups.values()].sort((a, b) => b.dates.length - a.dates.length || (a.dates[0] < b.dates[0] ? -1 : 1));
+};
+
+/**
+ * These trips stop running on `dates`: each keeps its id and runs on the
+ * rest of its dates (a service running exactly those, reused when one
+ * exists), or is deleted when nothing is left. → { removed, restricted }
+ */
+const withdrawOnDates = (db, model, tripIds, dates) => {
+  const drop = new Set(dates);
+  const existing = new Map();
+  for (const sid of model.services.keys()) existing.set(activeDates(model, sid).join(","), sid);
+  const target = new Map();
+  const gone = [];
+  let restricted = 0;
+  for (const id of new Set(tripIds)) {
+    const t = model.trips.get(id);
+    if (!t) continue;
+    if (!target.has(t.service_id)) {
+      const rest = activeDates(model, t.service_id).filter((d) => !drop.has(d));
+      target.set(t.service_id, rest.length ? serviceForDates(db, model, t.service_id, rest, { existing }) : null);
+    }
+    const sid = target.get(t.service_id);
+    if (!sid) gone.push(id);
+    else if (sid !== t.service_id) {
+      db.prepare("UPDATE trips SET service_id = ? WHERE trip_id = ?").run(sid, id);
+      restricted += 1;
+    }
+  }
+  G.deleteTrips(db, gone);
+  return { removed: gone.length, restricted };
+};
+
 /** The scope parameters every operator accepts besides `days` (for the catalogue). */
 const SCOPE_PARAMS = [
   { name: "from_date", type: "date", required: false, description: "First service date the change applies to (YYYY-MM-DD); before it, the old timetable runs." },
@@ -296,4 +362,4 @@ const SCOPE_PARAMS = [
   { name: "region", type: "string", required: false, description: "School zone/region when the period depends on it (e.g. A, B, C in France)." },
 ];
 
-module.exports = { SCOPE_PARAMS, resolveScope, inScope, dayTypeOf, isAll, activeDates, tripsInScope, isolateScope, serviceForDates, simplifyServices, describeScope };
+module.exports = { SCOPE_PARAMS, resolveScope, inScope, dayTypeOf, dayGroups, withdrawOnDates, isAll, activeDates, tripsInScope, isolateScope, serviceForDates, simplifyServices, describeScope };

@@ -2,20 +2,25 @@
  * set_headway — "Line 3 every 8 minutes from 7:00 to 9:00 on weekdays."
  *
  * The trips of the route (and direction) that leave in the window on the
- * given days are replaced by a regular series: first departure kept (or the
- * given start), then every `headway_min` until the end of the window.
+ * scope's dates are replaced by a regular series: first departure kept (or
+ * the given start), then every `headway_min` until the end of the window.
  *
- *   • Days: a trip whose service also runs on other days is split first
- *     (gtfsOps.isolateDays) so the other days keep their timetable.
- *   • Several services can cover the days (e.g. a school-days service on
- *     top of the weekday one): the series is rebuilt on the PRIMARY service
- *     of each day (the one with most trips in the window); the others are
- *     extras, kept as they are and reported.
- *   • Running times: each new trip copies the original trip nearest in time
- *     (a 7:05 trip runs like the 7:00 one did, peak running times stay peak).
+ *   • Day timetables: on a real feed a weekday is often several services at
+ *     once (all year + school days + Wednesdays) and periods differ
+ *     (September, school term, holidays). The scope's dates are grouped by
+ *     the timetable the line runs that day (scope.dayGroups) and each group
+ *     gets its own series, built from ITS trips — groups whose window is
+ *     the same are rebuilt once, on the union of their dates.
+ *   • Other dates keep their timetable: a replaced trip only stops running
+ *     on the rebuilt dates (scope.withdrawOnDates keeps its id on the rest).
+ *   • Running times: each new trip copies the trip of that day timetable
+ *     nearest in time (a 7:05 trip runs like the 7:00 one did, peak running
+ *     times stay peak, holiday running times stay holiday ones).
  *   • Patterns: when the window mixes patterns (a variant via the hospital
- *     every other trip) the instruction must say whether to keep the
- *     alternation or run the main pattern only — otherwise it is blocked.
+ *     every other trip) the instruction must say what to do — alternate
+ *     (the series keeps the mix in proportion), main (the series runs the
+ *     main pattern, the variant trips stay as they are) or main_only (the
+ *     variant trips go too) — otherwise the step is blocked.
  *   • frequencies.txt: frequency-based trips get their windows split and
  *     the new headway inside [from, to).
  *   • Blocks: new trips have no block_id (vehicle schedules must be re-cut).
@@ -29,6 +34,7 @@ const S = require("../scope");
 const { _internals: fm } = require("../feedModel");
 
 const { secToTime } = fm;
+const PATTERN_MODES = ["alternate", "main", "main_only"];
 
 const resolve = async (model, p, ctx) => {
   const ambiguities = [];
@@ -53,34 +59,40 @@ const resolve = async (model, p, ctx) => {
     start = R.timeToSec(p.start);
     if (start == null) ambiguities.push({ param: "start", code: "time_invalid", message: `"${p.start}" is not a time.` });
   }
+  if (p.patterns != null && p.patterns !== "" && !PATTERN_MODES.includes(p.patterns)) ambiguities.push({ param: "patterns", code: "patterns_invalid", message: `patterns is one of ${PATTERN_MODES.join(", ")}.`, options: PATTERN_MODES });
   if (ambiguities.length) return { ambiguities, warnings };
 
-  const dirs = direction === "both" ? [...new Set([...model.trips.values()].filter((t) => t.route_id === route.value.id).map((t) => t.direction_id))] : [direction];
+  const dirs = direction === "both" ? [...new Set([...model.trips.values()].filter((t) => t.route_id === route.value.id).map((t) => t.direction_id))].sort() : [direction];
   const perDir = [];
   for (const d of dirs) {
-    const onDaysAll = S.tripsInScope(model, { routeId: route.value.id, direction: d }, scope).sort((a, b) => a.first - b.first);
-    const inWin = onDaysAll.filter((t) => t.first != null && t.first >= win.value.from && t.first < win.value.to);
-    const freqTrips = onDaysAll.filter((t) => model.frequencies.has(t.id) && model.frequencies.get(t.id).some((f) => f.start < win.value.to && f.end > win.value.from));
-    const onDays = onDaysAll;
-    if (!inWin.length && !freqTrips.length && !onDays.length) {
-      ambiguities.push({ param: "days", code: "no_service_on_days", message: `Line ${route.value.short_name || route.value.id} has no trip in direction ${d} on these days: adding a new day of service is another operation (add_day_service).` });
+    const onDays = S.tripsInScope(model, { routeId: route.value.id, direction: d }, scope).sort((a, b) => a.first - b.first);
+    const freqTrips = onDays.filter((t) => model.frequencies.has(t.id) && model.frequencies.get(t.id).some((f) => f.start < win.value.to && f.end > win.value.from));
+    const plain = onDays.filter((t) => !model.frequencies.has(t.id));
+    const inWin = plain.filter((t) => t.first != null && t.first >= win.value.from && t.first < win.value.to);
+    if (!onDays.length) {
+      ambiguities.push({ param: "days", code: "no_service_on_days", message: `Line ${route.value.short_name || route.value.id} has no trip in direction ${d} on these days: adding a new day of service is another operation (copy_day_service).` });
       continue;
     }
-    const patterns = new Set(inWin.filter((t) => !model.frequencies.has(t.id)).map((t) => t.pattern));
-    if (patterns.size > 1 && !["main", "alternate"].includes(p.patterns)) {
-      const names = [...patterns].map((k) => {
+    const counts = new Map();
+    for (const t of inWin) counts.set(t.pattern, (counts.get(t.pattern) || 0) + 1);
+    if (counts.size > 1 && !p.patterns) {
+      const names = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([k, n]) => {
         const pat = model.patterns.get(k);
-        const last = model.stops.get(pat.stops[pat.stops.length - 1]);
-        return `${pat.trips.length} trips to ${last?.name || "?"} (${pat.stops.length} stops)`;
+        return `${n} trips to ${model.stops.get(pat.stops[pat.stops.length - 1])?.name || "?"} (${pat.stops.length} stops)`;
       });
-      ambiguities.push({ param: "patterns", code: "patterns_mixed", message: `In this window direction ${d} runs ${patterns.size} different routes (${names.join("; ")}). Keep the alternation, or run the main one only?`, options: ["alternate", "main"] });
+      ambiguities.push({ param: "patterns", code: "patterns_mixed", message: `In this window direction ${d} runs ${counts.size} different routes (${names.join("; ")}). Keep the mix (alternate), run the main one and keep the others as they are (main), or run the main one only (main_only)?`, options: PATTERN_MODES });
       continue;
     }
-    if (!inWin.length && !freqTrips.length) warnings.push(`Direction ${d}: no trip leaves in the window today; the new trips copy the nearest one in time.`);
-    perDir.push({ direction: d, inWin: inWin.filter((t) => !model.frequencies.has(t.id)).map((t) => t.id), freqTrips: freqTrips.map((t) => t.id), nearest: onDays.map((t) => t.id) });
+    if (!inWin.length && !freqTrips.length) warnings.push(`Direction ${d}: no trip leaves in the window on these days; the new trips copy the nearest one in time.`);
+    // The main pattern: the one most trips of the window run (else of the day).
+    const pool = inWin.length ? inWin : plain;
+    const mainCount = new Map();
+    for (const t of pool) mainCount.set(t.pattern, (mainCount.get(t.pattern) || 0) + 1);
+    const main = [...mainCount.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+    perDir.push({ direction: d, plain: plain.map((t) => t.id), freqTrips: freqTrips.map((t) => t.id), main });
   }
   if (ambiguities.length) return { ambiguities, warnings };
-  return { value: { routeId: route.value.id, label: route.value.short_name || route.value.id, scope, dows: scope.dows || G.DOW, from: win.value.from, to: win.value.to, headway: Math.round(hw.value * 60), start, patternMode: p.patterns || "main", perDir }, ambiguities: [], warnings };
+  return { value: { routeId: route.value.id, label: route.value.short_name || route.value.id, scope, from: win.value.from, to: win.value.to, headway: Math.round(hw.value * 60), start, patternMode: p.patterns || "main", perDir }, ambiguities: [], warnings };
 };
 
 // Bresenham-like cycle through patterns in proportion to their share.
@@ -98,99 +110,96 @@ const cycler = (shares) => {
   };
 };
 
+const splitFrequencies = (db, model, v, tripIds) => {
+  const ins = db.prepare("INSERT INTO frequencies (trip_id, start_time, end_time, headway_secs, exact_times) VALUES (?, ?, ?, ?, ?)");
+  for (const id of S.isolateScope(db, model, tripIds, v.scope)) {
+    const rows = db.prepare("SELECT * FROM frequencies WHERE trip_id = ? ORDER BY start_time").all(id);
+    db.prepare("DELETE FROM frequencies WHERE trip_id = ?").run(id);
+    for (const f of rows) {
+      const a = R.timeToSec(f.start_time);
+      const b = R.timeToSec(f.end_time);
+      if (b <= v.from || a >= v.to) {
+        ins.run(id, f.start_time, f.end_time, f.headway_secs, f.exact_times);
+        continue;
+      }
+      if (a < v.from) ins.run(id, f.start_time, secToTime(v.from), f.headway_secs, f.exact_times);
+      ins.run(id, secToTime(Math.max(a, v.from)), secToTime(Math.min(b, v.to)), v.headway, f.exact_times);
+      if (b > v.to) ins.run(id, secToTime(v.to), f.end_time, f.headway_secs, f.exact_times);
+    }
+  }
+};
+
 const apply = (db, v, { model }) => {
   const warnings = [];
   let created = 0;
-  let removed = 0;
-  const touchedServices = new Set();
+  const withdraw = new Map(); // trip id → dates it stops running on
+  let series = 0;
+  const existing = new Map();
+  for (const sid of model.services.keys()) existing.set(S.activeDates(model, sid).join(","), sid);
   for (const d of v.perDir) {
-    // Frequency-based trips: split their windows around [from, to).
-    for (const tid of d.freqTrips) {
-      const isolated = S.isolateScope(db, model, [tid], v.scope);
-      for (const id of isolated) {
-        const rows = db.prepare("SELECT * FROM frequencies WHERE trip_id = ? ORDER BY start_time").all(id);
-        db.prepare("DELETE FROM frequencies WHERE trip_id = ?").run(id);
-        const ins = db.prepare("INSERT INTO frequencies (trip_id, start_time, end_time, headway_secs, exact_times) VALUES (?, ?, ?, ?, ?)");
-        for (const f of rows) {
-          const a = R.timeToSec(f.start_time);
-          const b = R.timeToSec(f.end_time);
-          if (b <= v.from || a >= v.to) {
-            ins.run(id, f.start_time, f.end_time, f.headway_secs, f.exact_times);
-            continue;
-          }
-          if (a < v.from) ins.run(id, f.start_time, secToTime(v.from), f.headway_secs, f.exact_times);
-          ins.run(id, secToTime(Math.max(a, v.from)), secToTime(Math.min(b, v.to)), v.headway, f.exact_times);
-          if (b > v.to) ins.run(id, secToTime(v.to), f.end_time, f.headway_secs, f.exact_times);
-        }
+    if (d.freqTrips.length) splitFrequencies(db, model, v, d.freqTrips);
+    if (!d.plain.length) continue;
+
+    // One plan per day timetable; identical plans share one series.
+    const plans = new Map();
+    for (const g of S.dayGroups(model, d.plain, v.scope)) {
+      const trips = g.trips.map((id) => model.trips.get(id));
+      const inWin = trips.filter((t) => t.first != null && t.first >= v.from && t.first < v.to).sort((a, b) => a.first - b.first);
+      const replaced = v.patternMode === "main" ? inWin.filter((t) => t.pattern === d.main) : inWin;
+      let pool = v.patternMode === "alternate" ? inWin : inWin.filter((t) => t.pattern === d.main);
+      if (!pool.length) {
+        // Nothing of this pattern in the window that day: the nearest trip in time.
+        const same = trips.filter((t) => t.pattern === d.main);
+        pool = (same.length ? same : trips).slice().sort((a, b) => Math.abs(a.first - v.from) - Math.abs(b.first - v.from)).slice(0, 1);
       }
+      if (v.patternMode === "main" && inWin.length > replaced.length) warnings.push(`Direction ${d.direction}: ${inWin.length - replaced.length} trip(s) of other routes of the line in the window were kept as they are.`);
+      const key = JSON.stringify([replaced.map((t) => `${t.pattern}|${t.first}|${t.lastArr}`), pool.map((t) => `${t.pattern}|${t.first}|${t.lastArr}`)]);
+      if (!plans.has(key)) plans.set(key, { dates: [], replaced: [], pool });
+      const plan = plans.get(key);
+      plan.dates.push(...g.dates);
+      plan.replaced.push(...replaced);
     }
-    if (!d.inWin.length && d.freqTrips.length) continue;
 
-    // Explicit trips: isolate the days, find the primary service of each day.
-    const originals = d.inWin.length ? d.inWin : [];
-    S.isolateScope(db, model, originals, v.scope);
-    const svcOf = new Map(originals.map((id) => [id, db.prepare("SELECT service_id FROM trips WHERE trip_id = ?").get(id).service_id]));
-    const bySvc = new Map();
-    for (const [id, s] of svcOf) {
-      if (!bySvc.has(s)) bySvc.set(s, []);
-      bySvc.get(s).push(id);
-    }
-    // Days each (possibly new) service runs, read back from the sandbox.
-    const daysOf = (sid) => {
-      const c = db.prepare("SELECT * FROM calendar WHERE service_id = ?").get(sid);
-      const out = new Set();
-      if (c) for (const [k, col] of Object.entries({ mon: "monday", tue: "tuesday", wed: "wednesday", thu: "thursday", fri: "friday", sat: "saturday", sun: "sunday" })) if (String(c[col]) === "1") out.add(k);
-      for (const r of db.prepare("SELECT date FROM calendar_dates WHERE service_id = ? AND exception_type = 1").all(sid)) out.add(fm.dowOf(String(r.date)));
-      return out;
-    };
-    const primary = new Set();
-    for (const dow of v.dows) {
-      let best = null;
-      for (const [s, ids] of bySvc) if (daysOf(s).has(dow) && (!best || ids.length > bySvc.get(best).length)) best = s;
-      if (best) primary.add(best);
-    }
-    const extras = [...bySvc.entries()].filter(([s]) => !primary.has(s));
-    if (extras.length) warnings.push(`Direction ${d.direction}: ${extras.reduce((n, [, ids]) => n + ids.length, 0)} extra trip(s) on services running only some of the days (e.g. school days) were kept as they are.`);
-
-    // Templates: when nothing leaves in the window, the nearest trip in time on these days.
-    const templatesPool = originals.length ? originals : d.nearest;
-    for (const s of primary.size ? primary : new Set([null])) {
-      const pool = (s ? bySvc.get(s) : templatesPool).map((id) => model.trips.get(id)).filter(Boolean);
-      if (!pool.length) continue;
-      const serviceId = s || (() => {
-        const near = pool.sort((a, b) => Math.abs(a.first - v.from) - Math.abs(b.first - v.from))[0];
-        S.isolateScope(db, model, [near.id], v.scope);
-        return db.prepare("SELECT service_id FROM trips WHERE trip_id = ?").get(near.id).service_id;
-      })();
-      // Patterns: main only, or cycling through them in proportion.
+    for (const plan of plans.values()) {
+      const dates = [...new Set(plan.dates)].sort();
+      const pool = plan.pool;
+      const serviceId = S.serviceForDates(db, model, pool[0].service_id, dates, { existing });
       const counts = new Map();
       for (const t of pool) counts.set(t.pattern, (counts.get(t.pattern) || 0) + 1);
       const shares = [...counts.entries()].map(([key, n]) => ({ key, n })).sort((a, b) => b.n - a.n);
       const next = v.patternMode === "alternate" && shares.length > 1 ? cycler(shares) : () => shares[0].key;
-      const first = v.start ?? (s && pool.length ? Math.min(...pool.map((t) => t.first)) : v.from);
-      const plan = [];
-      for (let t = Math.max(first, v.from); t < v.to; t += v.headway) plan.push(t);
-      for (const t of plan) {
+      const first = v.start ?? (plan.replaced.length ? Math.min(...plan.replaced.map((t) => t.first)) : v.from);
+      for (let t = Math.max(first, v.from); t < v.to; t += v.headway) {
         const key = next();
-        const candidates = pool.filter((x) => x.pattern === key);
-        const tpl = candidates.sort((a, b) => Math.abs(a.first - t) - Math.abs(b.first - t))[0];
+        const tpl = pool.filter((x) => x.pattern === key).sort((a, b) => Math.abs(a.first - t) - Math.abs(b.first - t))[0];
         const hhmm = secToTime(t).slice(0, 5).replace(":", "");
         G.cloneTrip(db, tpl.id, { newId: G.uniqueId(db, "trips", "trip_id", `${v.routeId}_${d.direction}_${serviceId}_${hhmm}`), serviceId, shiftSec: t - tpl.first, patch: { block_id: null } });
         created += 1;
       }
-      if (s) {
-        removed += G.deleteTrips(db, bySvc.get(s));
-        touchedServices.add(s);
+      series += 1;
+      for (const t of plan.replaced) {
+        if (!withdraw.has(t.id)) withdraw.set(t.id, new Set());
+        dates.forEach((x) => withdraw.get(t.id).add(x));
       }
-      if (pool.some((t) => t.block_id)) warnings.push(`Line ${v.label}: trips were in vehicle blocks; the new ones have none (re-cut the vehicle schedules).`);
+      if (pool.some((t) => t.block_id) || plan.replaced.some((t) => t.block_id)) warnings.push(`Line ${v.label}: trips were in vehicle blocks; the new ones have none (re-cut the vehicle schedules).`);
     }
   }
-  G.dropUnusedServices(db, [...touchedServices]);
+  // Replaced trips stop running on the rebuilt dates only.
+  const buckets = new Map();
+  for (const [id, dates] of withdraw) {
+    const k = [...dates].sort().join(",");
+    if (!buckets.has(k)) buckets.set(k, []);
+    buckets.get(k).push(id);
+  }
+  let restricted = 0;
+  for (const [k, ids] of buckets) restricted += S.withdrawOnDates(db, model, ids, k.split(",")).restricted;
+  if (series > 1) warnings.push(`Line ${v.label}: ${series} series built, one per day timetable of the line (e.g. school days, Wednesdays, holidays), each from its own trips.`);
   const minutes = Math.round(v.headway / 60);
+  const kept = restricted ? `, ${restricted} of them kept on their other dates` : "";
   return {
-    summary: `Line ${v.label}: every ${minutes} min from ${secToTime(v.from).slice(0, 5)} to ${secToTime(v.to).slice(0, 5)} (${S.describeScope(v.scope)}) — ${created} trip(s) created, ${removed} replaced.`,
+    summary: `Line ${v.label}: every ${minutes} min from ${secToTime(v.from).slice(0, 5)} to ${secToTime(v.to).slice(0, 5)} (${S.describeScope(v.scope)}) — ${created} trip(s) created, ${withdraw.size} replaced${kept}.`,
     warnings: [...new Set(warnings)],
-    noop: created === 0 && removed === 0 && !v.perDir.some((x) => x.freqTrips.length),
+    noop: created === 0 && withdraw.size === 0 && !v.perDir.some((x) => x.freqTrips.length),
   };
 };
 
@@ -199,6 +208,7 @@ module.exports = {
   title: "Change the frequency of a line over a period",
   category: "service",
   tables: ["trips", "stop_times", "frequencies", "calendar", "calendar_dates", "transfers"],
+  description: "Replace the departures of a line in a time window by a regular series, on the scope's dates only; each day timetable of the line (school days, Wednesdays, holidays…) is rebuilt from its own trips and running times.",
   params: [
     { name: "route", type: "route", required: true, description: "The line (short name, id or long name)." },
     { name: "days", type: "days", required: true, description: "weekday | saturday | sunday | daily | mon…sun, or a list." },
@@ -208,7 +218,7 @@ module.exports = {
     { name: "headway_min", type: "number", required: true, description: "Minutes between departures." },
     { name: "direction", type: "direction", required: false, description: "0, 1, both (default) or a destination." },
     { name: "start", type: "time", required: false, description: "First departure of the series (default: keep the first existing one)." },
-    { name: "patterns", type: "enum", enum: ["main", "alternate"], required: false, description: "When the window mixes route variants: keep the alternation, or the main one only. Required when variants exist." },
+    { name: "patterns", type: "enum", enum: PATTERN_MODES, required: false, description: "When the window mixes routes of the line: alternate (keep the mix), main (series on the main route, the others kept), main_only (the others go). Required when variants exist." },
   ],
   example: { route: "3", days: "weekday", from: "07:00", to: "09:00", headway_min: 8 },
   resolve,
