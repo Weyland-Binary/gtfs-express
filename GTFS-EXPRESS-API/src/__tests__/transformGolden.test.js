@@ -3,8 +3,10 @@
  * (eval/transform/cases.js), on the real Albi feed: each case's reference
  * plan previews unblocked with integrity intact and passes every check of
  * the oracle; each mutant fails at least one — the oracle can tell a right
- * plan from a plausible wrong one. Cases whose operators are not in the
- * catalogue yet are skipped.
+ * plan from a plausible wrong one. A case whose right answer is a question
+ * (expect: "ask") has an empty reference: the feed must stay as it is.
+ * Cases whose operators are not in the catalogue yet are skipped. Calendar
+ * lookups (public and school holidays) go to a frozen service.
  */
 
 "use strict";
@@ -15,7 +17,7 @@ const fm = require("../services/transform/feedModel");
 const S = require("../services/transform/scope");
 const registry = require("../services/transform/operators");
 const { previewPlan, commitPreview } = require("../services/transform/engine");
-const { CASES, lib, holidayWeekdays, FEED } = require(path.join(__dirname, "../../../eval/transform/cases.js"));
+const { CASES, lib, holidayWeekdays, frozenFetch, FEED } = require(path.join(__dirname, "../../../eval/transform/cases.js"));
 
 const L = lib(fm, S);
 
@@ -25,7 +27,7 @@ const materialize = (plan, before) => JSON.parse(JSON.stringify(plan).replace('"
 const run = async (plan) => {
   const db = loadReal(FEED);
   const before = fm.buildFeedModel(db);
-  const p = await previewPlan(db, materialize(plan, before), { sessionId: "golden" });
+  const p = await previewPlan(db, materialize(plan, before), { sessionId: "golden", country: "FR", fetchImpl: frozenFetch(before, S, fm) });
   if (p.id && !p.blocked) commitPreview("golden", db, p.id);
   return { p, before, after: fm.buildFeedModel(db) };
 };

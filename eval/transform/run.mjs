@@ -43,7 +43,7 @@ if (arg("model")) process.env.TRANSFORM_PLANNER_MODEL = arg("model");
 if (arg("effort")) process.env.NETWORK_PLANNER_EFFORT = arg("effort");
 process.env.NL2SQL_CHAT_ENABLED = "true";
 
-const { CASES, lib, holidayWeekdays, FEED } = require(path.join(__dirname, "cases.js"));
+const { CASES, lib, FEED, frozenFetch } = require(path.join(__dirname, "cases.js"));
 const { loadReal } = require(path.join(API_DIR, "src/__tests__/_helpers/feedDb.js"));
 const fm = require(path.join(API_DIR, "src/services/transform/feedModel.js"));
 const S = require(path.join(API_DIR, "src/services/transform/scope.js"));
@@ -57,39 +57,10 @@ const L = lib(fm, S);
 const runs = Math.max(1, parseInt(arg("runs", "1"), 10));
 const only = arg("case");
 
-// The frozen calendar service: public holidays of France, and the Albi feed's own school holidays as zone C.
-const frozenFetch = (model) => {
-  const hol = S.activeDates(model, "7");
-  const periods = [];
-  for (const d of hol) {
-    const last = periods[periods.length - 1];
-    if (last && fm._internals.addDays(last.end, 1) >= d && d <= fm._internals.addDays(last.end, 3)) last.end = d;
-    else periods.push({ start: d, end: d });
-  }
-  const iso = (ymd) => `${ymd.slice(0, 4)}-${ymd.slice(4, 6)}-${ymd.slice(6)}`;
-  return async (url) => {
-    const u = String(url);
-    const body = u.includes("SchoolHolidays")
-      ? periods.map((p) => ({ startDate: iso(p.start), endDate: iso(p.end), name: [{ language: "FR", text: "Vacances" }], nationwide: false, subdivisions: [{ shortName: "FR-C" }] }))
-      : [
-          { date: "2026-11-01", localName: "Toussaint", name: "All Saints", global: true },
-          { date: "2026-11-11", localName: "Armistice", name: "Armistice", global: true },
-          { date: "2026-12-25", localName: "Noël", name: "Christmas", global: true },
-          { date: "2027-01-01", localName: "Jour de l'an", name: "New Year", global: true },
-          { date: "2027-03-29", localName: "Lundi de Pâques", name: "Easter Monday", global: true },
-          { date: "2027-05-01", localName: "Fête du Travail", name: "Labour Day", global: true },
-          { date: "2027-05-08", localName: "Victoire 1945", name: "Victory", global: true },
-          { date: "2027-05-06", localName: "Ascension", name: "Ascension", global: true },
-          { date: "2027-05-17", localName: "Lundi de Pentecôte", name: "Whit Monday", global: true },
-        ];
-    return { ok: true, json: async () => body };
-  };
-};
-
 const runCase = async (c) => {
   const db = loadReal(FEED);
   const before = fm.buildFeedModel(db);
-  const fetchImpl = frozenFetch(before);
+  const fetchImpl = frozenFetch(before, S, fm);
   const t0 = Date.now();
   let plan = null;
   let preview = null;
@@ -98,7 +69,8 @@ const runCase = async (c) => {
   let questions = 0;
   let turns = 0;
   let brief = c.brief;
-  for (; turns < 3; ) {
+  const maxTurns = c.expect === "ask" ? 1 : 3;
+  for (; turns < maxTurns; ) {
     turns += 1;
     const events = [];
     const out = await planner.planChanges({ db, sessionId: `eval-${c.id}`, country: "FR", fetchImpl, brief, plan, history, language: "fr", rateKey: "eval", signal: new AbortController().signal, emit: (e, d) => events.push({ e, d }) });
@@ -121,7 +93,11 @@ const runCase = async (c) => {
   }
   let checks = [];
   let committed = false;
-  if (preview && preview.id && !preview.blocked) {
+  if (c.expect === "ask") {
+    // The right answer is a question (the data is not in the feed): nothing may change.
+    const asked = questions > 0 || Boolean(preview?.blocked) || !(plan?.operations || []).length;
+    checks = [{ id: "asked_for_the_missing_data", ok: asked, detail: `${questions} question(s)${preview?.blocked ? ", plan blocked" : ""}` }, ...c.checks(L).map((k) => ({ id: k.id, ...k.run(before, fm.buildFeedModel(db)) }))];
+  } else if (preview && preview.id && !preview.blocked) {
     const again = await engine.previewPlan(db, plan, { sessionId: "eval", router: createRouter({ mode: "straight" }), country: "FR", fetchImpl });
     if (again.id && !again.blocked) {
       engine.commitPreview("eval", db, again.id);
@@ -132,7 +108,7 @@ const runCase = async (c) => {
   }
   return {
     case: c.id,
-    passed: committed && checks.length > 0 && checks.every((x) => x.ok),
+    passed: (committed || c.expect === "ask") && checks.length > 0 && checks.every((x) => x.ok),
     committed,
     checks,
     blocked: Boolean(preview?.blocked),
