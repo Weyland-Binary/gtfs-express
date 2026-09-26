@@ -28,6 +28,7 @@ const geo = require("../geometry");
 const S = require("../scope");
 
 const FAR_DETOUR_M = 1500;
+const NEAR_PATH_DETOUR_M = 400;
 
 const label = (r) => r.short_name || r.id;
 const name = (model, id) => model.stops.get(id)?.name || id;
@@ -50,14 +51,18 @@ const commonResolve = async (model, p, ctx, ambiguities) => {
 
 // ── add_stop ─────────────────────────────────────────────────────────────
 
+// An anchor is a stop id or the ids of one place (both sides of a road): the first it serves.
+const indexOfAny = (stops, anchor) => (Array.isArray(anchor) ? stops.findIndex((s) => anchor.includes(s)) : stops.indexOf(anchor));
+const anchorName = (model, anchor) => name(model, Array.isArray(anchor) ? anchor[0] : anchor);
+
 const insertionFor = (model, pattern, X, { after, before }) => {
   const stops = pattern.stops;
   if (after || before) {
-    const ia = after ? stops.indexOf(after) : -1;
-    const ib = before ? stops.indexOf(before) : -1;
-    if (after && ia < 0) return { skip: `does not serve ${name(model, after)}` };
-    if (before && ib < 0) return { skip: `does not serve ${name(model, before)}` };
-    if (after && before && ib !== ia + 1) return { skip: `${name(model, after)} and ${name(model, before)} are not consecutive` };
+    const ia = after ? indexOfAny(stops, after) : -1;
+    const ib = before ? indexOfAny(stops, before) : -1;
+    if (after && ia < 0) return { skip: `does not serve ${anchorName(model, after)}` };
+    if (before && ib < 0) return { skip: `does not serve ${anchorName(model, before)}` };
+    if (after && before && ib !== ia + 1) return { skip: `${anchorName(model, after)} and ${anchorName(model, before)} are not consecutive` };
     return { index: after ? ia + 1 : ib };
   }
   const c = (id) => model.stops.get(id);
@@ -98,9 +103,9 @@ const resolveAdd = async (model, p, ctx) => {
   const anchors = {};
   for (const k of ["after", "before"]) {
     if (p[k] == null || p[k] === "") continue;
-    const s = R.stop(model, p[k], { routeId: route.value?.id });
+    const s = R.stop(model, p[k], { routeId: route.value?.id, group: true });
     if (s.ambiguity) ambiguities.push({ param: k, ...s.ambiguity });
-    else anchors[k] = s.value.id;
+    else anchors[k] = s.many ? s.many.map((x) => x.id) : s.value.id;
   }
   let direction = "both";
   if (route.value) {
@@ -135,6 +140,15 @@ const resolveAdd = async (model, p, ctx) => {
     if (ins.skip && (anchors.after || anchors.before)) {
       const swapped = insertionFor(model, pat, here, { after: anchors.before, before: anchors.after });
       if (!swapped.skip) ins = swapped;
+    }
+    // The anchors are not on this direction's path (a one-way street): the
+    // stop goes where this path passes closest, when that is close enough.
+    if (ins.skip && (anchors.after || anchors.before) && direction === "both") {
+      const free = insertionFor(model, pat, here, {});
+      if (free.index != null && free.detour <= NEAR_PATH_DETOUR_M) {
+        warnings.push(`Direction ${pat.direction_id} does not pass ${ins.skip.replace(/^does not serve /, "")}: ${stop.name} placed between ${name(model, pat.stops[free.index - 1])} and ${name(model, pat.stops[free.index])}, where its path passes closest (+${Math.round(free.detour)} m).`);
+        ins = free;
+      }
     }
     if (ins.skip) {
       warnings.push(`Direction ${pat.direction_id}, pattern to ${name(model, pat.stops[pat.stops.length - 1])} (${pat.trips.length} trips) ${ins.skip}: left unchanged.`);
