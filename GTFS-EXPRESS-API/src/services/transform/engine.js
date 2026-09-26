@@ -16,7 +16,8 @@
  *     id, steps: [{ id, type, status: applied|blocked|failed|skipped, ambiguities, summary, warnings }],
  *     blocked, changes: { table: { inserted, deleted, updated } }, diff: semanticDiff, lines: [text],
  *     integrity: [...], impact: impact.impactOf (km, hours, cost, fleet, stops losing service,
- *     "major service change" flags), conformance: { before, after }, validation?: { before, after, new_errors }
+ *     "major service change" flags), quality: feedQuality.compareQuality (score and dimensions
+ *     before → after, findings added / resolved), conformance: { before, after }, validation?: { before, after, new_errors }
  *   }
  *   commitPreview(sessionId, db, previewId) → { editId, description }
  *
@@ -150,6 +151,17 @@ const previewPlan = async (db, plan, { sessionId = null, dataVersion = null, val
     }
   }
 
+  // The network's quality on the planners' scale (tiers, frequency, span, spacing, speed, legibility).
+  let quality = null;
+  if (!changeset.empty) {
+    try {
+      const { feedQuality, compareQuality } = require("./feedQuality");
+      quality = compareQuality(feedQuality(before), feedQuality(after));
+    } catch (err) {
+      quality = { error: err.message };
+    }
+  }
+
   let conformance = null;
   if (plan?.requirements) {
     const { checkFeedConformance } = require("./feedView");
@@ -171,7 +183,7 @@ const previewPlan = async (db, plan, { sessionId = null, dataVersion = null, val
   const title = String(plan?.title || "").slice(0, 120) || `${steps.filter((s) => s.status === "applied").length} change(s)`;
   if (!changeset.empty) _previews.set(previewId, { sessionId, dataVersion, at: Date.now(), redoOps, undoOps, tables: Object.keys(changeset.tables), title, blocked });
   sandbox.close();
-  return { id: changeset.empty ? null : previewId, title, steps, blocked, empty: changeset.empty, changes: summarize(changeset), diff, lines, integrity: newIntegrity, impact, conformance, validation };
+  return { id: changeset.empty ? null : previewId, title, steps, blocked, empty: changeset.empty, changes: summarize(changeset), diff, lines, integrity: newIntegrity, impact, quality, conformance, validation };
 };
 
 // New errors by rule: what the change broke, not what was already broken.

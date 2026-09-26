@@ -1283,6 +1283,16 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/OkJson"
+  /gtfs/transform/quality:
+    get:
+      tags:
+        - Transform
+      summary: "The network's quality report measured on its GTFS with planners' thresholds (TCQSM/TCRP 165, Cerema tiers, legibility, French urban criteria): score and grade, dimensions (frequency, span, spacing, speed, legibility, network) with findings, per-line measures and tier, frequent stops, connectivity."
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
   /gtfs/transform/preview:
     post:
       tags:

@@ -409,6 +409,62 @@ export function ChangesPanel({ preview }) {
   );
 }
 
+/** The network's quality on the planners' scale, before → after the plan. */
+export function QualityCard({ quality }) {
+  const { t } = useLanguage();
+  const theme = useTheme();
+  if (!quality || quality.error) return null;
+  const tone = (a, b) => (b > a ? "success.main" : b < a ? "error.main" : "text.secondary");
+  const params = (f) => {
+    const p = { ...(f.params || {}) };
+    if (p.tier) p.tier = tf(t, `transform.quality.tier.${p.tier}`, null, p.tier);
+    for (const k of ["main_share", "same_path", "share", "target"]) if (typeof p[k] === "number" && p[k] <= 1) p[k] = `${Math.round(p[k] * 100)} %`;
+    if (Array.isArray(p.lines)) p.lines = p.lines.join(", ");
+    return p;
+  };
+  const phrase = (f) => `${f.label ? `${t("transform.line", { line: f.label })} — ` : ""}${tf(t, `transform.quality.finding.${f.code}`, params(f), f.code)}`;
+  return (
+    <Box data-testid="change-quality" sx={{ p: 1.25, borderRadius: "12px", background: theme.palette.background.paper, boxShadow: `0 0 0 1px ${theme.palette.divider}` }}>
+      <Box sx={{ display: "flex", alignItems: "baseline", gap: 1 }}>
+        <Typography sx={{ fontSize: "0.82rem", fontWeight: 800, flex: 1 }}>{t("transform.quality.title")}</Typography>
+        <Typography sx={{ fontSize: "0.9rem", fontWeight: 800, color: tone(quality.score.before, quality.score.after) }} data-testid="change-quality-score">
+          {quality.score.grade_before} {quality.score.before} → {quality.score.grade_after} {quality.score.after}
+        </Typography>
+      </Box>
+      <Box sx={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: 0.5, mt: 0.75 }}>
+        {quality.dimensions.map((d) => (
+          <Box key={d.id} sx={{ px: 1, py: 0.5, borderRadius: "8px", background: soft(theme) }}>
+            <Typography sx={{ fontSize: "0.64rem", color: "text.secondary", fontWeight: 600 }}>{t(`transform.quality.dim.${d.id}`)}</Typography>
+            <Typography sx={{ fontSize: "0.8rem", fontWeight: 800, color: tone(d.before, d.after) }}>
+              {d.before} → {d.after}
+            </Typography>
+          </Box>
+        ))}
+      </Box>
+      {quality.resolved.length > 0 && (
+        <Box sx={{ mt: 0.75 }}>
+          <Typography sx={{ fontSize: "0.7rem", fontWeight: 700, color: "success.main" }}>{t("transform.quality.resolved", { count: quality.resolved.length })}</Typography>
+          {quality.resolved.slice(0, 6).map((f, i) => (
+            <Typography key={i} sx={{ fontSize: "0.7rem", color: "text.secondary", lineHeight: 1.45 }}>
+              ✓ {phrase(f)}
+            </Typography>
+          ))}
+        </Box>
+      )}
+      {quality.added.length > 0 && (
+        <Box sx={{ mt: 0.75 }}>
+          <Typography sx={{ fontSize: "0.7rem", fontWeight: 700, color: "warning.main" }}>{t("transform.quality.added", { count: quality.added.length })}</Typography>
+          {quality.added.slice(0, 6).map((f, i) => (
+            <Typography key={i} sx={{ fontSize: "0.7rem", color: "text.secondary", lineHeight: 1.45 }}>
+              ! {phrase(f)}
+            </Typography>
+          ))}
+        </Box>
+      )}
+    </Box>
+  );
+}
+
 export function ChecksPanel({ preview, validating, onValidate }) {
   const { t } = useLanguage();
   const theme = useTheme();
@@ -419,6 +475,7 @@ export function ChecksPanel({ preview, validating, onValidate }) {
   const v = preview.validation;
   return (
     <Box data-testid="change-checks" sx={{ display: "flex", flexDirection: "column", gap: 1.25 }}>
+      <QualityCard quality={preview.quality} />
       <Box sx={{ p: 1.25, borderRadius: "12px", background: theme.palette.background.paper, boxShadow: `0 0 0 1px ${theme.palette.divider}` }}>
         <Typography sx={{ fontSize: "0.82rem", fontWeight: 800, mb: 0.75 }}>{t("transform.checks.clauses")}</Typography>
         {!after.length && <Typography sx={{ fontSize: "0.76rem", color: "text.secondary" }}>{t("transform.checks.noClauses")}</Typography>}

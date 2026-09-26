@@ -2,6 +2,8 @@
  * transformController — the HTTP surface of the transformation engine.
  *
  *   GET  /transform/operations        the catalogue (types, params, examples)
+ *   GET  /transform/quality           the network's quality report (tiers, frequency,
+ *                                     span, spacing, speed, legibility, connectivity)
  *   GET  /transform/overview          the feed as the engine sees it: routes with
  *                                     their service per day type (to phrase a brief)
  *   POST /transform/preview { plan, validate? }
@@ -61,6 +63,14 @@ const overviewOf = (model) => {
     return { id: r.id, short_name: r.short_name, long_name: r.long_name, mode: r.mode, patterns: r.patterns.length, termini: main ? [model.stops.get(main.stops[0])?.name, model.stops.get(main.stops[main.stops.length - 1])?.name] : null, stops: new Set(r.patterns.flatMap((p) => p.stops)).size, service };
   });
   return { counts: model.counts, range: model.range, representative: model.representative, routes };
+};
+
+/** GET /transform/quality — the network's quality report on the planners' scale. */
+const getQuality = (req, res) => {
+  const ctx = requireSession(req, res);
+  if (!ctx) return;
+  const { feedQuality } = require("./feedQuality");
+  res.json(feedQuality(buildFeedModel(ctx.db)));
 };
 
 const getOverview = (req, res) => {
@@ -181,4 +191,4 @@ const compareHandler = (req, res) => {
   res.json({ ...diff, lines: diff.items.map(describe) });
 };
 
-module.exports = { getOperations, getOverview, previewPlanHandler, commitHandler, compareHandler, planHandler, overviewOf, validateDb, _internals: { crypto } };
+module.exports = { getOperations, getOverview, getQuality, previewPlanHandler, commitHandler, compareHandler, planHandler, overviewOf, validateDb, _internals: { crypto } };

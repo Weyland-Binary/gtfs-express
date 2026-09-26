@@ -345,6 +345,7 @@ router.post("/network/needs", networkController.networkNeeds);
 const transformController = require("../services/transform/transformController");
 router.get("/transform/operations", transformController.getOperations);
 router.get("/transform/overview", transformController.getOverview);
+router.get("/transform/quality", transformController.getQuality);
 router.post("/transform/preview", transformController.previewPlanHandler);
 router.post("/transform/commit", transformController.commitHandler);
 router.post("/transform/compare", transformController.compareHandler);
