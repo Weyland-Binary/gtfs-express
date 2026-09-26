@@ -156,6 +156,58 @@ const exportAlertsHandler = (req, res) => {
   res.json({ alerts: p.passenger, feed: out.feed, notice: out.notice });
 };
 
+// ── Reference feeds: other operators' timetables, read-only ────────────────
+
+const references = require("./referenceFeeds");
+
+/** GET /transform/references */
+const listReferencesHandler = (req, res) => {
+  const ctx = requireSession(req, res);
+  if (!ctx) return;
+  res.json({ references: references.listReferences(ctx.sessionId) });
+};
+
+/** POST /transform/references { url, name } — download, keep what calls near this network. */
+const addReferenceHandler = async (req, res) => {
+  const ctx = requireSession(req, res);
+  if (!ctx) return;
+  const url = typeof req.body?.url === "string" ? req.body.url.trim() : "";
+  const name = typeof req.body?.name === "string" ? req.body.name.slice(0, 80) : null;
+  if (!/^https:\/\/\S+$/i.test(url) || url.length > 2000) return res.status(400).json({ error: "INVALID_INPUT", message: "url (https, a GTFS zip) is required." });
+  try {
+    const meta = await references.addReference(ctx.sessionId, { url, name, clipTo: buildFeedModel(ctx.db) });
+    recordEvent("transform.reference_added", { ...extractReqMeta(req), trips: meta.counts.trips });
+    res.status(201).json(meta);
+  } catch (err) {
+    res.status(err.status || 502).json({ error: err.code || "REFERENCE_FAILED", message: err.message });
+  }
+};
+
+/** DELETE /transform/references/:id */
+const removeReferenceHandler = (req, res) => {
+  const ctx = requireSession(req, res);
+  if (!ctx) return;
+  const id = String(req.params.id || "");
+  if (!/^[a-f0-9]{12}$/.test(id)) return res.status(400).json({ error: "INVALID_INPUT", message: "A reference id is required." });
+  if (!references.removeReference(ctx.sessionId, id)) return res.status(404).json({ error: "REFERENCE_NOT_FOUND", message: "No such reference feed." });
+  res.json({ ok: true });
+};
+
+/** GET /transform/references/:id/departures?stop=&towards=&event=&day=&dates=&from=&to= */
+const referenceDeparturesHandler = (req, res) => {
+  const ctx = requireSession(req, res);
+  if (!ctx) return;
+  const id = String(req.params.id || "");
+  if (!/^[a-f0-9]{12}$/.test(id) || typeof req.query.stop !== "string") return res.status(400).json({ error: "INVALID_INPUT", message: "A reference id and a stop are required." });
+  const q = req.query;
+  const dates = typeof q.dates === "string" && q.dates ? q.dates.split(",").map((d) => d.trim()).filter((d) => /^\d{4}-?\d{2}-?\d{2}$/.test(d)).slice(0, 31) : null;
+  try {
+    res.json(references.referenceDepartures(ctx.sessionId, id, { stop: q.stop.slice(0, 120), towards: typeof q.towards === "string" ? q.towards.slice(0, 120) : null, event: q.event === "arrive" ? "arrive" : "depart", day: ["weekday", "saturday", "sunday"].includes(q.day) ? q.day : "weekday", dates, from: typeof q.from === "string" ? q.from : null, to: typeof q.to === "string" ? q.to : null }));
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.code || "REFERENCE_FAILED", message: err.message, options: err.options });
+  }
+};
+
 const encodeSSE = (event, data) => `event: ${event}\ndata: ${JSON.stringify(data == null ? {} : data)}\n\n`;
 
 /** POST /transform/plan — a planner turn (SSE): a brief → a change plan, previewed. */
@@ -234,4 +286,4 @@ const compareHandler = (req, res) => {
   res.json({ ...diff, lines: diff.items.map(describe) });
 };
 
-module.exports = { getOperations, getOverview, getQuality, exportDiffHandler, exportAlertsHandler, previewPlanHandler, commitHandler, compareHandler, planHandler, overviewOf, validateDb, _internals: { crypto } };
+module.exports = { getOperations, getOverview, getQuality, exportDiffHandler, exportAlertsHandler, listReferencesHandler, addReferenceHandler, removeReferenceHandler, referenceDeparturesHandler, previewPlanHandler, commitHandler, compareHandler, planHandler, overviewOf, validateDb, _internals: { crypto } };

@@ -7,6 +7,7 @@
  *   fetchHealth()                   GET  /transform/quality      quality, minimum fleet, consumer checks
  *   fetchAlerts(id, { language })   GET  /transform/preview/:id/alerts   passenger information of a preview
  *   downloadPreviewExport(id, kind) alerts-pb | alerts-json | diff-csv | diff-json → a file
+ *   fetchReferences() / addReference({ url, name }) / removeReference(id)   other operators' timetables
  *   previewChangePlan(plan, opts)   POST /transform/preview      sandbox run, nothing written
  *   commitChangePlan(previewId)     POST /transform/commit       one undoable edit (edit mode)
  *   streamChangePlan({...})         POST /transform/plan         the change planner (SSE)
@@ -40,6 +41,10 @@ const EXPORTS = {
   "diff-csv": (id) => [`/transform/preview/${id}/gtfs-diff/csv`, `gtfs-diff-${id}.csv`],
   "diff-json": (id) => [`/transform/preview/${id}/gtfs-diff/json`, `gtfs-diff-${id}.json`],
 };
+export const fetchReferences = () => fetchWithSession(`${API_BASE_URL}/transform/references`).then(json);
+export const addReference = ({ url, name }) => post("/transform/references", { url, name });
+export const removeReference = (id) => fetchWithSession(`${API_BASE_URL}/transform/references/${id}`, { method: "DELETE" }).then(json);
+
 /** Download one export of a preview as a file. */
 export const downloadPreviewExport = async (previewId, kind, { language = "en" } = {}) => {
   const [path, filename] = EXPORTS[kind](previewId, encodeURIComponent(language));

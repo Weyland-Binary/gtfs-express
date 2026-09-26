@@ -30,6 +30,7 @@ const registry = require("./operators");
 const engine = require("./engine");
 const R = require("./resolve");
 const { buildFeedModel, routeStats, departures, _internals: fm } = require("./feedModel");
+const references = require("./referenceFeeds");
 
 const MAX_ROUNDS = 16;
 const MAX_CONSECUTIVE_ERRORS = 4;
@@ -98,7 +99,7 @@ const buildSystemPrompt = () => `You are the service-change planner of GTFS Expr
 6. Order: validity/calendar first, then line structure (create, extend, truncate, reroute, split, merge), then stops, then timetables (headways, spans, trips, running times), then connections, fares, attributes, asserts after.
 7. After set_plan / patch_plan, read the preview. Fix what is YOUR mistake (a wrong id, a missing parameter the brief does state, a failed step). Leave the genuine questions to the user: call ask_user with them (reuse the engine's options) and stop. Do not loop more than needed.
 8. Answer in the user's language, briefly: what the plan does, what you assumed, what you need.
-9. Data that is not in the feed (another operator's trains, a school's bell times, counts) is never invented: ask for it (ask_user), with where it can be found, and change nothing that depends on it.
+9. Data that is not in the feed (another operator's trains, a school's bell times, counts) is never invented. Another operator's timetable loaded as a REFERENCE feed (listed in the context) is read with reference_timetable and aligned on with align_connections { with: { times, name } }, one step per day timetable; say when its validity does not cover the dates. Otherwise ask for it (ask_user: the operator's GTFS, e.g. on transport.data.gouv.fr, or the times themselves) and change nothing that depends on it.
 
 # Recipes (how real briefs map onto the catalogue)
 ${recipesText()}
@@ -261,6 +262,35 @@ const createTools = (ctx) => {
     },
   };
 
+  // Other operators' timetables loaded next to the feed (references).
+  const referenceTimetable = {
+    definition: {
+      name: "reference_timetable",
+      description: "The calls at a station in a REFERENCE feed (another operator's timetable loaded next to this feed, e.g. the regional trains): departures (or arrivals) of the trips going on to `towards` (or coming from it, for arrivals), per date asked (YYYY-MM-DD) or typical day (weekday, saturday, sunday), within from–to. It says when the reference's validity does not cover the dates. Feed these times to align_connections as with: { times, name }, one step per day timetable.",
+      input_schema: {
+        type: "object",
+        properties: { reference: { type: "string", description: "Reference id or name (default: the only one)." }, stop: { type: "string" }, towards: { type: "string" }, event: { type: "string", enum: ["depart", "arrive"] }, day: { type: "string" }, dates: { type: "array", items: { type: "string" } }, from: { type: "string" }, to: { type: "string" } },
+        required: ["stop"],
+      },
+    },
+    run(input) {
+      const refs = ctx.sessionId ? references.listReferences(ctx.sessionId) : [];
+      if (!refs.length) return { content: "No reference feed is loaded for this session: ask the user for the other operator's GTFS (a public URL, e.g. on transport.data.gouv.fr) to add as a reference, or for the times themselves. Change nothing that depends on them.", isError: true };
+      const want = String(input.reference || "").toLowerCase();
+      const ref = refs.find((r) => r.id === input.reference) || refs.find((r) => want && r.name.toLowerCase().includes(want)) || (refs.length === 1 ? refs[0] : null);
+      if (!ref) return { content: `Which reference? ${refs.map((r) => `${r.id} (${r.name})`).join(", ")}`, isError: true };
+      try {
+        const out = references.referenceDepartures(ctx.sessionId, ref.id, { stop: input.stop, towards: input.towards || null, event: input.event === "arrive" ? "arrive" : "depart", day: input.day || "weekday", dates: Array.isArray(input.dates) ? input.dates : null, from: input.from || null, to: input.to || null });
+        const lines = [`Reference "${ref.name}" (validity ${out.validity ? `${out.validity.start}–${out.validity.end}` : "none"}), ${out.event === "arrive" ? "arrivals" : "departures"} at ${out.stop.join(" / ")}${out.towards ? ` ${out.event === "arrive" ? "from" : "towards"} ${out.towards}` : ""}:`];
+        for (const d of out.days) lines.push(`- ${d.asked || d.day} (times of ${d.date || "no date"}): ${d.times.join(" ") || "none"}`);
+        for (const w of out.warnings) lines.push(`! ${w}`);
+        return { content: lines.join("\n") };
+      } catch (err) {
+        return { content: `${err.code || "ERROR"}: ${err.message}`, isError: true };
+      }
+    },
+  };
+
   const runPreview = async () => {
     const p = await engine.previewPlan(ctx.db, ctx.plan, { sessionId: ctx.sessionId, dataVersion: ctx.dataVersion, router: ctx.router, country: ctx.country, fetchImpl: ctx.fetchImpl });
     ctx.preview = p;
@@ -379,7 +409,7 @@ const createTools = (ctx) => {
     },
   };
 
-  const tools = [lookup, routeTimetable, setPlan, patchPlan, askUser];
+  const tools = [lookup, routeTimetable, referenceTimetable, setPlan, patchPlan, askUser];
   return { definitions: tools.map((t) => t.definition), byName: Object.fromEntries(tools.map((t) => [t.definition.name, t])) };
 };
 
@@ -463,6 +493,8 @@ const planChanges = async ({ db, sessionId = null, dataVersion = null, country =
   const docs = briefDocuments.getDocuments(documentIds);
   const context = [`[Today] ${new Date().toISOString().slice(0, 10)}`];
   if (country) context.push(`[Country] ${country} (public and school holidays can be named periods)`);
+  const refs = sessionId ? references.listReferences(sessionId) : [];
+  if (refs.length) context.push(`[Reference feeds] ${refs.map((r) => `${r.id} "${r.name}" (${r.agencies.join(", ") || "?"}; ${r.counts.trips} trips near the network; validity ${r.validity ? `${r.validity.start}–${r.validity.end}` : "?"})`).join("; ")} — read them with reference_timetable.`);
   if (docs.missing.length) context.push(`[Documents] ${docs.missing.length} attached document(s) expired on the server and are NOT in this message: say so; do not guess their content.`);
   if (docs.found.length) emit("step", { kind: "documents", count: docs.found.length, names: docs.found.map((d) => d.name) });
   // The current plan is previewed again: the model sees where it stands.

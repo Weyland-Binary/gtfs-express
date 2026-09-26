@@ -29,6 +29,7 @@ import PlaylistAddCheckIcon from "@mui/icons-material/PlaylistAddCheck";
 import CompareArrowsIcon from "@mui/icons-material/CompareArrows";
 import FactCheckOutlinedIcon from "@mui/icons-material/FactCheckOutlined";
 import DescriptionOutlinedIcon from "@mui/icons-material/DescriptionOutlined";
+import TrainOutlinedIcon from "@mui/icons-material/TrainOutlined";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { useEditMode } from "../../contexts/EditModeContext";
 import { useFeatures } from "../../utils/featuresApi";
@@ -37,10 +38,11 @@ import { BRIEF_ACCEPT, uploadBriefDocument, deleteBriefDocument } from "../../ut
 import { fetchOperations, fetchOverview, fetchHealth, previewChangePlan, commitChangePlan, streamChangePlan, withParam, nextOpId } from "../../utils/transformApi";
 import { OperationCard, OperationDialog, ChangesPanel, ChecksPanel, NetworkHealthCard } from "./ChangePlanParts";
 import { soft } from "../network/StudioUI";
+import ReferencesDialog from "./ReferencesDialog";
 
 const EMPTY_PLAN = { title: "", operations: [] };
 const MAX_DOCUMENTS = 5;
-const TOOL_LABEL = { lookup: "lookup", route_timetable: "timetable", set_plan: "plan", patch_plan: "plan", ask_user: "questions" };
+const TOOL_LABEL = { lookup: "lookup", route_timetable: "timetable", reference_timetable: "timetable", set_plan: "plan", patch_plan: "plan", ask_user: "questions" };
 
 export default function ChangeStudio({ open, onClose, initialPlan = null }) {
   const { t, language } = useLanguage();
@@ -64,6 +66,7 @@ export default function ChangeStudio({ open, onClose, initialPlan = null }) {
   const [documents, setDocuments] = useState([]);
   const [tab, setTab] = useState("plan");
   const [dialog, setDialog] = useState(null); // { initial } for add/edit
+  const [refsOpen, setRefsOpen] = useState(false);
   const [error, setError] = useState(null);
   const abortRef = useRef(null);
   const fileRef = useRef(null);
@@ -266,6 +269,11 @@ export default function ChangeStudio({ open, onClose, initialPlan = null }) {
             {plan.title || t("transform.subtitle")}
           </Typography>
         </Box>
+        <Tooltip title={t("transform.references.title")}>
+          <IconButton size="small" onClick={() => setRefsOpen(true)} aria-label={t("transform.references.title")} data-testid="change-references-open">
+            <TrainOutlinedIcon />
+          </IconButton>
+        </Tooltip>
         <Tooltip title={t("transform.startOver")}>
           <span>
             <IconButton size="small" onClick={reset} disabled={streaming || committing} aria-label={t("transform.startOver")} data-testid="change-reset">
@@ -442,6 +450,7 @@ export default function ChangeStudio({ open, onClose, initialPlan = null }) {
         </Box>
       </Box>
       <OperationDialog open={Boolean(dialog)} catalogue={catalogue} routes={routes} initial={dialog?.initial || null} onClose={() => setDialog(null)} onSave={saveOp} />
+      <ReferencesDialog open={refsOpen} onClose={() => setRefsOpen(false)} />
     </Dialog>
   );
 }
