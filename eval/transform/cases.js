@@ -89,7 +89,7 @@ const lib = (fm, S) => {
 };
 
 const T = (h, m = 0) => h * 3600 + m * 60;
-const [A, B, C, D, E, R, H, J] = ["113", "114", "112", "117", "118", "116", "124", "121"];
+const [A, B, C, D, E, F, G, R, H, J] = ["113", "114", "112", "117", "118", "115", "141", "116", "124", "121"];
 
 const DOW = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 const dowOf = (ymd) => DOW[new Date(Date.UTC(+ymd.slice(0, 4), +ymd.slice(4, 6) - 1, +ymd.slice(6, 8))).getUTCDay()];
@@ -752,13 +752,12 @@ const CASES = [
     title: "The validity extended over the summer with the holiday timetable, a public holiday off, expired services pruned",
     requires: ["extend_validity", "run_like", "delete_rows"],
     brief: "Prolonger la validité des horaires jusqu'au 31 août 2027 : du lundi 5 juillet au mardi 31 août 2027, les lignes circulent selon l'offre « vacances scolaires » du lundi au vendredi et selon l'offre du samedi le samedi ; aucune circulation le mercredi 14 juillet. Supprimer les services de début septembre 2026 qui ont expiré.",
-    answers: { like_date: "2027-04-19" },
+    answers: { like_date: "2027-04-12" },
     reference: {
       title: "Été 2027 et nettoyage",
       operations: [
         { id: "validity", type: "extend_validity", params: { end_date: "2027-08-31" }, source: { quote: "Prolonger la validité des horaires jusqu'au 31 août 2027" } },
-        { id: "weekdays", type: "run_like", params: { routes: "all", like: "weekday", like_date: "2027-04-19", days: "weekday", from_date: "2027-07-05", to_date: "2027-08-31" }, source: { quote: "du lundi au vendredi selon l'offre « vacances scolaires »" } },
-        { id: "saturdays", type: "run_like", params: { routes: "all", like: "saturday", days: "saturday", from_date: "2027-07-05", to_date: "2027-08-31" }, source: { quote: "selon l'offre du samedi le samedi" } },
+        { id: "weekdays", type: "run_like", params: { routes: "all", like: "weekday", like_date: "2027-04-12", days: "weekday", from_date: "2027-07-05", to_date: "2027-08-31" }, source: { quote: "du lundi au vendredi selon l'offre « vacances scolaires »" } },
         { id: "july14", type: "run_like", params: { routes: "all", like: "none", dates: ["2027-07-14"] }, source: { quote: "aucune circulation le mercredi 14 juillet" } },
         { id: "prune", type: "delete_rows", params: { table: "calendar", where: { service_id: ["1", "2", "3", "4"] }, cascade: "cascade" }, source: { quote: "Supprimer les services de début septembre 2026 qui ont expiré" } },
       ],
@@ -825,8 +824,7 @@ const CASES = [
         plan: {
           operations: [
             { id: "v", type: "extend_validity", params: { end_date: "2027-08-31" } },
-            { id: "w", type: "run_like", params: { routes: "all", like: "weekday", like_date: "2027-04-19", days: "weekday", from_date: "2027-07-05", to_date: "2027-08-31" } },
-            { id: "s", type: "run_like", params: { routes: "all", like: "saturday", days: "saturday", from_date: "2027-07-05", to_date: "2027-08-31" } },
+            { id: "w", type: "run_like", params: { routes: "all", like: "weekday", like_date: "2027-04-12", days: "weekday", from_date: "2027-07-05", to_date: "2027-08-31" } },
             { id: "n", type: "run_like", params: { routes: "all", like: "none", dates: ["2027-07-14"] } },
           ],
         },

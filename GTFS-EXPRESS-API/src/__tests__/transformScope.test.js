@@ -207,3 +207,12 @@ describe("strict dates and services that stay what their id says", () => {
     expect(d.prepare("SELECT location_type FROM stops WHERE stop_name = 'Enum Plaza'").get().location_type).toBe("0");
   });
 });
+
+describe("the validity is where trips run", () => {
+  test("a leftover calendar without trips does not widen the model's range", () => {
+    const d = sandboxOf(db);
+    const r0 = buildFeedModel(d).range;
+    d.prepare("INSERT INTO calendar (service_id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date) VALUES ('OLD', 1, 1, 1, 1, 1, 0, 0, '20200101', '20301231')").run();
+    expect(buildFeedModel(d).range).toEqual(r0);
+  });
+});

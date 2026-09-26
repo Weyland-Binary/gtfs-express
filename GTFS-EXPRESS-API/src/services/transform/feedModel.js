@@ -189,9 +189,14 @@ const buildFeedModel = (db, { weekend = ["sat", "sun"], base = null, changedTrip
   }
   for (const r of routes.values()) r.patterns = [...patterns.values()].filter((p) => p.route_id === r.id).sort((a, b) => b.trips.length - a.trips.length);
 
-  // Validity range: the union of calendar ranges and exception dates.
+  // Validity range: the union of the calendar ranges and exception dates of
+  // the services trips run on (a leftover calendar without trips does not
+  // widen it); all services when no trip names any.
+  const used = new Set();
+  for (const t of trips.values()) used.add(t.service_id);
   const bounds = [];
   for (const s of services.values()) {
+    if (used.size && !used.has(s.id)) continue;
     if (s.start) bounds.push(s.start);
     if (s.end) bounds.push(s.end);
     for (const d of s.added) bounds.push(d);
