@@ -1179,6 +1179,31 @@ paths:
         "409":
           $ref: "#/components/responses/EditModeRequired"
   /gtfs/edit/stop_times/{trip_id}/{stop_sequence}:
+    get:
+      tags:
+        - Edit
+      summary: Get a stop_times record.
+      parameters:
+        - name: trip_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: stop_sequence
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Position of the stop within the trip (stop_times.stop_sequence).
+      security:
+        - SessionId: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
     patch:
       tags:
         - Edit
