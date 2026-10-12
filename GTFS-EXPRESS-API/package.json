@@ -32,9 +32,9 @@
     ]
   },
   "dependencies": {
-    "@anthropic-ai/bedrock-sdk": "0.34.2",
-    "@anthropic-ai/sdk": "^0.128.0",
-    "@anthropic-ai/vertex-sdk": "0.20.2",
+    "@anthropic-ai/bedrock-sdk": "0.34.4",
+    "@anthropic-ai/sdk": "^0.133.0",
+    "@anthropic-ai/vertex-sdk": "0.20.4",
     "@napi-rs/canvas": "^1.0.10",
     "archiver": "^7.0.1",
     "better-sqlite3": "^13.0.3",
@@ -45,11 +45,11 @@
     "dotenv": "^17.2.3",
     "express": "^4.19.2",
     "express-fileupload": "^1.5.0",
-    "express-rate-limit": "^8.7.0",
+    "express-rate-limit": "^8.7.1",
     "gtfs-realtime-bindings": "^2.2.0",
     "helmet": "^8.3.0",
-    "libphonenumber-js": "^1.13.14",
-    "pdfjs-dist": "6.3.289",
+    "libphonenumber-js": "^1.13.15",
+    "pdfjs-dist": "6.4.299",
     "swagger-ui-express": "^5.0.1",
     "tesseract.js": "^7.0.0",
     "unzipper": "^0.12.5",
@@ -63,6 +63,6 @@
     "globals": "^17.13.0",
     "jest": "^29.7.0",
     "nodemon": "^3.1.0",
-    "supertest": "^7.3.0"
+    "supertest": "^7.3.1"
   }
 }
