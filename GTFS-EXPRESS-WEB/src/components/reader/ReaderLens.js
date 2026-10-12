@@ -1,0 +1,128 @@
+/**
+ * ReaderLens — « Avant | Après » on the reader itself (the owner's direction
+ * of 2026-10-07: the source feed, the simulated draft and the applied version
+ * visibly distinct; a plausible line is no proof the brief is met). Since
+ * 2026-10-11 ③ holds a reader of the draft at its centre (ChangeReview, the
+ * line in focus); this lens is the full-width reader's, one click away.
+ *
+ * Over the reader of a modify project (/p/:id/voir, full width — ③'s
+ * « Pleine largeur » opens this reader on « Après »):
+ *
+ *   reader-lens          the bar (`data-side`: before | after; `data-state`: draft | applied | simulating)
+ *   reader-lens-before   « Avant » — the working copy, as it is (edits allowed)
+ *   reader-lens-after    « Après · brouillon » — the feed the draft would produce, read through the API's lens
+ *                        (sessionManager.setReaderLens): every view of the reader shows it, read only — the
+ *                        retouches are suspended while it shows (a draft is changed by its operations)
+ *   reader-lens-line     a line the draft touches: puts it in the reader (its timetable, on the date the change
+ *                        shows on)
+ *   reader-lens-compare  on the timetable of a touched line, its trips before → after, the new ones counted (the
+ *                        grid marks them) — the comparison a map cannot show for a timetable change
+ *   reader-lens-proof    « Après »: a plausible line is no proof — the objectives' measured verdict says it
+ *
+ * Applied (the draft frozen in vN, no new draft simulated): no switch, the
+ * state said — the reader shows the working copy, which IS vN.
+ */
+
+import React from "react";
+import { Box, Button, ButtonBase, CircularProgress, Tooltip, Typography, alpha, useTheme } from "@mui/material";
+import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
+import CheckCircleOutlineRoundedIcon from "@mui/icons-material/CheckCircleOutlineRounded";
+import { useLanguage } from "../../contexts/LanguageContext";
+
+const MAX_CHIPS = 8;
+
+function Segment({ value, side, onSide, disabled, testid, children }) {
+  const theme = useTheme();
+  const on = side === value;
+  const tone = value === "after" ? theme.palette.warning.dark : theme.palette.text.primary;
+  return (
+    <ButtonBase
+      onClick={() => !on && onSide(value)}
+      disabled={disabled}
+      role="radio"
+      aria-checked={on ? "true" : "false"}
+      data-testid={testid}
+      sx={{ height: 30, px: 1.5, display: "inline-flex", alignItems: "center", gap: 0.75, borderRadius: "8px", fontSize: "0.8rem", fontWeight: on ? 700 : 500, color: on ? tone : "text.secondary", backgroundColor: on ? theme.palette.background.paper : "transparent", boxShadow: on ? `0 1px 2px ${alpha(theme.palette.common.black, 0.12)}, 0 0 0 1px ${theme.palette.divider}` : "none", transition: "background-color 120ms, color 120ms", "&:hover": { color: on ? tone : "text.primary" }, "&.Mui-disabled": { opacity: 0.5 }, "&.Mui-focusVisible": { outline: `2px solid ${theme.palette.primary.main}`, outlineOffset: 1 } }}
+    >
+      {children}
+    </ButtonBase>
+  );
+}
+
+// `draft`: { operations, touched: [{ route, label, date }], simulating, applied: n | null, previewId } | null;
+// `side`: before | after; `compare`: { label, date, before, after, added, removed } | null (the selected line's trips);
+// `onLine(line)`: put a touched line in the reader; `onObjectives`: the way to the objectives' verdict.
+export default function ReaderLens({ draft = null, side = "before", onSide, compare = null, onLine = null, onObjectives = null, editing = false }) {
+  const { t } = useLanguage();
+  const theme = useTheme();
+  if (!draft) return null;
+  const applied = draft.applied !== null && draft.applied !== undefined && !draft.previewId;
+  if (applied) {
+    return (
+      <Box data-testid="reader-lens" data-state="applied" data-side="before" sx={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 1, px: 2, py: 0.75, borderBottom: `1px solid ${theme.palette.divider}`, backgroundColor: alpha(theme.palette.success.main, theme.palette.mode === "dark" ? 0.12 : 0.06) }}>
+        <CheckCircleOutlineRoundedIcon aria-hidden sx={{ fontSize: 18, color: "success.main" }} />
+        <Typography sx={{ fontSize: "0.82rem", fontWeight: 600 }}>{t("lens.applied", { n: draft.applied })}</Typography>
+      </Box>
+    );
+  }
+  const after = side === "after";
+  const simulating = Boolean(draft.simulating) && !draft.previewId;
+  // Nothing written in the change yet: no draft to look at, no bar (the reader is the working copy, said by the step).
+  if (!draft.previewId && !simulating && !(draft.operations > 0)) return null;
+  const touched = draft.touched || [];
+  return (
+    <Box data-testid="reader-lens" data-side={side} data-state={simulating ? "simulating" : "draft"} sx={{ display: "flex", flexDirection: "column", gap: 0.5, px: 2, py: 0.75, borderBottom: `1px solid ${after ? alpha(theme.palette.warning.main, 0.5) : theme.palette.divider}`, backgroundColor: after ? alpha(theme.palette.warning.main, theme.palette.mode === "dark" ? 0.14 : 0.07) : theme.palette.background.paper, transition: "background-color 160ms" }}>
+      <Box sx={{ display: "flex", alignItems: "center", flexWrap: "wrap", columnGap: 1.5, rowGap: 0.75 }}>
+        <Box role="radiogroup" aria-label={t("lens.label")} sx={{ display: "inline-flex", p: "3px", gap: "2px", borderRadius: "10px", backgroundColor: alpha(theme.palette.text.primary, theme.palette.mode === "dark" ? 0.1 : 0.06) }}>
+          <Segment value="before" side={side} onSide={onSide} testid="reader-lens-before">
+            {t("lens.before")}
+          </Segment>
+          <Segment value="after" side={side} onSide={onSide} disabled={!draft.previewId} testid="reader-lens-after">
+            {simulating ? <CircularProgress size={12} color="inherit" /> : <VisibilityOutlinedIcon aria-hidden sx={{ fontSize: 16 }} />}
+            {t("lens.after")}
+          </Segment>
+        </Box>
+        <Typography data-testid="reader-lens-said" sx={{ flex: "1 1 260px", minWidth: 0, fontSize: "0.8rem", color: after ? "warning.dark" : "text.secondary", fontWeight: after ? 600 : 500, lineHeight: 1.45 }}>
+          {simulating ? t("lens.simulating") : after ? t("lens.after.said", { count: draft.operations || 0 }) : t("lens.before.said", { count: draft.operations || 0 })}
+          {after && editing ? ` ${t("lens.editSuspended")}` : ""}
+        </Typography>
+      </Box>
+      {touched.length > 0 && (
+        <Box sx={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 0.75 }}>
+          <Typography component="span" sx={{ fontSize: "0.74rem", color: "text.secondary", fontWeight: 600 }}>
+            {t("lens.touched", { count: touched.length })}
+          </Typography>
+          {touched.slice(0, MAX_CHIPS).map((line) => (
+            <Tooltip key={line.route} title={t("lens.line.open", { line: line.label })}>
+              <ButtonBase onClick={() => onLine?.(line)} data-testid="reader-lens-line" data-route={line.route} sx={{ height: 24, px: 1, borderRadius: 99, fontSize: "0.74rem", fontWeight: 700, color: after ? "warning.dark" : "text.primary", border: `1px solid ${after ? alpha(theme.palette.warning.main, 0.6) : theme.palette.divider}`, backgroundColor: theme.palette.background.paper, "&:hover": { borderColor: theme.palette.primary.main, color: "primary.main" } }}>
+                {line.label}
+              </ButtonBase>
+            </Tooltip>
+          ))}
+          {touched.length > MAX_CHIPS && (
+            <Typography component="span" sx={{ fontSize: "0.74rem", color: "text.secondary" }}>
+              {t("lens.touched.more", { count: touched.length - MAX_CHIPS })}
+            </Typography>
+          )}
+        </Box>
+      )}
+      {after && compare && (
+        <Typography data-testid="reader-lens-compare" data-added={compare.added} data-removed={compare.removed} sx={{ fontSize: "0.78rem", fontWeight: 600, color: "text.primary", fontVariantNumeric: "tabular-nums" }}>
+          {t("lens.compare", { line: compare.label, date: compare.date, before: compare.before, after: compare.after })}
+          {compare.added > 0 ? ` · ${t("lens.compare.added", { count: compare.added })}` : ""}
+          {compare.removed > 0 ? ` · ${t("lens.compare.removed", { count: compare.removed })}` : ""}
+        </Typography>
+      )}
+      {after && (
+        <Typography component="div" data-testid="reader-lens-proof" sx={{ fontSize: "0.72rem", color: "text.secondary", lineHeight: 1.45 }}>
+          {t("change.map.notProof")}
+          {onObjectives && (
+            <Button size="small" onClick={onObjectives} data-testid="reader-lens-objectives" sx={{ ml: 0.5, p: 0, minWidth: 0, verticalAlign: "baseline", textTransform: "none", fontSize: "0.72rem", fontWeight: 700 }}>
+              {t("change.map.objectives")}
+            </Button>
+          )}
+        </Typography>
+      )}
+    </Box>
+  );
+}
