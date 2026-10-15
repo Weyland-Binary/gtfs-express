@@ -1,0 +1,1279 @@
+{
+  "$schema_version": "1.0",
+  "$description": "Canonical catalogue of GTFS validation rules emitted by the MobilityData Canonical Validator and normalised by this catalogue. Source of truth for UI labels, i18n keys, MobilityData alignment, documentation generation and severity defaults. Keyed by the wire-format snake_case rule code emitted in validation reports. Runtime severity may differ from default_severity for rules that are context-dependent (e.g. number_out_of_range emitted as ERROR or WARNING depending on the offending field) — UI should fall back to default_severity only when a finding has no severity attached.",
+  "$severity_legend": {
+    "error": "Blocks upload (HTTP 400) and export (HTTP 422). Spec violation or data integrity break.",
+    "warning": "Surfaced in reports, does not block upload or export. Quality / best-practice issue.",
+    "info": "Advisory. Buffer overflows, near-expiration heads-ups, distance heuristics."
+  },
+  "$gtfs_sections": [
+    "structure",
+    "agency",
+    "stops",
+    "routes",
+    "trips",
+    "calendar",
+    "calendar_dates",
+    "stop_times",
+    "shapes",
+    "frequencies",
+    "transfers",
+    "feed_info",
+    "pathways",
+    "levels",
+    "translations",
+    "attributions",
+    "fare",
+    "timeframes",
+    "cross_file",
+    "data_quality"
+  ],
+  "rules": {
+    "missing_required_file": {
+      "default_severity": "error",
+      "gtfs_section": "structure",
+      "mobilitydata_match": "missing_required_file",
+      "message_i18n_key": "rule.missing_required_file",
+      "description": "A GTFS file declared mandatory by the spec (agency, routes, stops, trips, stop_times, calendar/calendar_dates) is absent."
+    },
+    "missing_recommended_file": {
+      "default_severity": "warning",
+      "gtfs_section": "structure",
+      "mobilitydata_match": "missing_recommended_file",
+      "message_i18n_key": "rule.missing_recommended_file",
+      "description": "A non-mandatory but strongly recommended file (feed_info.txt) is absent."
+    },
+    "missing_required_column": {
+      "default_severity": "error",
+      "gtfs_section": "structure",
+      "mobilitydata_match": "missing_required_column",
+      "message_i18n_key": "rule.missing_required_column",
+      "description": "A required column is absent from a present GTFS file's header."
+    },
+    "missing_required_field": {
+      "default_severity": "error",
+      "gtfs_section": "structure",
+      "mobilitydata_match": "missing_required_field",
+      "message_i18n_key": "rule.missing_required_field",
+      "description": "A required field is empty on a row where the spec mandates a value (e.g. agency_name, stop_id, trip_id, route_id, stop_sequence)."
+    },
+    "csv_parsing_failed": {
+      "default_severity": "error",
+      "gtfs_section": "structure",
+      "mobilitydata_match": "cannot_parse_csv",
+      "message_i18n_key": "rule.csv_parsing_failed",
+      "description": "A CSV file could not be parsed — malformed quoting, encoding error, or I/O failure. MobilityData also blocks ingestion in this case (cannot_parse_csv)."
+    },
+    "empty_file": {
+      "default_severity": "error",
+      "gtfs_section": "structure",
+      "mobilitydata_match": "empty_file",
+      "message_i18n_key": "rule.empty_file",
+      "description": "A GTFS file has zero data rows (header only, or completely empty)."
+    },
+    "empty_column_name": {
+      "default_severity": "error",
+      "gtfs_section": "structure",
+      "mobilitydata_match": "empty_column_name",
+      "message_i18n_key": "rule.empty_column_name",
+      "description": "A CSV header contains an empty cell — column name is missing."
+    },
+    "duplicated_column": {
+      "default_severity": "error",
+      "gtfs_section": "structure",
+      "mobilitydata_match": "duplicated_column",
+      "message_i18n_key": "rule.duplicated_column",
+      "description": "Two columns in the same CSV file share the same name."
+    },
+    "invalid_row_length": {
+      "default_severity": "error",
+      "gtfs_section": "structure",
+      "mobilitydata_match": "invalid_row_length",
+      "message_i18n_key": "rule.invalid_row_length",
+      "description": "A data row's column count does not match the header column count."
+    },
+    "new_line_in_value": {
+      "default_severity": "error",
+      "gtfs_section": "structure",
+      "mobilitydata_match": "new_line_in_value",
+      "message_i18n_key": "rule.new_line_in_value",
+      "description": "A non-quoted/un-escaped newline is embedded inside a CSV value, which would corrupt parsing in many downstream tools."
+    },
+    "duplicate_key": {
+      "default_severity": "error",
+      "gtfs_section": "structure",
+      "mobilitydata_match": "duplicate_key",
+      "message_i18n_key": "rule.duplicate_key",
+      "description": "Primary-key column has duplicate values (agency_id, stop_id, route_id, trip_id, service_id, …)."
+    },
+    "foreign_key_violation": {
+      "default_severity": "error",
+      "gtfs_section": "cross_file",
+      "mobilitydata_match": "foreign_key_violation",
+      "message_i18n_key": "rule.foreign_key_violation",
+      "description": "A reference to another file's primary key cannot be resolved (route_id → routes, service_id → calendar/calendar_dates, agency_id → agency, …)."
+    },
+    "number_out_of_range": {
+      "default_severity": "error",
+      "gtfs_section": "structure",
+      "mobilitydata_match": "number_out_of_range",
+      "message_i18n_key": "rule.number_out_of_range",
+      "description": "A numeric/enum field is outside its spec-mandated range (pickup_type, drop_off_type, continuous_*, timepoint, direction_id, wheelchair_*, bikes_allowed, ...)."
+    },
+    "invalid_boolean_value": {
+      "default_severity": "error",
+      "gtfs_section": "calendar",
+      "mobilitydata_match": "invalid_boolean_value",
+      "message_i18n_key": "rule.invalid_boolean_value",
+      "description": "A boolean field (calendar weekday columns, exact_times, is_bidirectional, …) has a value other than 0 or 1."
+    },
+    "invalid_url": {
+      "default_severity": "error",
+      "gtfs_section": "agency",
+      "mobilitydata_match": "invalid_url",
+      "message_i18n_key": "rule.invalid_url",
+      "description": "A URL field does not parse as an absolute http(s) URL."
+    },
+    "invalid_color": {
+      "default_severity": "error",
+      "gtfs_section": "routes",
+      "mobilitydata_match": "invalid_color",
+      "message_i18n_key": "rule.invalid_color",
+      "description": "A color field is not a 6-digit uppercase or lowercase hex string (route_color, route_text_color)."
+    },
+    "invalid_time": {
+      "default_severity": "error",
+      "gtfs_section": "stop_times",
+      "mobilitydata_match": "invalid_time",
+      "message_i18n_key": "rule.invalid_time",
+      "description": "A time field does not match the GTFS HH:MM:SS format (hours may exceed 24:00:00 to encode service-day overflow)."
+    },
+    "invalid_date": {
+      "default_severity": "error",
+      "gtfs_section": "calendar",
+      "mobilitydata_match": "invalid_date",
+      "message_i18n_key": "rule.invalid_date",
+      "description": "A date field is not in YYYYMMDD format."
+    },
+    "invalid_timezone": {
+      "default_severity": "error",
+      "gtfs_section": "agency",
+      "mobilitydata_match": "invalid_timezone",
+      "message_i18n_key": "rule.invalid_timezone",
+      "description": "A timezone field is not a valid IANA tz database identifier (validated via Intl.DateTimeFormat)."
+    },
+    "invalid_language_code": {
+      "default_severity": "error",
+      "gtfs_section": "agency",
+      "mobilitydata_match": "invalid_language_code",
+      "message_i18n_key": "rule.invalid_language_code",
+      "description": "A language field does not match a pragmatic BCP 47 pattern (full IANA registry lookup is not enforced)."
+    },
+    "start_and_end_date_out_of_order": {
+      "default_severity": "error",
+      "gtfs_section": "calendar",
+      "mobilitydata_match": "start_and_end_date_out_of_order",
+      "message_i18n_key": "rule.start_and_end_date_out_of_order",
+      "description": "A start_date is greater than its corresponding end_date (calendar.txt or feed_info.txt)."
+    },
+    "start_and_end_range_out_of_order": {
+      "default_severity": "error",
+      "gtfs_section": "frequencies",
+      "mobilitydata_match": "start_and_end_range_out_of_order",
+      "message_i18n_key": "rule.start_and_end_range_out_of_order",
+      "description": "A start_time is greater than or equal to its corresponding end_time on a frequencies.txt row."
+    },
+    "more_than_one_entity": {
+      "default_severity": "warning",
+      "gtfs_section": "feed_info",
+      "mobilitydata_match": "more_than_one_entity",
+      "message_i18n_key": "rule.more_than_one_entity",
+      "description": "feed_info.txt contains more than one row — the spec mandates exactly one."
+    },
+    "inconsistent_agency_timezone": {
+      "default_severity": "error",
+      "gtfs_section": "agency",
+      "mobilitydata_match": "inconsistent_agency_timezone",
+      "message_i18n_key": "rule.inconsistent_agency_timezone",
+      "description": "Multiple agencies declare different timezones — the spec mandates a single timezone across all agencies in a feed."
+    },
+    "inconsistent_agency_lang": {
+      "default_severity": "warning",
+      "gtfs_section": "agency",
+      "mobilitydata_match": "inconsistent_agency_lang",
+      "message_i18n_key": "rule.inconsistent_agency_lang",
+      "description": "Multiple agencies declare different languages — interoperability hint."
+    },
+    "stop_lat_out_of_range": {
+      "default_severity": "error",
+      "gtfs_section": "stops",
+      "mobilitydata_match": "stop_lat_out_of_range",
+      "message_i18n_key": "rule.stop_lat_out_of_range",
+      "description": "stop_lat is not a number in [-90, 90]."
+    },
+    "stop_lon_out_of_range": {
+      "default_severity": "error",
+      "gtfs_section": "stops",
+      "mobilitydata_match": "stop_lon_out_of_range",
+      "message_i18n_key": "rule.stop_lon_out_of_range",
+      "description": "stop_lon is not a number in [-180, 180]."
+    },
+    "stop_without_location": {
+      "default_severity": "error",
+      "gtfs_section": "stops",
+      "mobilitydata_match": "stop_without_location",
+      "message_i18n_key": "rule.stop_without_location",
+      "description": "A location_type=0/1/2 stop is missing stop_lat or stop_lon."
+    },
+    "station_with_parent_station": {
+      "default_severity": "error",
+      "gtfs_section": "stops",
+      "mobilitydata_match": "station_with_parent_station",
+      "message_i18n_key": "rule.station_with_parent_station",
+      "description": "A location_type=1 (station) declares a parent_station — stations are top-level by spec."
+    },
+    "location_without_parent_station": {
+      "default_severity": "error",
+      "gtfs_section": "stops",
+      "mobilitydata_match": "location_without_parent_station",
+      "message_i18n_key": "rule.location_without_parent_station",
+      "description": "A location_type=2/3/4 (entrance, generic node, boarding area) has no parent_station — these types must be attached to a station."
+    },
+    "wrong_parent_location_type": {
+      "default_severity": "error",
+      "gtfs_section": "stops",
+      "mobilitydata_match": "wrong_parent_location_type",
+      "message_i18n_key": "rule.wrong_parent_location_type",
+      "description": "A parent_station references a stop whose location_type is not 1 (station)."
+    },
+    "missing_stop_name": {
+      "default_severity": "error",
+      "gtfs_section": "stops",
+      "mobilitydata_match": "missing_stop_name",
+      "message_i18n_key": "rule.missing_stop_name",
+      "description": "stop_name is empty on a stop where the spec requires it (location_type 0, 1 or 2)."
+    },
+    "same_name_and_description_for_stop": {
+      "default_severity": "warning",
+      "gtfs_section": "stops",
+      "mobilitydata_match": "same_name_and_description_for_stop",
+      "message_i18n_key": "rule.same_name_and_description_for_stop",
+      "description": "stop_desc is identical to stop_name — the description should add information, not repeat the name."
+    },
+    "route_type_invalid": {
+      "default_severity": "warning",
+      "gtfs_section": "routes",
+      "mobilitydata_match": "route_type_invalid",
+      "message_i18n_key": "rule.route_type_invalid",
+      "description": "route_type is not in the GTFS spec's enum (0-12 plus extended 100-1799 hierarchical types)."
+    },
+    "route_both_short_and_long_name_missing": {
+      "default_severity": "error",
+      "gtfs_section": "routes",
+      "mobilitydata_match": "route_both_short_and_long_name_missing",
+      "message_i18n_key": "rule.route_both_short_and_long_name_missing",
+      "description": "Neither route_short_name nor route_long_name is provided — at least one is required."
+    },
+    "route_short_name_too_long": {
+      "default_severity": "warning",
+      "gtfs_section": "routes",
+      "mobilitydata_match": "route_short_name_too_long",
+      "message_i18n_key": "rule.route_short_name_too_long",
+      "description": "route_short_name exceeds 12 characters — short names should fit on signage and timetables."
+    },
+    "route_color_contrast": {
+      "default_severity": "warning",
+      "gtfs_section": "routes",
+      "mobilitydata_match": "route_color_contrast",
+      "message_i18n_key": "rule.route_color_contrast",
+      "description": "WCAG sRGB contrast ratio between route_color and route_text_color is below 4.5:1 — accessibility concern."
+    },
+    "route_long_name_contains_short_name": {
+      "default_severity": "warning",
+      "gtfs_section": "routes",
+      "mobilitydata_match": "route_long_name_contains_short_name",
+      "message_i18n_key": "rule.route_long_name_contains_short_name",
+      "description": "route_long_name token-includes route_short_name (e.g. short=42, long=\"Bus 42 Centre\") — redundant for riders."
+    },
+    "same_name_and_description_for_route": {
+      "default_severity": "warning",
+      "gtfs_section": "routes",
+      "mobilitydata_match": "same_name_and_description_for_route",
+      "message_i18n_key": "rule.same_name_and_description_for_route",
+      "description": "route_desc duplicates route_short_name or route_long_name."
+    },
+    "duplicate_route_name": {
+      "default_severity": "warning",
+      "gtfs_section": "routes",
+      "mobilitydata_match": "duplicate_route_name",
+      "message_i18n_key": "rule.duplicate_route_name",
+      "description": "Two distinct routes share both short_name and long_name — likely a data-entry duplicate."
+    },
+    "service_without_service_days": {
+      "default_severity": "error",
+      "gtfs_section": "calendar",
+      "mobilitydata_match": "service_without_service_days",
+      "message_i18n_key": "rule.service_without_service_days",
+      "description": "A calendar.txt service has all weekday columns set to 0 AND no compensating positive calendar_dates exception — the service never runs."
+    },
+    "expired_calendar": {
+      "default_severity": "warning",
+      "gtfs_section": "calendar",
+      "mobilitydata_match": "expired_calendar",
+      "message_i18n_key": "rule.expired_calendar",
+      "description": "An individual calendar.txt service's end_date is in the past."
+    },
+    "missing_calendar_and_calendar_date_files": {
+      "default_severity": "error",
+      "gtfs_section": "calendar",
+      "mobilitydata_match": "missing_calendar_and_calendar_date_files",
+      "message_i18n_key": "rule.missing_calendar_and_calendar_date_files",
+      "description": "Both calendar.txt and calendar_dates.txt are absent — service definitions are required."
+    },
+    "stop_time_with_departure_before_arrival_time": {
+      "default_severity": "error",
+      "gtfs_section": "stop_times",
+      "mobilitydata_match": "stop_time_with_departure_before_arrival_time",
+      "message_i18n_key": "rule.stop_time_with_departure_before_arrival_time",
+      "description": "On a single stop_times row, departure_time is strictly less than arrival_time."
+    },
+    "stop_time_with_only_arrival_or_departure_time": {
+      "default_severity": "error",
+      "gtfs_section": "stop_times",
+      "mobilitydata_match": "stop_time_with_only_arrival_or_departure_time",
+      "message_i18n_key": "rule.stop_time_with_only_arrival_or_departure_time",
+      "description": "Exactly one of arrival_time / departure_time is provided — the spec requires both or neither."
+    },
+    "stop_time_timepoint_without_times": {
+      "default_severity": "error",
+      "gtfs_section": "stop_times",
+      "mobilitydata_match": "stop_time_timepoint_without_times",
+      "message_i18n_key": "rule.stop_time_timepoint_without_times",
+      "description": "A row with timepoint=1 (or empty, defaulting to exact) has neither arrival_time nor departure_time."
+    },
+    "missing_trip_edge": {
+      "default_severity": "error",
+      "gtfs_section": "stop_times",
+      "mobilitydata_match": "missing_trip_edge",
+      "message_i18n_key": "rule.missing_trip_edge",
+      "description": "A trip's first or last stop_times row is missing arrival_time AND departure_time — endpoints must be timed."
+    },
+    "decreasing_or_equal_stop_sequence": {
+      "default_severity": "error",
+      "gtfs_section": "stop_times",
+      "mobilitydata_match": "decreasing_or_equal_stop_sequence",
+      "message_i18n_key": "rule.decreasing_or_equal_stop_sequence",
+      "description": "Within a trip, stop_sequence does not strictly increase across consecutive rows after sorting."
+    },
+    "decreasing_stop_time": {
+      "default_severity": "error",
+      "gtfs_section": "stop_times",
+      "mobilitydata_match": "decreasing_stop_time",
+      "message_i18n_key": "rule.decreasing_stop_time",
+      "description": "A stop_times arrival_time is earlier than the previous departure_time on the same trip — time travel."
+    },
+    "stop_time_travel_distance_too_long": {
+      "default_severity": "warning",
+      "gtfs_section": "data_quality",
+      "mobilitydata_match": "stop_time_travel_distance_too_long",
+      "message_i18n_key": "rule.stop_time_travel_distance_too_long",
+      "description": "Distance between two consecutive stops on a trip exceeds 500 km (sanity threshold)."
+    },
+    "stop_time_travel_speed_too_fast": {
+      "default_severity": "warning",
+      "gtfs_section": "data_quality",
+      "mobilitydata_match": "stop_time_travel_speed_too_fast",
+      "message_i18n_key": "rule.stop_time_travel_speed_too_fast",
+      "description": "Computed travel speed between consecutive stops exceeds the per-route_type ceiling (100-300 km/h)."
+    },
+    "forbidden_pickup_type": {
+      "default_severity": "error",
+      "gtfs_section": "stop_times",
+      "mobilitydata_match": "forbidden_pickup_type",
+      "message_i18n_key": "rule.forbidden_pickup_type",
+      "description": "pickup_type=0 or 3 (regular / coordinate-with-driver) used together with start/end_pickup_drop_off_window — these are conditionally forbidden."
+    },
+    "forbidden_drop_off_type": {
+      "default_severity": "error",
+      "gtfs_section": "stop_times",
+      "mobilitydata_match": "forbidden_drop_off_type",
+      "message_i18n_key": "rule.forbidden_drop_off_type",
+      "description": "drop_off_type=0 used together with window fields — conditionally forbidden."
+    },
+    "forbidden_continuous_pickup_drop_off": {
+      "default_severity": "error",
+      "gtfs_section": "stop_times",
+      "mobilitydata_match": "forbidden_continuous_pickup_drop_off",
+      "message_i18n_key": "rule.forbidden_continuous_pickup_drop_off",
+      "description": "continuous_pickup or continuous_drop_off ≠ 1 used together with window fields — conditionally forbidden."
+    },
+    "trip_without_stop_times": {
+      "default_severity": "error",
+      "gtfs_section": "cross_file",
+      "mobilitydata_match": "trip_without_stop_times",
+      "message_i18n_key": "rule.trip_without_stop_times",
+      "description": "A trip has no stop_times row — orphan trip."
+    },
+    "stop_without_stop_time": {
+      "default_severity": "warning",
+      "gtfs_section": "cross_file",
+      "mobilitydata_match": "stop_without_stop_time",
+      "message_i18n_key": "rule.stop_without_stop_time",
+      "description": "A stop is never referenced by any stop_times row — unused boarding location."
+    },
+    "unused_trip": {
+      "default_severity": "warning",
+      "gtfs_section": "trips",
+      "mobilitydata_match": "unused_trip",
+      "message_i18n_key": "rule.unused_trip",
+      "description": "A trip's service_id is never active in any of the next 7 days from feed_start_date — the trip is currently unreachable."
+    },
+    "route_without_trips": {
+      "default_severity": "warning",
+      "gtfs_section": "data_quality",
+      "mobilitydata_match": "route_without_trips",
+      "message_i18n_key": "rule.route_without_trips",
+      "description": "A route has no trips assigned to it."
+    },
+    "block_trips_with_overlapping_stop_times": {
+      "default_severity": "error",
+      "gtfs_section": "cross_file",
+      "mobilitydata_match": "block_trips_with_overlapping_stop_times",
+      "message_i18n_key": "rule.block_trips_with_overlapping_stop_times",
+      "description": "Two trips sharing the same block_id have overlapping stop_time intervals on a common service day — physically impossible vehicle chaining."
+    },
+    "invalid_shape_lat": {
+      "default_severity": "error",
+      "gtfs_section": "shapes",
+      "mobilitydata_match": "invalid_shape_lat",
+      "message_i18n_key": "rule.invalid_shape_lat",
+      "description": "shape_pt_lat is missing or not in [-90, 90]."
+    },
+    "invalid_shape_lon": {
+      "default_severity": "error",
+      "gtfs_section": "shapes",
+      "mobilitydata_match": "invalid_shape_lon",
+      "message_i18n_key": "rule.invalid_shape_lon",
+      "description": "shape_pt_lon is missing or not in [-180, 180]."
+    },
+    "decreasing_or_equal_shape_pt_sequence": {
+      "default_severity": "error",
+      "gtfs_section": "shapes",
+      "mobilitydata_match": "decreasing_or_equal_shape_pt_sequence",
+      "message_i18n_key": "rule.decreasing_or_equal_shape_pt_sequence",
+      "description": "Within a shape, shape_pt_sequence does not strictly increase across consecutive rows after sorting."
+    },
+    "decreasing_shape_distance": {
+      "default_severity": "error",
+      "gtfs_section": "shapes",
+      "mobilitydata_match": "decreasing_shape_distance",
+      "message_i18n_key": "rule.decreasing_shape_distance",
+      "description": "shape_dist_traveled decreases across consecutive shape points."
+    },
+    "equal_shape_distance_diff_coordinates": {
+      "default_severity": "error",
+      "gtfs_section": "shapes",
+      "mobilitydata_match": "equal_shape_distance_diff_coordinates",
+      "message_i18n_key": "rule.equal_shape_distance_diff_coordinates",
+      "description": "Two consecutive points share the same shape_dist_traveled but different coordinates — distance metric is inconsistent."
+    },
+    "equal_shape_distance_same_coordinates": {
+      "default_severity": "warning",
+      "gtfs_section": "shapes",
+      "mobilitydata_match": "equal_shape_distance_same_coordinates",
+      "message_i18n_key": "rule.equal_shape_distance_same_coordinates",
+      "description": "Two consecutive points share both shape_dist_traveled and coordinates — duplicate point."
+    },
+    "single_shape_point": {
+      "default_severity": "warning",
+      "gtfs_section": "shapes",
+      "mobilitydata_match": "single_shape_point",
+      "message_i18n_key": "rule.single_shape_point",
+      "description": "A shape_id has exactly one shape_pt_sequence row. A shape needs at least two points to define a segment."
+    },
+    "unused_shape": {
+      "default_severity": "warning",
+      "gtfs_section": "shapes",
+      "mobilitydata_match": "unused_shape",
+      "message_i18n_key": "rule.unused_shape",
+      "description": "A shape_id defined in shapes.txt is not referenced by any trip in trips.txt. The geometry is dead weight in the export ZIP."
+    },
+    "invalid_headway": {
+      "default_severity": "error",
+      "gtfs_section": "frequencies",
+      "mobilitydata_match": "invalid_headway",
+      "message_i18n_key": "rule.invalid_headway",
+      "description": "headway_secs is not a positive integer."
+    },
+    "invalid_exact_times": {
+      "default_severity": "error",
+      "gtfs_section": "frequencies",
+      "mobilitydata_match": "invalid_exact_times",
+      "message_i18n_key": "rule.invalid_exact_times",
+      "description": "exact_times is not 0 or 1."
+    },
+    "overlapping_frequency": {
+      "default_severity": "error",
+      "gtfs_section": "frequencies",
+      "mobilitydata_match": "overlapping_frequency",
+      "message_i18n_key": "rule.overlapping_frequency",
+      "description": "Two frequencies.txt rows for the same trip have overlapping [start_time, end_time) intervals."
+    },
+    "missing_from_stop_id": {
+      "default_severity": "error",
+      "gtfs_section": "transfers",
+      "mobilitydata_match": "missing_from_stop_id",
+      "message_i18n_key": "rule.missing_from_stop_id",
+      "description": "transfers.txt row is missing from_stop_id."
+    },
+    "missing_to_stop_id": {
+      "default_severity": "error",
+      "gtfs_section": "transfers",
+      "mobilitydata_match": "missing_to_stop_id",
+      "message_i18n_key": "rule.missing_to_stop_id",
+      "description": "transfers.txt row is missing to_stop_id."
+    },
+    "invalid_transfer_type": {
+      "default_severity": "error",
+      "gtfs_section": "transfers",
+      "mobilitydata_match": "invalid_transfer_type",
+      "message_i18n_key": "rule.invalid_transfer_type",
+      "description": "transfer_type is not 0-5."
+    },
+    "missing_min_transfer_time": {
+      "default_severity": "error",
+      "gtfs_section": "transfers",
+      "mobilitydata_match": "missing_min_transfer_time",
+      "message_i18n_key": "rule.missing_min_transfer_time",
+      "description": "transfer_type=2 (min-time transfer) but min_transfer_time is empty."
+    },
+    "transfer_distance_too_large": {
+      "default_severity": "warning",
+      "gtfs_section": "transfers",
+      "mobilitydata_match": "transfer_distance_too_large",
+      "message_i18n_key": "rule.transfer_distance_too_large",
+      "description": "Distance between from_stop and to_stop exceeds 2 km — unrealistic walking transfer."
+    },
+    "missing_feed_info_publisher_name": {
+      "default_severity": "error",
+      "gtfs_section": "feed_info",
+      "mobilitydata_match": "missing_required_field",
+      "message_i18n_key": "rule.missing_feed_info_publisher_name",
+      "description": "feed_info.feed_publisher_name is empty — required when feed_info.txt is present. MobilityData reports this as missing_required_field."
+    },
+    "missing_feed_info_publisher_url": {
+      "default_severity": "error",
+      "gtfs_section": "feed_info",
+      "mobilitydata_match": "missing_required_field",
+      "message_i18n_key": "rule.missing_feed_info_publisher_url",
+      "description": "feed_info.feed_publisher_url is empty — required when feed_info.txt is present. MobilityData reports this as missing_required_field."
+    },
+    "missing_feed_info_lang": {
+      "default_severity": "error",
+      "gtfs_section": "feed_info",
+      "mobilitydata_match": "missing_required_field",
+      "message_i18n_key": "rule.missing_feed_info_lang",
+      "description": "feed_info.feed_lang is empty — required when feed_info.txt is present. MobilityData reports this as missing_required_field."
+    },
+    "missing_feed_info_date": {
+      "default_severity": "warning",
+      "gtfs_section": "feed_info",
+      "mobilitydata_match": "missing_feed_info_date",
+      "message_i18n_key": "rule.missing_feed_info_date",
+      "description": "Exactly one of feed_start_date / feed_end_date is provided — both should be supplied together."
+    },
+    "invalid_feed_start_date": {
+      "default_severity": "error",
+      "gtfs_section": "feed_info",
+      "mobilitydata_match": "invalid_date",
+      "message_i18n_key": "rule.invalid_feed_start_date",
+      "description": "feed_start_date is not in YYYYMMDD format. MobilityData reports this as invalid_date."
+    },
+    "invalid_feed_end_date": {
+      "default_severity": "error",
+      "gtfs_section": "feed_info",
+      "mobilitydata_match": "invalid_date",
+      "message_i18n_key": "rule.invalid_feed_end_date",
+      "description": "feed_end_date is not in YYYYMMDD format. MobilityData reports this as invalid_date."
+    },
+    "feed_expired": {
+      "default_severity": "warning",
+      "gtfs_section": "data_quality",
+      "mobilitydata_match": "feed_expired",
+      "message_i18n_key": "rule.feed_expired",
+      "description": "The feed-level end_date is in the past."
+    },
+    "feed_expiration_date_7_days": {
+      "default_severity": "warning",
+      "gtfs_section": "data_quality",
+      "mobilitydata_match": "feed_expiration_date7_days",
+      "message_i18n_key": "rule.feed_expiration_date_7_days",
+      "description": "feed_end_date is within 7 days from now — heads-up for publishers."
+    },
+    "feed_expiration_date_30_days": {
+      "default_severity": "warning",
+      "gtfs_section": "data_quality",
+      "mobilitydata_match": "feed_expiration_date30_days",
+      "message_i18n_key": "rule.feed_expiration_date_30_days",
+      "description": "feed_end_date is within 30 days from now."
+    },
+    "feed_info_lang_and_agency_lang_mismatch": {
+      "default_severity": "warning",
+      "gtfs_section": "feed_info",
+      "mobilitydata_match": "feed_info_lang_and_agency_lang_mismatch",
+      "message_i18n_key": "rule.feed_info_lang_and_agency_lang_mismatch",
+      "description": "feed_info.feed_lang differs from the dominant agency.agency_lang."
+    },
+    "bidirectional_exit_gate": {
+      "default_severity": "error",
+      "gtfs_section": "pathways",
+      "mobilitydata_match": "bidirectional_exit_gate",
+      "message_i18n_key": "rule.bidirectional_exit_gate",
+      "description": "A pathway with pathway_mode=7 (exit gate) declares is_bidirectional=1 — exit gates are unidirectional by definition."
+    },
+    "pathway_to_wrong_location_type": {
+      "default_severity": "error",
+      "gtfs_section": "pathways",
+      "mobilitydata_match": "pathway_to_wrong_location_type",
+      "message_i18n_key": "rule.pathway_to_wrong_location_type",
+      "description": "A pathway endpoint references a stop with an incompatible location_type."
+    },
+    "pathway_unreachable_location": {
+      "default_severity": "error",
+      "gtfs_section": "pathways",
+      "mobilitydata_match": "pathway_unreachable_location",
+      "message_i18n_key": "rule.pathway_unreachable_location",
+      "description": "A station-bound location node has no pathway leading to or from it."
+    },
+    "pathway_to_platform_with_boarding_areas": {
+      "default_severity": "error",
+      "gtfs_section": "pathways",
+      "mobilitydata_match": "pathway_to_platform_with_boarding_areas",
+      "message_i18n_key": "rule.pathway_to_platform_with_boarding_areas",
+      "description": "A pathway points to a platform that has child boarding areas — pathway must reach the boarding area, not its parent."
+    },
+    "pathway_dangling_generic_node": {
+      "default_severity": "warning",
+      "gtfs_section": "pathways",
+      "mobilitydata_match": "pathway_dangling_generic_node",
+      "message_i18n_key": "rule.pathway_dangling_generic_node",
+      "description": "A generic_node (location_type=3) has no boarding-area child or no pathway connection — disconnected node."
+    },
+    "pathway_loop": {
+      "default_severity": "warning",
+      "gtfs_section": "pathways",
+      "mobilitydata_match": "pathway_loop",
+      "message_i18n_key": "rule.pathway_loop",
+      "description": "from_stop_id and to_stop_id of a pathway are identical — self-loop."
+    },
+    "missing_level_id": {
+      "default_severity": "error",
+      "gtfs_section": "levels",
+      "mobilitydata_match": "missing_level_id",
+      "message_i18n_key": "rule.missing_level_id",
+      "description": "A pathway or stop references a level_id that is absent from levels.txt."
+    },
+    "translation_foreign_key_violation": {
+      "default_severity": "error",
+      "gtfs_section": "translations",
+      "mobilitydata_match": "translation_foreign_key_violation",
+      "message_i18n_key": "rule.translation_foreign_key_violation",
+      "description": "A translation row's record_id does not exist in the referenced table_name."
+    },
+    "translation_unexpected_value": {
+      "default_severity": "error",
+      "gtfs_section": "translations",
+      "mobilitydata_match": "translation_unexpected_value",
+      "message_i18n_key": "rule.translation_unexpected_value",
+      "description": "A translation row references a field_value that does not match the source field — translation key cannot be applied."
+    },
+    "translation_unknown_table_name": {
+      "default_severity": "warning",
+      "gtfs_section": "translations",
+      "mobilitydata_match": "translation_unknown_table_name",
+      "message_i18n_key": "rule.translation_unknown_table_name",
+      "description": "translations.table_name is not a recognised GTFS table."
+    },
+    "attribution_without_role": {
+      "default_severity": "warning",
+      "gtfs_section": "attributions",
+      "mobilitydata_match": "attribution_without_role",
+      "message_i18n_key": "rule.attribution_without_role",
+      "description": "An attributions.txt row sets none of is_producer / is_operator / is_authority to 1."
+    },
+    "point_near_origin": {
+      "default_severity": "error",
+      "gtfs_section": "data_quality",
+      "mobilitydata_match": "point_near_origin",
+      "message_i18n_key": "rule.point_near_origin",
+      "description": "A stop is within ~10 m of (0, 0) — Null Island, almost certainly a missing or zeroed coordinate."
+    },
+    "duplicate_fare_media": {
+      "default_severity": "warning",
+      "gtfs_section": "fare",
+      "mobilitydata_match": "duplicate_fare_media",
+      "message_i18n_key": "rule.duplicate_fare_media",
+      "description": "Two distinct fare_media rows share the same (fare_media_name, fare_media_type) tuple — downstream consumers cannot tell them apart."
+    },
+    "invalid_currency": {
+      "default_severity": "error",
+      "gtfs_section": "fare",
+      "mobilitydata_match": "invalid_currency",
+      "message_i18n_key": "rule.invalid_currency",
+      "description": "A currency field does not contain a valid ISO 4217 alpha-3 currency code (e.g. USD, EUR, JPY)."
+    },
+    "invalid_currency_amount": {
+      "default_severity": "error",
+      "gtfs_section": "fare",
+      "mobilitydata_match": "invalid_currency_amount",
+      "message_i18n_key": "rule.invalid_currency_amount",
+      "description": "A currency-amount field is malformed or has more decimal places than the ISO 4217 minor-unit precision allows for the declared currency (e.g. 1.234 USD, 100.5 JPY)."
+    },
+    "fare_product_with_multiple_default_rider_categories": {
+      "default_severity": "error",
+      "gtfs_section": "fare",
+      "mobilitydata_match": "fare_product_with_multiple_default_rider_categories",
+      "message_i18n_key": "rule.fare_product_with_multiple_default_rider_categories",
+      "description": "A fare_product references more than one rider category with is_default_fare_category=1 — at most one default rider category is allowed per product."
+    },
+    "fare_transfer_rule_duration_limit_type_without_duration_limit": {
+      "default_severity": "error",
+      "gtfs_section": "fare",
+      "mobilitydata_match": "fare_transfer_rule_duration_limit_type_without_duration_limit",
+      "message_i18n_key": "rule.fare_transfer_rule_duration_limit_type_without_duration_limit",
+      "description": "A fare_transfer_rules row sets duration_limit_type without duration_limit — both fields are conditionally required together."
+    },
+    "fare_transfer_rule_duration_limit_without_type": {
+      "default_severity": "error",
+      "gtfs_section": "fare",
+      "mobilitydata_match": "fare_transfer_rule_duration_limit_without_type",
+      "message_i18n_key": "rule.fare_transfer_rule_duration_limit_without_type",
+      "description": "A fare_transfer_rules row sets duration_limit without duration_limit_type — both fields are conditionally required together."
+    },
+    "fare_transfer_rule_invalid_transfer_count": {
+      "default_severity": "error",
+      "gtfs_section": "fare",
+      "mobilitydata_match": "fare_transfer_rule_invalid_transfer_count",
+      "message_i18n_key": "rule.fare_transfer_rule_invalid_transfer_count",
+      "description": "A fare_transfer_rules.transfer_count is not -1 (unlimited) or a positive integer."
+    },
+    "fare_transfer_rule_missing_transfer_count": {
+      "default_severity": "error",
+      "gtfs_section": "fare",
+      "mobilitydata_match": "fare_transfer_rule_missing_transfer_count",
+      "message_i18n_key": "rule.fare_transfer_rule_missing_transfer_count",
+      "description": "A fare_transfer_rules row has from_leg_group_id equal to to_leg_group_id but no transfer_count — required for symmetric transfers."
+    },
+    "fare_transfer_rule_with_forbidden_transfer_count": {
+      "default_severity": "error",
+      "gtfs_section": "fare",
+      "mobilitydata_match": "fare_transfer_rule_with_forbidden_transfer_count",
+      "message_i18n_key": "rule.fare_transfer_rule_with_forbidden_transfer_count",
+      "description": "A fare_transfer_rules row sets transfer_count when from_leg_group_id differs from to_leg_group_id — transfer_count is forbidden for asymmetric transfers."
+    },
+    "forbidden_real_time_booking_field_value": {
+      "default_severity": "error",
+      "gtfs_section": "fare",
+      "mobilitydata_match": "forbidden_real_time_booking_field_value",
+      "message_i18n_key": "rule.forbidden_real_time_booking_field_value",
+      "description": "A booking_rules.txt row with booking_type=0 (real-time) carries a prior_notice_* field. Real-time booking rules accept no advance-notice configuration."
+    },
+    "forbidden_prior_day_booking_field_value": {
+      "default_severity": "error",
+      "gtfs_section": "fare",
+      "mobilitydata_match": "forbidden_prior_day_booking_field_value",
+      "message_i18n_key": "rule.forbidden_prior_day_booking_field_value",
+      "description": "A booking_rules.txt row with booking_type=2 (prior-day notice) carries a prior_notice_duration_min/max field reserved for the same-day flow."
+    },
+    "missing_prior_notice_duration_min": {
+      "default_severity": "error",
+      "gtfs_section": "fare",
+      "mobilitydata_match": "missing_prior_notice_duration_min",
+      "message_i18n_key": "rule.missing_prior_notice_duration_min",
+      "description": "A booking_rules.txt row with booking_type=1 (same-day notice) does not declare prior_notice_duration_min (required for the same-day flow)."
+    },
+    "malformed_json": {
+      "default_severity": "error",
+      "gtfs_section": "structure",
+      "mobilitydata_match": "malformed_json",
+      "message_i18n_key": "rule.malformed_json",
+      "description": "locations.geojson cannot be parsed as JSON — syntactically invalid file."
+    },
+    "unsupported_geo_json_type": {
+      "default_severity": "error",
+      "gtfs_section": "structure",
+      "mobilitydata_match": "unsupported_geo_json_type",
+      "message_i18n_key": "rule.unsupported_geo_json_type",
+      "description": "locations.geojson top-level type is not 'FeatureCollection' — GTFS-Flex requires the file to wrap features in a FeatureCollection."
+    },
+    "unsupported_feature_type": {
+      "default_severity": "error",
+      "gtfs_section": "structure",
+      "mobilitydata_match": "unsupported_feature_type",
+      "message_i18n_key": "rule.unsupported_feature_type",
+      "description": "An object inside locations.geojson features[] does not declare type='Feature'."
+    },
+    "unsupported_geometry_type": {
+      "default_severity": "error",
+      "gtfs_section": "structure",
+      "mobilitydata_match": "unsupported_geometry_type",
+      "message_i18n_key": "rule.unsupported_geometry_type",
+      "description": "A locations.geojson feature uses a geometry type other than Polygon or MultiPolygon — GTFS-Flex only supports those two."
+    },
+    "invalid_geometry": {
+      "default_severity": "error",
+      "gtfs_section": "structure",
+      "mobilitydata_match": "invalid_geometry",
+      "message_i18n_key": "rule.invalid_geometry",
+      "description": "A polygon or multipolygon in locations.geojson has malformed coordinates (non-finite values, points out of lon/lat range, ring shorter than 4 points, or unclosed ring)."
+    },
+    "duplicate_geo_json_key": {
+      "default_severity": "error",
+      "gtfs_section": "structure",
+      "mobilitydata_match": "duplicate_geo_json_key",
+      "message_i18n_key": "rule.duplicate_geo_json_key",
+      "description": "A feature id is repeated within the same locations.geojson file — feature ids must be unique."
+    },
+    "duplicate_geography_id": {
+      "default_severity": "error",
+      "gtfs_section": "cross_file",
+      "mobilitydata_match": "duplicate_geography_id",
+      "message_i18n_key": "rule.duplicate_geography_id",
+      "description": "A locations.geojson feature id collides with a stop_id (or location_group_id) — geography ids must be unique across stops.txt, locations.geojson and location_groups.txt."
+    },
+    "geo_json_duplicated_element": {
+      "default_severity": "error",
+      "gtfs_section": "structure",
+      "mobilitydata_match": "geo_json_duplicated_element",
+      "message_i18n_key": "rule.geo_json_duplicated_element",
+      "description": "A feature property is declared more than once (case-insensitive collision) — only the last occurrence is kept by JSON parsers."
+    },
+    "geo_json_unknown_element": {
+      "default_severity": "info",
+      "gtfs_section": "structure",
+      "mobilitydata_match": "geo_json_unknown_element",
+      "message_i18n_key": "rule.geo_json_unknown_element",
+      "description": "An element in locations.geojson is not recognised by the GTFS-Flex profile and will be ignored by canonical consumers."
+    },
+    "unknown_file": {
+      "default_severity": "info",
+      "gtfs_section": "structure",
+      "mobilitydata_match": "unknown_file",
+      "message_i18n_key": "rule.unknown_file",
+      "description": "A file is present in the feed ZIP but is not part of the GTFS Schedule, GTFS-Flex, or DRT-Booking spec. It will be silently ignored by downstream consumers."
+    },
+    "unknown_column": {
+      "default_severity": "info",
+      "gtfs_section": "structure",
+      "mobilitydata_match": "unknown_column",
+      "message_i18n_key": "rule.unknown_column",
+      "description": "A column header in a recognised GTFS file is not declared by the spec for that file. The data in this column will be silently ignored by downstream consumers."
+    },
+    "leading_or_trailing_whitespaces": {
+      "default_severity": "warning",
+      "gtfs_section": "structure",
+      "mobilitydata_match": "leading_or_trailing_whitespaces",
+      "message_i18n_key": "rule.leading_or_trailing_whitespaces",
+      "description": "A CSV value protected by double quotes carries leading or trailing whitespace. csv-parser strips whitespace from non-quoted values automatically; quoted whitespace survives and risks breaking key/FK matches when the same id appears with and without padding in different files."
+    },
+    "invalid_phone_number": {
+      "default_severity": "error",
+      "gtfs_section": "agency",
+      "mobilitydata_match": "invalid_phone_number",
+      "message_i18n_key": "rule.invalid_phone_number",
+      "description": "A phone number field (agency_phone, attribution_phone, booking_rules.phone_number) does not parse as a valid international or country-scoped phone number. Validation uses libphonenumber-js with the agency's country inferred from agency_timezone."
+    },
+    "forbidden_same_day_booking_field_value": {
+      "default_severity": "error",
+      "gtfs_section": "fare",
+      "mobilitydata_match": "forbidden_same_day_booking_field_value",
+      "message_i18n_key": "rule.forbidden_same_day_booking_field_value",
+      "description": "A booking_rules.txt row with booking_type=1 (same-day notice) carries a prior_notice_last_* or prior_notice_start_* field reserved for the prior-day flow."
+    },
+    "missing_prior_day_booking_field_value": {
+      "default_severity": "error",
+      "gtfs_section": "fare",
+      "mobilitydata_match": "missing_prior_day_booking_field_value",
+      "message_i18n_key": "rule.missing_prior_day_booking_field_value",
+      "description": "A booking_rules.txt row with booking_type=2 (prior-day notice) is missing one of the required prior_notice_last_day, prior_notice_last_time fields."
+    },
+    "missing_prior_notice_last_day": {
+      "default_severity": "error",
+      "gtfs_section": "fare",
+      "mobilitydata_match": "missing_prior_notice_last_day",
+      "message_i18n_key": "rule.missing_prior_notice_last_day",
+      "description": "A booking_rules.txt row with booking_type=2 (prior-day notice) does not declare prior_notice_last_day."
+    },
+    "missing_prior_notice_last_time": {
+      "default_severity": "error",
+      "gtfs_section": "fare",
+      "mobilitydata_match": "missing_prior_notice_last_time",
+      "message_i18n_key": "rule.missing_prior_notice_last_time",
+      "description": "A booking_rules.txt row with booking_type=2 (prior-day notice) does not declare prior_notice_last_time."
+    },
+    "missing_prior_notice_start_time": {
+      "default_severity": "error",
+      "gtfs_section": "fare",
+      "mobilitydata_match": "missing_prior_notice_start_time",
+      "message_i18n_key": "rule.missing_prior_notice_start_time",
+      "description": "A booking_rules.txt row carries prior_notice_start_day without the matching prior_notice_start_time."
+    },
+    "forbidden_prior_notice_start_day": {
+      "default_severity": "error",
+      "gtfs_section": "fare",
+      "mobilitydata_match": "forbidden_prior_notice_start_day",
+      "message_i18n_key": "rule.forbidden_prior_notice_start_day",
+      "description": "A booking_rules.txt row carries prior_notice_start_day on a booking_type that does not allow it."
+    },
+    "forbidden_prior_notice_start_time": {
+      "default_severity": "error",
+      "gtfs_section": "fare",
+      "mobilitydata_match": "forbidden_prior_notice_start_time",
+      "message_i18n_key": "rule.forbidden_prior_notice_start_time",
+      "description": "A booking_rules.txt row carries prior_notice_start_time on a booking_type that does not allow it."
+    },
+    "invalid_prior_notice_duration_min": {
+      "default_severity": "error",
+      "gtfs_section": "fare",
+      "mobilitydata_match": "invalid_prior_notice_duration_min",
+      "message_i18n_key": "rule.invalid_prior_notice_duration_min",
+      "description": "prior_notice_duration_min is not a non-negative integer, or it is greater than prior_notice_duration_max."
+    },
+    "prior_notice_last_day_after_start_day": {
+      "default_severity": "error",
+      "gtfs_section": "fare",
+      "mobilitydata_match": "prior_notice_last_day_after_start_day",
+      "message_i18n_key": "rule.prior_notice_last_day_after_start_day",
+      "description": "prior_notice_last_day is strictly greater than prior_notice_start_day on a booking_rules.txt row."
+    },
+    "missing_pickup_drop_off_booking_rule_id": {
+      "default_severity": "warning",
+      "gtfs_section": "stop_times",
+      "mobilitydata_match": "missing_pickup_drop_off_booking_rule_id",
+      "message_i18n_key": "rule.missing_pickup_drop_off_booking_rule_id",
+      "description": "A stop_times row uses pickup_type=2 or drop_off_type=2 (must phone agency) but does not reference a pickup_booking_rule_id / drop_off_booking_rule_id."
+    },
+    "forbidden_arrival_or_departure_time": {
+      "default_severity": "error",
+      "gtfs_section": "stop_times",
+      "mobilitydata_match": "forbidden_arrival_or_departure_time",
+      "message_i18n_key": "rule.forbidden_arrival_or_departure_time",
+      "description": "A Flex stop_times row that targets a location_id or location_group_id sets arrival_time / departure_time. These columns are forbidden when the trip serves a zone or stop group instead of a fixed stop."
+    },
+    "missing_pickup_or_drop_off_window": {
+      "default_severity": "error",
+      "gtfs_section": "stop_times",
+      "mobilitydata_match": "missing_pickup_or_drop_off_window",
+      "message_i18n_key": "rule.missing_pickup_or_drop_off_window",
+      "description": "A Flex stop_times row referencing a location_id or location_group_id is missing start_pickup_drop_off_window or end_pickup_drop_off_window."
+    },
+    "invalid_pickup_drop_off_window": {
+      "default_severity": "error",
+      "gtfs_section": "stop_times",
+      "mobilitydata_match": "invalid_pickup_drop_off_window",
+      "message_i18n_key": "rule.invalid_pickup_drop_off_window",
+      "description": "start_pickup_drop_off_window is greater than or equal to end_pickup_drop_off_window on a Flex stop_times row."
+    },
+    "overlapping_zone_and_pickup_drop_off_window": {
+      "default_severity": "error",
+      "gtfs_section": "stop_times",
+      "mobilitydata_match": "overlapping_zone_and_pickup_drop_off_window",
+      "message_i18n_key": "rule.overlapping_zone_and_pickup_drop_off_window",
+      "description": "Two Flex stop_times rows on the same trip target the same zone (location_id) within overlapping pickup/drop-off windows."
+    },
+    "timeframe_overlap": {
+      "default_severity": "error",
+      "gtfs_section": "timeframes",
+      "mobilitydata_match": "timeframe_overlap",
+      "message_i18n_key": "rule.timeframe_overlap",
+      "description": "Two timeframes.txt rows in the same timeframe_group_id define overlapping (start_time, end_time) windows for the same service_id."
+    },
+    "timeframe_only_start_or_end_time_specified": {
+      "default_severity": "error",
+      "gtfs_section": "timeframes",
+      "mobilitydata_match": "timeframe_only_start_or_end_time_specified",
+      "message_i18n_key": "rule.timeframe_only_start_or_end_time_specified",
+      "description": "A timeframes.txt row sets only one of (start_time, end_time). Both fields must be either both present or both absent."
+    },
+    "timeframe_start_or_end_time_greater_than_twenty_four_hours": {
+      "default_severity": "error",
+      "gtfs_section": "timeframes",
+      "mobilitydata_match": "timeframe_start_or_end_time_greater_than_twenty_four_hours",
+      "message_i18n_key": "rule.timeframe_start_or_end_time_greater_than_twenty_four_hours",
+      "description": "A timeframes.txt start_time or end_time is greater than 24:00:00. Unlike stop_times, timeframes are not allowed to spill past the service-day boundary."
+    },
+    "unusable_trip": {
+      "default_severity": "warning",
+      "gtfs_section": "trips",
+      "mobilitydata_match": "unusable_trip",
+      "message_i18n_key": "rule.unusable_trip",
+      "description": "A trip has fewer than two stop_times rows. The trip cannot be travelled and will be ignored by routing engines."
+    },
+    "unused_station": {
+      "default_severity": "info",
+      "gtfs_section": "stops",
+      "mobilitydata_match": "unused_station",
+      "message_i18n_key": "rule.unused_station",
+      "description": "A station (location_type=1) is not referenced as parent_station by any platform/stop. Stations exist purely to group child stops."
+    },
+    "fast_travel_between_consecutive_stops": {
+      "default_severity": "warning",
+      "gtfs_section": "stop_times",
+      "mobilitydata_match": "fast_travel_between_consecutive_stops",
+      "message_i18n_key": "rule.fast_travel_between_consecutive_stops",
+      "description": "Two consecutive stop_times rows imply an average speed greater than the route_type's plausible upper bound (e.g. >150 km/h on a bus). Likely a missing stop or a clock error."
+    },
+    "fast_travel_between_far_stops": {
+      "default_severity": "warning",
+      "gtfs_section": "stop_times",
+      "mobilitydata_match": "fast_travel_between_far_stops",
+      "message_i18n_key": "rule.fast_travel_between_far_stops",
+      "description": "A trip's overall average speed (Σ distance / Σ time) exceeds a high threshold even when consecutive segments individually look plausible. Often signals a service discontinuity."
+    },
+    "mixed_case_recommended_field": {
+      "default_severity": "warning",
+      "gtfs_section": "data_quality",
+      "mobilitydata_match": "mixed_case_recommended_field",
+      "message_i18n_key": "rule.mixed_case_recommended_field",
+      "description": "A textual field uses inconsistent casing (e.g. ALL CAPS for stop_name) reducing readability for end users. MobilityData recommends Title Case for human-facing names."
+    },
+    "non_ascii_or_non_printable_char": {
+      "default_severity": "warning",
+      "gtfs_section": "data_quality",
+      "mobilitydata_match": "non_ascii_or_non_printable_char",
+      "message_i18n_key": "rule.non_ascii_or_non_printable_char",
+      "description": "A field contains non-printable control characters (tab, vertical tab, form feed, etc.) or non-ASCII characters that may not survive ASCII-only consumers."
+    },
+    "empty_row": {
+      "default_severity": "warning",
+      "gtfs_section": "structure",
+      "mobilitydata_match": "empty_row",
+      "message_i18n_key": "rule.empty_row",
+      "description": "A CSV row contains only commas (every field empty). Treated as a non-data row and skipped, but signals a likely export bug upstream."
+    },
+    "start_and_end_range_equal": {
+      "default_severity": "error",
+      "gtfs_section": "data_quality",
+      "mobilitydata_match": "start_and_end_range_equal",
+      "message_i18n_key": "rule.start_and_end_range_equal",
+      "description": "A frequencies.txt or timeframes.txt row sets start_time == end_time, defining a zero-duration window. Likely a typo."
+    },
+    "missing_recommended_field": {
+      "default_severity": "warning",
+      "gtfs_section": "data_quality",
+      "mobilitydata_match": "missing_recommended_field",
+      "message_i18n_key": "rule.missing_recommended_field",
+      "description": "A recommended (but not required) field is absent from a row that has the corresponding column declared. Examples: missing trip_headsign, missing route_long_name on a non-bus route_type."
+    },
+    "missing_feed_contact_email_and_url": {
+      "default_severity": "warning",
+      "gtfs_section": "feed_info",
+      "mobilitydata_match": "missing_feed_contact_email_and_url",
+      "message_i18n_key": "rule.missing_feed_contact_email_and_url",
+      "description": "feed_info.txt declares neither feed_contact_email nor feed_contact_url. Consumers cannot reach the publisher to report data issues."
+    },
+    "unused_parent_station": {
+      "default_severity": "warning",
+      "gtfs_section": "stops",
+      "mobilitydata_match": "unused_parent_station",
+      "message_i18n_key": "rule.unused_parent_station",
+      "description": "Alias of unused_station emitted alongside it for canonical-tool compatibility — a station (location_type=1) that is not referenced as parent_station by any platform/stop."
+    },
+    "platform_without_parent_station": {
+      "default_severity": "info",
+      "gtfs_section": "stops",
+      "mobilitydata_match": "platform_without_parent_station",
+      "message_i18n_key": "rule.platform_without_parent_station",
+      "description": "A platform (stops.location_type=0 or empty) has no parent_station. Stations group platforms in a hierarchy that consumers use for wayfinding — recommended (not required) per the spec."
+    },
+    "stop_without_zone_id": {
+      "default_severity": "info",
+      "gtfs_section": "stops",
+      "mobilitydata_match": "stop_without_zone_id",
+      "message_i18n_key": "rule.stop_without_zone_id",
+      "description": "A platform (stops.location_type=0 or empty) has no zone_id. Recommended for feeds that use fare zoning (areas / fare_rules)."
+    },
+    "missing_bike_allowance": {
+      "default_severity": "warning",
+      "gtfs_section": "trips",
+      "mobilitydata_match": "missing_bike_allowance",
+      "message_i18n_key": "rule.missing_bike_allowance",
+      "description": "trips.bikes_allowed is empty. Recommended for active-mobility consumers — explicitly state 1 (allowed), 2 (forbidden), or leave empty (no info) intentionally."
+    },
+    "same_route_and_agency_url": {
+      "default_severity": "warning",
+      "gtfs_section": "routes",
+      "mobilitydata_match": "same_route_and_agency_url",
+      "message_i18n_key": "rule.same_route_and_agency_url",
+      "description": "A route's route_url equals its agency's agency_url. Likely a default-fill bug — the route URL should deep-link to that route's page, not to the agency homepage."
+    },
+    "same_stop_and_agency_url": {
+      "default_severity": "warning",
+      "gtfs_section": "stops",
+      "mobilitydata_match": "same_stop_and_agency_url",
+      "message_i18n_key": "rule.same_stop_and_agency_url",
+      "description": "A stop's stop_url equals an agency's agency_url. Likely a default-fill bug — the stop URL should deep-link to that stop's page."
+    },
+    "same_stop_and_route_url": {
+      "default_severity": "warning",
+      "gtfs_section": "stops",
+      "mobilitydata_match": "same_stop_and_route_url",
+      "message_i18n_key": "rule.same_stop_and_route_url",
+      "description": "A stop's stop_url equals some route's route_url. Likely a default-fill bug — both fields should point to distinct, entity-specific pages."
+    },
+    "route_networks_specified_in_more_than_one_file": {
+      "default_severity": "error",
+      "gtfs_section": "routes",
+      "mobilitydata_match": "route_networks_specified_in_more_than_one_file",
+      "message_i18n_key": "rule.route_networks_specified_in_more_than_one_file",
+      "description": "A route_id has both a non-empty routes.network_id AND an entry in route_networks.txt. The two sources can diverge; the spec requires exactly one."
+    },
+    "transfer_distance_above_2_km": {
+      "default_severity": "info",
+      "gtfs_section": "transfers",
+      "mobilitydata_match": "transfer_distance_above_2_km",
+      "message_i18n_key": "rule.transfer_distance_above_2_km",
+      "description": "A transfers.txt row links two stops more than 2 km apart. Complementary INFO threshold to the 10 km transfer_distance_too_large WARNING — surfaces likely typos before they reach the harder cap."
+    },
+    "transfer_with_invalid_stop_location_type": {
+      "default_severity": "error",
+      "gtfs_section": "transfers",
+      "mobilitydata_match": "transfer_with_invalid_stop_location_type",
+      "message_i18n_key": "rule.transfer_with_invalid_stop_location_type",
+      "description": "A transfers.txt row references a stop whose stops.location_type is not in {empty, 0 (platform), 1 (station)}. Transfers must connect platforms or stations, not entrances/exits, generic nodes, or boarding areas."
+    },
+    "transfer_with_invalid_trip_and_route": {
+      "default_severity": "error",
+      "gtfs_section": "transfers",
+      "mobilitydata_match": "transfer_with_invalid_trip_and_route",
+      "message_i18n_key": "rule.transfer_with_invalid_trip_and_route",
+      "description": "A transfers.txt row sets both trip_id and route_id, but the trip's actual route_id (per trips.txt) does not match the row's route_id."
+    },
+    "transfer_with_suspicious_mid_trip_in_seat": {
+      "default_severity": "warning",
+      "gtfs_section": "transfers",
+      "mobilitydata_match": "transfer_with_suspicious_mid_trip_in_seat",
+      "message_i18n_key": "rule.transfer_with_suspicious_mid_trip_in_seat",
+      "description": "transfer_type=4 (in-seat continuation) between two trips that do not share a block_id. Block-less in-seat transfers are unusual and likely modelling errors."
+    },
+    "stop_time_with_arrival_before_previous_departure_time": {
+      "default_severity": "error",
+      "gtfs_section": "stop_times",
+      "mobilitydata_match": "stop_time_with_arrival_before_previous_departure_time",
+      "message_i18n_key": "rule.stop_time_with_arrival_before_previous_departure_time",
+      "description": "On the same trip, the arrival_time of a stop_time row is strictly less than the previous row's departure_time. Co-emitted with decreasing_stop_time for canonical-tool compatibility."
+    },
+    "decreasing_or_equal_stop_time_distance": {
+      "default_severity": "error",
+      "gtfs_section": "stop_times",
+      "mobilitydata_match": "decreasing_or_equal_stop_time_distance",
+      "message_i18n_key": "rule.decreasing_or_equal_stop_time_distance",
+      "description": "shape_dist_traveled is not strictly increasing between two consecutive stop_times of the same trip. Strict monotonicity is required since the value represents cumulative distance along the shape."
+    },
+    "forbidden_shape_dist_traveled": {
+      "default_severity": "error",
+      "gtfs_section": "stop_times",
+      "mobilitydata_match": "forbidden_shape_dist_traveled",
+      "message_i18n_key": "rule.forbidden_shape_dist_traveled",
+      "description": "A stop_times row sets shape_dist_traveled but the parent trip does not declare a shape_id (or shapes.txt is empty). The value is meaningless without a shape."
+    },
+    "point_near_pole": {
+      "default_severity": "error",
+      "gtfs_section": "data_quality",
+      "mobilitydata_match": "point_near_pole",
+      "message_i18n_key": "rule.point_near_pole",
+      "description": "A stop or shape point sits within 1° of either geographic pole (|lat| > 89.0°). Almost always a coordinate-entry typo since no transit network operates at the poles."
+    },
+    "stop_too_far_from_shape": {
+      "default_severity": "warning",
+      "gtfs_section": "shapes",
+      "mobilitydata_match": "stop_too_far_from_shape",
+      "message_i18n_key": "rule.stop_too_far_from_shape",
+      "description": "A stop is more than the configured threshold (default 100 m) from the nearest vertex of its trip's shape polyline. Catches stops placed on the wrong continent or far off-route."
+    },
+    "stop_too_far_from_shape_using_user_distance": {
+      "default_severity": "warning",
+      "gtfs_section": "shapes",
+      "mobilitydata_match": "stop_too_far_from_shape_using_user_distance",
+      "message_i18n_key": "rule.stop_too_far_from_shape_using_user_distance",
+      "description": "Variant of stop_too_far_from_shape using stop_times.shape_dist_traveled: the predicted shape-position (interpolated along the polyline at shape_dist_traveled) is far from the stop's actual coordinates."
+    },
+    "stops_match_shape_out_of_order": {
+      "default_severity": "warning",
+      "gtfs_section": "shapes",
+      "mobilitydata_match": "stops_match_shape_out_of_order",
+      "message_i18n_key": "rule.stops_match_shape_out_of_order",
+      "description": "The stops of a trip, projected onto its shape polyline, are not in monotonic increasing order along the shape. Indicates an out-of-order stop_sequence or a shape that doubles back on itself."
+    },
+    "trip_distance_exceeds_shape_distance": {
+      "default_severity": "error",
+      "gtfs_section": "shapes",
+      "mobilitydata_match": "trip_distance_exceeds_shape_distance",
+      "message_i18n_key": "rule.trip_distance_exceeds_shape_distance",
+      "description": "max(stop_times.shape_dist_traveled) on a trip is greater than the cumulative haversine length of its shape polyline (over 1 % tolerance). The trip claims to travel further than the shape allows."
+    },
+    "trip_distance_exceeds_shape_distance_below_threshold": {
+      "default_severity": "warning",
+      "gtfs_section": "shapes",
+      "mobilitydata_match": "trip_distance_exceeds_shape_distance_below_threshold",
+      "message_i18n_key": "rule.trip_distance_exceeds_shape_distance_below_threshold",
+      "description": "Same condition as trip_distance_exceeds_shape_distance, but under the strict ERROR threshold — surfaces near-misses for review."
+    },
+    "stop_has_too_many_matches_for_shape": {
+      "default_severity": "warning",
+      "gtfs_section": "shapes",
+      "mobilitydata_match": "stop_has_too_many_matches_for_shape",
+      "message_i18n_key": "rule.stop_has_too_many_matches_for_shape",
+      "description": "More than 5 vertices of the trip's shape are within the matching threshold of a single stop, making the stop-to-shape projection ambiguous (the shape loops near the stop)."
+    },
+    "equal_shape_distance_diff_coordinates_distance_below_threshold": {
+      "default_severity": "warning",
+      "gtfs_section": "shapes",
+      "mobilitydata_match": "equal_shape_distance_diff_coordinates_distance_below_threshold",
+      "message_i18n_key": "rule.equal_shape_distance_diff_coordinates_distance_below_threshold",
+      "description": "Variant of equal_shape_distance_diff_coordinates where the geographic delta between the two points is below ~1.11 m. Practical impact on routing is negligible — surfaced as INFO."
+    },
+    "location_with_unexpected_stop_time": {
+      "default_severity": "error",
+      "gtfs_section": "stop_times",
+      "mobilitydata_match": "location_with_unexpected_stop_time",
+      "message_i18n_key": "rule.location_with_unexpected_stop_time",
+      "description": "A Flex stop_times row sets BOTH stop_id and (location_id or location_group_id). The spec requires exactly one of the three to be set per row."
+    },
+    "missing_timepoint_value": {
+      "default_severity": "warning",
+      "gtfs_section": "stop_times",
+      "mobilitydata_match": "missing_timepoint_value",
+      "message_i18n_key": "rule.missing_timepoint_value",
+      "description": "stop_times.timepoint is empty on a row. Recommended (not required) — explicitly set 0 (inexact) or 1 (exact) so consumers don't have to guess."
+    },
+    "missing_stop_times_record": {
+      "default_severity": "error",
+      "gtfs_section": "stop_times",
+      "mobilitydata_match": "missing_stop_times_record",
+      "message_i18n_key": "rule.missing_stop_times_record",
+      "description": "A trip declared in trips.txt has zero rows in stop_times.txt. Distinct from unusable_trip (which fires for < 2 rows including 1) — the 0-row case is canonically named missing_stop_times_record."
+    },
+    "trip_coverage_not_active_for_next7_days": {
+      "default_severity": "warning",
+      "gtfs_section": "trips",
+      "mobilitydata_match": "trip_coverage_not_active_for_next7_days",
+      "message_i18n_key": "rule.trip_coverage_not_active_for_next7_days",
+      "description": "Variant of unused_trip bounded to a 7-day horizon (today..today+7d). The trip's service_id is inactive for the next 7 days — passengers cannot board it during that window."
+    },
+    "transfer_with_invalid_trip_and_stop": {
+      "default_severity": "error",
+      "gtfs_section": "transfers",
+      "mobilitydata_match": "transfer_with_invalid_trip_and_stop",
+      "message_i18n_key": "rule.transfer_with_invalid_trip_and_stop",
+      "description": "A transfers.txt row sets both trip_id and stop_id, but the stop is not referenced by any stop_times row of the trip. The transfer points to an inconsistent (trip, stop) pair."
+    },
+    "forbidden_geography_id": {
+      "default_severity": "error",
+      "gtfs_section": "fare",
+      "mobilitydata_match": "forbidden_geography_id",
+      "message_i18n_key": "rule.forbidden_geography_id",
+      "description": "Catalogue-only entry for canonical-tool compatibility. Emission deferred — the canonical semantics are ambiguous between fare_leg_rules.from_area_id type mismatch, stop_areas cross-file references, and rider_categories.eligibility_url scope; will be wired once MobilityData publishes a precise definition."
+    }
+  }
+}

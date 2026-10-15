@@ -1,0 +1,4 @@
+fare_id,price,currency_type,payment_method,transfers,agency_id,transfer_duration
+fare_local,2.90,USD,1,2,NYCDEMO,7200
+fare_airport,5.50,USD,1,0,NYCDEMO,0
+fare_ferry,4.50,USD,1,0,NYCDEMO,0

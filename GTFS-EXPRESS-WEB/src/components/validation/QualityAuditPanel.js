@@ -1,0 +1,495 @@
+/**
+ * QualityAuditPanel — the "Diagnostic": what the validator cannot see.
+ *
+ * Fetches GET /quality_audit (memoised server-side per data version) and
+ * lists the semantic findings: impossible speeds, duplicate stops,
+ * inconsistent names, shapes far from their stops, dead services, unused
+ * objects, unreadable colours… Each finding opens its sample entities,
+ * hands the problem to the assistant ("Fix with AI") or jumps to the
+ * Shape Studio. `compact` renders the dashboard card (top findings only).
+ *
+ * `dense` is a section of the overview's side panel (the overview fits the screen): no card of its own, one row
+ * per finding — its title and its count — separated by hairlines, its explanation opened with its samples; with
+ * `bounded` the section fills its box and stops there, its list scrolling inside it between the head and the
+ * actions.
+ */
+
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  Box,
+  Button,
+  Chip,
+  CircularProgress,
+  Collapse,
+  IconButton,
+  Tooltip,
+  Typography,
+  alpha,
+  useTheme,
+} from "@mui/material";
+import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
+import LockOutlinedIcon from "@mui/icons-material/LockOutlined";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+import WarningAmberIcon from "@mui/icons-material/WarningAmber";
+import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
+import CheckCircleOutlineIcon from "@mui/icons-material/CheckCircleOutline";
+import RefreshIcon from "@mui/icons-material/Refresh";
+import EditLocationAltIcon from "@mui/icons-material/EditLocationAlt";
+import OpenInNewIcon from "@mui/icons-material/OpenInNew";
+import MergeTypeIcon from "@mui/icons-material/MergeType";
+import VisibilityOffOutlinedIcon from "@mui/icons-material/VisibilityOffOutlined";
+import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
+import useAssistantMemory from "../chat/useAssistantMemory";
+import MergeStopsDialog from "./MergeStopsDialog";
+import RealtimeCheckDialog from "./RealtimeCheckDialog";
+import SensorsOutlinedIcon from "@mui/icons-material/SensorsOutlined";
+import API_BASE_URL from "../../config";
+import { fetchWithSession } from "../../utils/sessionManager";
+import { useLanguage } from "../../contexts/LanguageContext";
+import { useDetailPanel } from "../../contexts/DetailPanelContext";
+import { useEditMode } from "../../contexts/EditModeContext";
+import { licenceLockOf, openPaywall, useFeatures } from "../../utils/featuresApi";
+import { CHAT_OPEN_EVENT } from "../chat/ChatAssistantFAB";
+
+const PANEL_TYPES = new Set(["stop", "route", "trip", "shape", "calendar"]);
+
+function FindingRow({ finding, onAskAi, onOpenStudio, onMerge, onIgnore, ignored = false, chatEnabled, dense = false }) {
+  const { t } = useLanguage();
+  const theme = useTheme();
+  const { openPanel } = useDetailPanel();
+  const [open, setOpen] = useState(false);
+  const warn = finding.severity === "warning";
+  const accent = warn ? theme.palette.warning.main : theme.palette.info.main;
+  const title = t(`audit.code.${finding.code}.title`);
+  const body = t(`audit.code.${finding.code}.body`);
+  const unitChip = (
+    <Chip
+      size="small"
+      label={t(`audit.unit.${finding.unit}`, { count: finding.count })}
+      sx={{ height: dense ? 19 : 20, fontSize: dense ? "0.64rem" : "0.66rem", fontWeight: 700, flexShrink: 0, bgcolor: alpha(accent, 0.15), color: warn ? theme.palette.warning.dark : theme.palette.info.dark }}
+    />
+  );
+
+  // The samples and the actions of a finding, under its row once opened (both variants).
+  const details = (
+    <>
+      {finding.samples.length > 0 && (
+        <Box sx={{ display: "flex", flexDirection: "column", gap: 0.3 }}>
+          {finding.samples.map((s, i) => {
+            const clickable = s.id && PANEL_TYPES.has(finding.entityType);
+            const mergeable = finding.code === "duplicate_stops" && s.id && s.otherId && onMerge;
+            return (
+              <Box key={`${s.id || "x"}-${i}`} sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+                <Box
+                  component={clickable ? "button" : "div"}
+                  type={clickable ? "button" : undefined}
+                  onClick={clickable ? () => openPanel(finding.entityType, s.id) : undefined}
+                  sx={{
+                    all: "unset",
+                    flex: 1,
+                    minWidth: 0,
+                    display: "flex",
+                    alignItems: "baseline",
+                    gap: 1,
+                    fontSize: "0.74rem",
+                    px: 0.75,
+                    py: 0.35,
+                    borderRadius: 1,
+                    cursor: clickable ? "pointer" : "default",
+                    "&:hover": clickable ? { background: alpha(theme.palette.primary.main, 0.08) } : {},
+                  }}
+                >
+                  <Box component="span" sx={{ fontWeight: 600, color: clickable ? "primary.main" : "text.primary", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "55%" }}>
+                    {s.label}
+                  </Box>
+                  <Box component="span" sx={{ color: "text.secondary", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {s.detail}
+                  </Box>
+                  {clickable && <OpenInNewIcon sx={{ fontSize: 12, color: "text.disabled" }} />}
+                </Box>
+                {mergeable && (
+                  <Tooltip title={t("audit.merge.action")}>
+                    <Chip
+                      size="small"
+                      icon={<MergeTypeIcon sx={{ fontSize: 13 }} />}
+                      label={t("audit.merge.action")}
+                      onClick={() => onMerge(s.id, s.otherId)}
+                      data-testid="audit-merge"
+                      sx={{ height: 20, fontSize: "0.62rem", fontWeight: 700, flexShrink: 0 }}
+                    />
+                  </Tooltip>
+                )}
+              </Box>
+            );
+          })}
+          {finding.count > finding.samples.length && (
+            <Typography sx={{ fontSize: "0.7rem", color: "text.disabled", px: 0.75 }}>
+              {t("audit.moreSamples", { count: finding.count - finding.samples.length })}
+            </Typography>
+          )}
+        </Box>
+      )}
+      <Box sx={{ display: "flex", gap: 0.75, flexWrap: "wrap" }}>
+        {chatEnabled && (
+          <Button
+            size="small"
+            variant="contained"
+            disableElevation
+            startIcon={<AutoAwesomeIcon sx={{ fontSize: 15 }} />}
+            onClick={() => onAskAi(finding)}
+            data-testid="audit-ask-ai"
+            sx={{ textTransform: "none", fontWeight: 700, background: `linear-gradient(135deg, ${theme.palette.ai.gradientStart}, ${theme.palette.ai.gradientEnd})` }}
+          >
+            {finding.fix === "sql" ? t("audit.action.fixWithAi") : t("audit.action.explainWithAi")}
+          </Button>
+        )}
+        {finding.fix === "studio" && (
+          <Button
+            size="small"
+            variant="outlined"
+            startIcon={<EditLocationAltIcon sx={{ fontSize: 15 }} />}
+            onClick={() => onOpenStudio(finding)}
+            sx={{ textTransform: "none", fontWeight: 600 }}
+          >
+            {t("audit.action.openStudio")}
+          </Button>
+        )}
+        {onIgnore && (
+          <Tooltip title={ignored ? "" : t("audit.action.ignoreHint")}>
+            <Button
+              size="small"
+              color="inherit"
+              startIcon={ignored ? <VisibilityOutlinedIcon sx={{ fontSize: 15 }} /> : <VisibilityOffOutlinedIcon sx={{ fontSize: 15 }} />}
+              onClick={() => onIgnore(finding.code, !ignored)}
+              data-testid={ignored ? "audit-unignore" : "audit-ignore"}
+              sx={{ textTransform: "none", fontWeight: 600, color: "text.secondary" }}
+            >
+              {ignored ? t("audit.action.unignore") : t("audit.action.ignore")}
+            </Button>
+          </Tooltip>
+        )}
+      </Box>
+    </>
+  );
+
+  if (dense) {
+    const count = t(`audit.unit.${finding.unit}`, { count: finding.count });
+    return (
+      <Box data-testid={`audit-finding-${finding.code}`} sx={{ flexShrink: 0 }}>
+        <Box
+          component="button"
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          title={open ? undefined : body}
+          sx={{
+            all: "unset",
+            cursor: "pointer",
+            width: "100%",
+            boxSizing: "border-box",
+            display: "flex",
+            alignItems: "center",
+            gap: 1,
+            px: 0.75,
+            py: 0.85,
+            borderRadius: "8px",
+            "&:hover": { background: theme.palette.action.hover },
+            "&:focus-visible": { outline: `2px solid ${theme.palette.primary.main}`, outlineOffset: -2 },
+          }}
+        >
+          {warn ? (
+            <WarningAmberIcon sx={{ fontSize: 16, color: theme.palette.warning.main, flexShrink: 0 }} />
+          ) : (
+            <InfoOutlinedIcon sx={{ fontSize: 16, color: theme.palette.info.main, flexShrink: 0 }} />
+          )}
+          <Typography sx={{ flex: 1, minWidth: 0, fontSize: "0.82rem", fontWeight: 600, lineHeight: 1.35 }} noWrap={!open}>
+            {title}
+          </Typography>
+          <Typography component="span" sx={{ flexShrink: 0, fontSize: "0.74rem", color: "text.secondary", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+            {count}
+          </Typography>
+          <ExpandMoreIcon sx={{ fontSize: 17, color: "text.secondary", flexShrink: 0, transform: open ? "rotate(180deg)" : "none", transition: "transform 160ms" }} />
+        </Box>
+        <Collapse in={open} unmountOnExit>
+          <Box sx={{ pl: 4, pr: 0.75, pb: 1, display: "flex", flexDirection: "column", gap: 0.75 }}>
+            <Typography sx={{ fontSize: "0.76rem", color: "text.secondary", lineHeight: 1.5 }}>{body}</Typography>
+            {details}
+          </Box>
+        </Collapse>
+      </Box>
+    );
+  }
+
+  return (
+    <Box
+      data-testid={`audit-finding-${finding.code}`}
+      sx={{
+        borderRadius: 2,
+        border: `1px solid ${alpha(accent, 0.35)}`,
+        background: alpha(accent, 0.05),
+        overflow: "hidden",
+        flexShrink: 0,
+      }}
+    >
+      <Box
+        component="button"
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        sx={{
+          all: "unset",
+          cursor: "pointer",
+          width: "100%",
+          boxSizing: "border-box",
+          display: "flex",
+          alignItems: "center",
+          gap: 1,
+          px: 1.5,
+          py: 1,
+          "&:hover": { background: alpha(accent, 0.08) },
+          "&:focus-visible": { outline: `2px solid ${theme.palette.primary.main}`, outlineOffset: -2 },
+        }}
+      >
+        {warn ? (
+          <WarningAmberIcon sx={{ fontSize: 18, color: theme.palette.warning.dark, flexShrink: 0 }} />
+        ) : (
+          <InfoOutlinedIcon sx={{ fontSize: 18, color: theme.palette.info.main, flexShrink: 0 }} />
+        )}
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Typography sx={{ fontSize: "0.84rem", fontWeight: 700, lineHeight: 1.3 }} noWrap>
+            {title}
+          </Typography>
+          <Typography sx={{ fontSize: "0.74rem", color: "text.secondary", lineHeight: 1.4 }} noWrap>
+            {body}
+          </Typography>
+        </Box>
+        {unitChip}
+        <ExpandMoreIcon sx={{ fontSize: 18, color: "text.secondary", flexShrink: 0, transform: open ? "rotate(180deg)" : "none", transition: "transform 160ms" }} />
+      </Box>
+      <Collapse in={open} unmountOnExit>
+        <Box sx={{ px: 1.5, pb: 1.25, display: "flex", flexDirection: "column", gap: 0.75 }}>
+          {details}
+        </Box>
+      </Collapse>
+    </Box>
+  );
+}
+
+export default function QualityAuditPanel({ compact = false, dense = false, bounded = false, onSeeAll = null, maxItems = null, repairAll = true }) {
+  const { t } = useLanguage();
+  const theme = useTheme();
+  const { dataVersion } = useEditMode();
+  const { features } = useFeatures();
+  const chatEnabled = Boolean(features?.chat?.enabled);
+  // Repairing is modifying: under the paid offer without the licence, the offer opens instead of the assistant.
+  const editLock = licenceLockOf(features?.access);
+  const [audit, setAudit] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [mergePair, setMergePair] = useState(null); // { a, b }
+  const [showIgnored, setShowIgnored] = useState(false);
+  const [realtimeOpen, setRealtimeOpen] = useState(false);
+  const { memory, update: updateMemory } = useAssistantMemory({ enabled: true });
+  const ignoredSet = useMemo(() => new Set(memory?.ignoredFindings || []), [memory]);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetchWithSession(`${API_BASE_URL}/quality_audit`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setAudit(await res.json());
+    } catch (err) {
+      setError(err.message || "error");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Refresh after edits (debounced: several edits in a row = one audit).
+  useEffect(() => {
+    const id = setTimeout(load, dataVersion ? 1200 : 0);
+    return () => clearTimeout(id);
+  }, [load, dataVersion]);
+
+  const ignoredCount = useMemo(() => (audit?.findings || []).filter((f) => ignoredSet.has(f.code)).length, [audit, ignoredSet]);
+  const findings = useMemo(() => {
+    const all = audit?.findings || [];
+    const list = showIgnored ? all : all.filter((f) => !ignoredSet.has(f.code));
+    return maxItems ? list.slice(0, maxItems) : list;
+  }, [audit, maxItems, ignoredSet, showIgnored]);
+  const warnings = (audit?.findings || []).filter((f) => f.severity === "warning" && !ignoredSet.has(f.code)).length;
+  const infos = (audit?.findings || []).filter((f) => f.severity === "info" && !ignoredSet.has(f.code)).length;
+  const clean = audit && audit.findings.filter((f) => !ignoredSet.has(f.code)).length === 0;
+
+  const toggleIgnore = useCallback(
+    (code, ignore) => {
+      updateMemory(ignore ? { ignore: [code] } : { unignore: [code] }).catch(() => {});
+    },
+    [updateMemory],
+  );
+
+  const askAi = useCallback(
+    (finding) => {
+      const samples = finding.samples
+        .slice(0, 5)
+        .map((s) => `- ${s.label}${s.detail ? ` — ${s.detail}` : ""}`)
+        .join("\n");
+      const message = t("audit.aiPrompt", {
+        code: finding.code,
+        title: t(`audit.code.${finding.code}.title`),
+        count: finding.count,
+        samples,
+      });
+      window.dispatchEvent(new CustomEvent(CHAT_OPEN_EVENT, { detail: { message } }));
+    },
+    [t],
+  );
+
+  const askAiAll = useCallback(() => {
+    const ask = () => window.dispatchEvent(new CustomEvent(CHAT_OPEN_EVENT, { detail: { message: t("audit.aiRepairAllPrompt") } }));
+    if (editLock) {
+      openPaywall("edit", editLock, ask);
+      return;
+    }
+    ask();
+  }, [t, editLock]);
+
+  const openStudio = useCallback((finding) => {
+    const routeId = finding.samples.find((s) => s.routeId)?.routeId || null;
+    window.dispatchEvent(new CustomEvent("gtfs:navigate", { detail: { target: "shape_studio", routeId } }));
+  }, []);
+
+  return (
+    <Box
+      data-testid="quality-audit-panel"
+      sx={{
+        borderRadius: 3,
+        ...(dense
+          ? {}
+          : {
+              border: `1px solid ${alpha(theme.palette.ai.main, 0.3)}`,
+              background: `linear-gradient(160deg, ${alpha(theme.palette.ai.main, 0.07)} 0%, ${alpha(theme.palette.background.paper, 0.6)} 60%)`,
+            }),
+        p: dense ? 0 : compact ? 2 : 2.25,
+        display: "flex",
+        flexDirection: "column",
+        gap: dense ? 1 : 1.25,
+        ...(bounded ? { flex: 1, maxHeight: "100%", minHeight: 0, boxSizing: "border-box" } : {}),
+      }}
+    >
+      <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexShrink: 0 }}>
+        <Box
+          sx={{
+            display: dense ? "none" : "flex",
+            width: 34,
+            height: 34,
+            borderRadius: "10px",
+            alignItems: "center",
+            justifyContent: "center",
+            background: `linear-gradient(135deg, ${theme.palette.ai.gradientStart} 0%, ${theme.palette.ai.gradientEnd} 100%)`,
+            color: theme.palette.ai.contrastText,
+            flexShrink: 0,
+          }}
+        >
+          <AutoAwesomeIcon sx={{ fontSize: dense ? 16 : 19 }} />
+        </Box>
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Typography component={dense ? "h2" : "p"} sx={dense ? { fontWeight: 700, fontSize: "0.72rem", letterSpacing: "0.06em", textTransform: "uppercase", color: "text.secondary", lineHeight: 1.4 } : { fontWeight: 800, fontSize: "0.98rem", lineHeight: 1.2 }}>{t("audit.title")}</Typography>
+          <Typography sx={{ fontSize: dense ? "0.72rem" : "0.76rem", color: "text.secondary", lineHeight: dense ? 1.3 : undefined }}>
+            {loading && !audit
+              ? t("audit.running")
+              : clean
+                ? t("audit.cleanSubtitle")
+                : t("audit.subtitle", { warnings, infos })}
+          </Typography>
+        </Box>
+        <Tooltip title={t("realtime.title")}>
+          <IconButton size="small" onClick={() => setRealtimeOpen(true)} aria-label={t("realtime.title")} data-testid="audit-realtime">
+            <SensorsOutlinedIcon sx={{ fontSize: 18 }} />
+          </IconButton>
+        </Tooltip>
+        {loading ? (
+          <CircularProgress size={18} />
+        ) : (
+          <Tooltip title={t("audit.refresh")}>
+            <IconButton size="small" onClick={load} aria-label={t("audit.refresh")}>
+              <RefreshIcon sx={{ fontSize: 18 }} />
+            </IconButton>
+          </Tooltip>
+        )}
+      </Box>
+      <RealtimeCheckDialog open={realtimeOpen} onClose={() => setRealtimeOpen(false)} />
+
+      {error && (
+        <Typography sx={{ fontSize: "0.78rem", color: "error.main" }}>{t("audit.error")}</Typography>
+      )}
+
+      {clean && (
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1, color: theme.palette.success.main, py: 0.5 }}>
+          <CheckCircleOutlineIcon sx={{ fontSize: 22 }} />
+          <Typography sx={{ fontSize: "0.84rem", fontWeight: 600 }}>{t("audit.clean")}</Typography>
+        </Box>
+      )}
+
+      {findings.length > 0 && (
+        <Box data-testid="audit-findings" sx={{ display: "flex", flexDirection: "column", gap: dense ? 0 : 0.75, ...(dense ? { mx: -0.75, "& > * + *": { borderTop: `1px solid ${theme.palette.divider}` } } : {}), ...(bounded ? { flex: "0 1 auto", minHeight: 0, overflowY: "auto", mr: -0.75, pr: 0.75 } : {}) }}>
+          {findings.map((f) => (
+            <FindingRow
+              key={f.code}
+              finding={f}
+              onAskAi={askAi}
+              onOpenStudio={openStudio}
+              onMerge={(a, b) => setMergePair({ a, b })}
+              onIgnore={toggleIgnore}
+              ignored={ignoredSet.has(f.code)}
+              chatEnabled={chatEnabled}
+              dense={dense}
+            />
+          ))}
+        </Box>
+      )}
+
+      <MergeStopsDialog open={Boolean(mergePair)} stopA={mergePair?.a} stopB={mergePair?.b} onClose={() => setMergePair(null)} />
+
+      {ignoredCount > 0 && (
+        <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, fontSize: "0.72rem", color: "text.secondary" }}>
+          <VisibilityOffOutlinedIcon sx={{ fontSize: 14 }} />
+          {t("audit.ignoredCount", { count: ignoredCount })}
+          <Button size="small" onClick={() => setShowIgnored((v) => !v)} data-testid="audit-toggle-ignored" sx={{ textTransform: "none", fontWeight: 700, minWidth: 0, py: 0, fontSize: "0.72rem" }}>
+            {showIgnored ? t("audit.hideIgnored") : t("audit.showIgnored")}
+          </Button>
+        </Box>
+      )}
+
+      {audit && audit.partial && (
+        <Typography sx={{ fontSize: "0.7rem", color: "text.disabled" }}>{t("audit.partial")}</Typography>
+      )}
+
+      {(compact || (repairAll && chatEnabled && findings.length > 0)) && (
+        <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", alignItems: "center", flexShrink: 0 }}>
+          {repairAll && chatEnabled && findings.length > 0 && (
+            <Button
+              size="small"
+              variant="contained"
+              disableElevation
+              startIcon={editLock ? <LockOutlinedIcon sx={{ fontSize: 15 }} /> : <AutoAwesomeIcon sx={{ fontSize: 15 }} />}
+              onClick={askAiAll}
+              data-testid="audit-repair-all"
+              data-locked={editLock ? "1" : undefined}
+              title={editLock ? t("modify.locked") : undefined}
+              sx={{ textTransform: "none", fontWeight: 700, background: `linear-gradient(135deg, ${theme.palette.ai.gradientStart}, ${theme.palette.ai.gradientEnd})` }}
+            >
+              {t("audit.action.repairAll")}
+            </Button>
+          )}
+          {compact && onSeeAll && audit && audit.findings.length > findings.length && (
+            <Button size="small" onClick={onSeeAll} sx={{ textTransform: "none", fontWeight: 600 }}>
+              {t("audit.action.seeAll", { count: audit.findings.length })}
+            </Button>
+          )}
+        </Box>
+      )}
+    </Box>
+  );
+}
