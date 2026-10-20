@@ -33,6 +33,7 @@ const path = require("path");
 const XLSX = require("xlsx");
 const { refusal } = require("../refusal");
 const { decodeBuffer } = require("../csvUtils");
+const { assertZipInflatesWithin, isZip } = require("../../utils/zipInflateBound");
 
 const FORMATS = { ".xlsx": "xlsx", ".xlsm": "xlsm", ".xls": "xls", ".ods": "ods", ".csv": "csv" };
 const MAX_CELLS = 250000;
@@ -82,8 +83,22 @@ const formatOf = (name) => {
 const SIGNATURES = { xlsx: [[0x50, 0x4b]], xlsm: [[0x50, 0x4b]], ods: [[0x50, 0x4b]], xls: [[0xd0, 0xcf, 0x11, 0xe0], [0x3c], [0x09, 0x08]] };
 const signed = (buffer, format) => !SIGNATURES[format] || SIGNATURES[format].some((sig) => sig.every((b, i) => buffer[i] === b));
 
+// What a zipped workbook (.xlsx, .xlsm, .ods) may inflate to before SheetJS reads it whole on the request's thread
+// (utils/zipInflateBound): the cell caps below apply only once the workbook is built.
+const MAX_INFLATED_BYTES = 100 * 1024 * 1024;
+const assertInflatable = (buffer) => {
+  if (isZip(buffer)) assertZipInflatesWithin(buffer, MAX_INFLATED_BYTES);
+};
+
 const readBook = (buffer, format) => {
   if (!signed(buffer, format)) throw refusal(400, "UNREADABLE_DOCUMENT", `This file is not a readable .${format} workbook.`);
+  if (format !== "csv") {
+    try {
+      assertInflatable(buffer);
+    } catch (err) {
+      throw refusal(err.status || 400, err.code || "UNREADABLE_DOCUMENT", err.message, err.max_mb ? { max_mb: err.max_mb } : null);
+    }
+  }
   try {
     if (format === "csv") {
       const { text } = decodeBuffer(buffer, "offer.csv");
@@ -178,4 +193,4 @@ const cellAt = (sheet, r, c) => sheet.grid.get(key(r, c)) || null;
 /** The cells of row r of a sheet's grid (merged copies included), left to right: never an empty address. */
 const cellsOfRow = (sheet, r) => sheet.rows?.get(r) || [];
 
-module.exports = { readWorkbook, cellAt, cellsOfRow, indexOf, formatOf, csvSeparator, FORMATS, MAX_CELLS, MAX_AREA, key };
+module.exports = { assertInflatable, MAX_INFLATED_BYTES, readWorkbook, cellAt, cellsOfRow, indexOf, formatOf, csvSeparator, FORMATS, MAX_CELLS, MAX_AREA, key };

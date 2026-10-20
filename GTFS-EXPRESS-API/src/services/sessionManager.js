@@ -43,6 +43,48 @@ const validateAgencyIdParam = (agencyId) =>
 const cache = new Map();          // directory → parsed GTFS data
 const loadingPromises = new Map(); // directory → Promise (deduplicates concurrent loads)
 
+// The parse holds every row as a JS object: about 5.6 bytes of heap per byte of CSV once parsed (the sample feed:
+// 6.1 MB of CSV, 34 MB retained), more while it runs. A feed whose estimate exceeds the heap still free (the parses
+// in flight counted) is refused before it starts, with a 413 — it would end the process, and every user's session
+// with it. Only a parse that cannot fit is refused: the estimate is the retained size, not the peak.
+const PARSE_HEAP_FACTOR = 6;
+let parsesInFlightBytes = 0;
+const heapFree = () => {
+  const { heap_size_limit: limit, used_heap_size: used } = require("v8").getHeapStatistics();
+  return limit - used - parsesInFlightBytes;
+};
+const reserveParse = (directory, files) => {
+  let bytes = 0;
+  for (const file of files) {
+    try {
+      bytes += fs.statSync(path.join(directory, file)).size;
+    } catch {
+      // A file gone since the listing: the parse reports it.
+    }
+  }
+  const need = bytes * PARSE_HEAP_FACTOR;
+  const free = heapFree();
+  if (need > free) {
+    const busy = parsesInFlightBytes > 0 && need <= free + parsesInFlightBytes;
+    const mb = (n) => Math.round(n / 1048576);
+    throw Object.assign(
+      new Error(
+        busy
+          ? `The server is reading other feeds: this one (${mb(bytes)} MB of CSV) needs about ${mb(need)} MB of memory. Try again in a minute.`
+          : `This feed is too large for this server: ${mb(bytes)} MB of CSV needs about ${mb(need)} MB of memory, ${mb(free)} MB are free.`,
+      ),
+      { status: busy ? 503 : 413, code: busy ? "SERVER_BUSY" : "FEED_TOO_LARGE", csv_mb: mb(bytes), needed_mb: mb(need) },
+    );
+  }
+  parsesInFlightBytes += need;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    parsesInFlightBytes -= need;
+  };
+};
+
 // ── Active-mutation tracker (race protection vs cleanupOldSessions) ───────────
 // A mutation in flight registers a token here for the duration of the request.
 // `cleanupOldSessions` skips any folder whose sessionId still has at least one
@@ -416,6 +458,7 @@ const loadData = async (directory) => {
   // If a load is already in progress, wait for the same promise (avoids double-load)
   if (loadingPromises.has(directory)) return loadingPromises.get(directory);
 
+  let release = () => {};
   const promise = (async () => {
     try {
       for (const file of requiredFiles) {
@@ -430,6 +473,7 @@ const loadData = async (directory) => {
       const allFiles = requiredFiles.concat(
         optionalFiles.filter((file) => fs.existsSync(path.join(directory, file))),
       );
+      release = reserveParse(directory, allFiles);
 
       // locations.geojson — parse JSON outside the CSV pipeline.
       // Decomposed into one row per FeatureCollection feature so the result
@@ -579,15 +623,23 @@ const loadData = async (directory) => {
       cache.set(directory, data);
       return data;
     } finally {
-      loadingPromises.delete(directory);
+      // Parsed (now counted in the heap's own usage) or failed: the reservation ends.
+      release();
     }
   })();
 
+  // Forgotten once settled — after it is set: a load refused before its first await (a required file missing, a feed
+  // too large) settles before this line, and a delete inside the body would leave its rejection cached for good.
   loadingPromises.set(directory, promise);
+  const forget = () => {
+    if (loadingPromises.get(directory) === promise) loadingPromises.delete(directory);
+  };
+  promise.then(forget, forget);
   return promise;
 };
 
 module.exports = {
+  _internals: { reserveParse, PARSE_HEAP_FACTOR },
   touchSession,
   sessionExpiryOf,
   refuseInvalidSession,

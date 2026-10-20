@@ -403,6 +403,10 @@ const uploadGTFSFile = async (req, res) => {
     try {
       preloadedData = await loadData(uploadPath);
     } catch (loadErr) {
+      // A feed that cannot fit in memory is refused here, before the validator and the migration parse it again.
+      if (loadErr && (loadErr.code === "FEED_TOO_LARGE" || loadErr.code === "SERVER_BUSY")) {
+        return res.status(loadErr.status).json({ error: loadErr.code, message: loadErr.message, csv_mb: loadErr.csv_mb, needed_mb: loadErr.needed_mb });
+      }
       console.warn(
         `Pre-load failed for ${sessionTag(sessionId)} (validator will fall back to per-file parsing):`,
         loadErr.message,

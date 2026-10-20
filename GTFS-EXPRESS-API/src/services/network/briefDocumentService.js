@@ -103,6 +103,8 @@ const tidy = (s) =>
  */
 const spreadsheetText = (buffer, { csv = null } = {}) => {
   const XLSX = require("xlsx");
+  // A zipped workbook's inflated size is bounded before SheetJS inflates it whole (a zip bomb): throws {status, code}.
+  if (typeof csv !== "string") require("../spreadsheet/workbook").assertInflatable(buffer);
   let wb;
   try {
     // A CSV's text read as a table with its own separator (spreadsheet/workbook.csvSeparator), every cell as written.

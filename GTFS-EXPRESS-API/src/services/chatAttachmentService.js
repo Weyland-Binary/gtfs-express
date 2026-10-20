@@ -286,6 +286,12 @@ const parseCsvBuffer = (text, separator, maxRows) =>
 const parseXlsxBuffer = (buffer, maxRows) => {
   // Lazy require: CSV-only cold paths never pay the SheetJS module load.
   const XLSX = require("xlsx");
+  // sheetRows bounds the rows kept, not the XML inflated: the archive's inflated size is bounded first (a zip bomb).
+  try {
+    require("./spreadsheet/workbook").assertInflatable(buffer);
+  } catch (err) {
+    throw typedError(err.status || 400, err.code || "UNSUPPORTED_FORMAT", err.message);
+  }
   let workbook;
   try {
     workbook = XLSX.read(buffer, {
