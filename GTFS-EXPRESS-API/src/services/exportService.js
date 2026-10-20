@@ -34,6 +34,7 @@ const fsp = require("fs/promises");
 const path = require("path");
 const archiver = require("archiver");
 const { GTFS_UPLOAD_DIR } = require("./sessionManager");
+const Database = require("better-sqlite3");
 const { getEditDb } = require("./db/connection");
 // Shared edit-mode guard: reopens `gtfs.db` from disk and restores the
 // persisted `_project_meta.edit_mode_active` flag after a server restart, so
@@ -661,10 +662,11 @@ const runPreExportValidation = async (
   sessionId,
   profile = "canonical",
   locale = "en",
+  db = null,
 ) => {
   void profile;
   void locale;
-  const info = await loadValidationDataFromSession(sessionId);
+  const info = await loadValidationDataFromSession(sessionId, { db });
   try {
     const countryCode = require("./sessionCountry").sessionCountryCode(sessionId);
     return await validatorGate.deps.validateDir(info.path, countryCode);
@@ -694,8 +696,8 @@ const isValidationRefusal = (err) => typeof err?.code === "string" && err.code.s
  * preflight dialog can list the findings. Returns { report, baseline,
  * preexisting } for the caller's headers and telemetry.
  */
-const assertExportable = async (sessionId, { profile = "canonical", locale = "en" } = {}) => {
-  const report = validatorGate.assertVerified(await validatorGate.wrap(() => runPreExportValidation(sessionId, profile, locale)));
+const assertExportable = async (sessionId, { profile = "canonical", locale = "en", db = null } = {}) => {
+  const report = validatorGate.assertVerified(await validatorGate.wrap(() => runPreExportValidation(sessionId, profile, locale, db)));
   const baseline = loadBaseline(sessionId);
   try {
     if (baseline) validatorGate.assertNoNewErrors(baseline, report);
@@ -841,6 +843,43 @@ const streamFeedArchive = async (req, res, { sessionId, db, filename, eol, chang
   await archive.finalize();
 };
 
+/**
+ * A read snapshot of the session's feed (G1: the feed validated is the feed streamed). The validator runs for up to
+ * minutes and the archive streams over many ticks, while the same working copy stays writable (an /edit/sql from
+ * another tab, an undo): validating the session handle and then streaming it would deliver whatever it holds by
+ * then. A second, read-only connection opened in a transaction sees the database as it was at its first read (WAL:
+ * writers are not blocked), so the gate validates that state and the archive streams that state. `release()` ends
+ * the transaction and closes the connection; it is idempotent and called on the response's end, its close (a client
+ * abort) and every refusal.
+ */
+const openSnapshot = (db) => {
+  const snapshot = new Database(db.name, { readonly: true, fileMustExist: true });
+  try {
+    snapshot.exec("BEGIN");
+    // The snapshot starts at the transaction's first read, not at BEGIN.
+    snapshot.prepare("SELECT COUNT(*) FROM sqlite_master").get();
+  } catch (err) {
+    snapshot.close();
+    throw err;
+  }
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    try {
+      if (snapshot.inTransaction) snapshot.exec("ROLLBACK");
+    } catch {
+      // A statement still iterating (a client gone mid-archive) keeps the transaction busy: close() ends it.
+    }
+    try {
+      snapshot.close();
+    } catch (err) {
+      console.warn(`[export] Could not close the export snapshot: ${err.message}`);
+    }
+  };
+  return { db: snapshot, release };
+};
+
 const BUILT_VERSION_RE = /^[1-9]\d{0,3}$/;
 /** The `?version=N` of a delivery: 1 when absent, N for an integer from 1 to 9999, null for anything else (a 400). */
 const versionOf = (query) => {
@@ -893,10 +932,13 @@ const exportGTFS = async (req, res) => {
     );
 
     // The gate refuses before anything is streamed: 503 when the validator
-    // did not answer, 422 when the feed carries (new) errors.
+    // did not answer, 422 when the feed carries (new) errors. It validates a
+    // read snapshot, and the archive streams that same snapshot (openSnapshot).
+    const snapshot = openSnapshot(getEditDb(sessionId));
+    res.on("close", snapshot.release);
     let gate;
     try {
-      gate = await assertExportable(sessionId, { profile, locale });
+      gate = await assertExportable(sessionId, { profile, locale, db: snapshot.db });
     } catch (err) {
       if (isValidationRefusal(err)) {
         recordEvent("export.blocked_by_validation", {
@@ -934,8 +976,13 @@ const exportGTFS = async (req, res) => {
       engine: gate.report.engine || null,
     });
 
-    const db = getEditDb(sessionId);
-    await streamFeedArchive(req, res, { sessionId, db, filename: deliveredFileName(db, version), eol, changelog: req.query && (req.query.changelog === "1" || req.query.changelog === "true") });
+    const db = snapshot.db;
+    try {
+      await streamFeedArchive(req, res, { sessionId, db, filename: deliveredFileName(db, version), eol, changelog: req.query && (req.query.changelog === "1" || req.query.changelog === "true") });
+    } finally {
+      // finalize() resolves once every entry was read: the snapshot is no longer needed.
+      snapshot.release();
+    }
   } catch (err) {
     console.error("exportGTFS error:", err);
     if (!res.headersSent) res.status(err.status || 500).json(err.code ? refusalBody(err, "EXPORT_FAILED") : { error: err.message });
@@ -986,11 +1033,15 @@ const exportBuiltNetwork = async (req, res) => {
   try {
     const ctx = requireSession(req, res);
     if (!ctx) return;
-    const { sessionId, db } = ctx;
+    const { sessionId } = ctx;
     const version = versionOf(req.query);
     if (version === null) {
       return res.status(400).json({ error: "INVALID_INPUT", message: "version must be an integer from 1 to 9999." });
     }
+    // The build is checked, validated and streamed from one read snapshot (openSnapshot).
+    const snapshot = openSnapshot(ctx.db);
+    res.on("close", snapshot.release);
+    const db = snapshot.db;
     const report = builtReportOf(sessionId);
     const buildId = String(req.params.buildId || "");
     if (!report || !report.build_id || report.build_id !== buildId) {
@@ -1001,14 +1052,18 @@ const exportBuiltNetwork = async (req, res) => {
     }
     let gate;
     try {
-      gate = await assertExportable(sessionId);
+      gate = await assertExportable(sessionId, { db });
     } catch (err) {
       if (isValidationRefusal(err)) recordEvent("export.blocked_by_validation", { ...extractReqMeta(req), code: err.code, error_count: err.details?.errorCount ?? null, source: "network_build" });
       return res.status(err.status || 500).json(refusalBody(err, "EXPORT_FAILED"));
     }
     const summary = summarizeReport(gate.report);
     recordEvent("export.preflight_ok", { ...extractReqMeta(req), warning_count: summary.warningCount, info_count: summary.infoCount, preexisting_errors: gate.preexisting, engine: gate.report.engine || null, source: "network_build" });
-    await streamFeedArchive(req, res, { sessionId, db, filename: deliveredFileName(db, version), eol: resolveLineEnding(req.query && req.query.lineEnding) });
+    try {
+      await streamFeedArchive(req, res, { sessionId, db, filename: deliveredFileName(db, version), eol: resolveLineEnding(req.query && req.query.lineEnding) });
+    } finally {
+      snapshot.release();
+    }
   } catch (err) {
     console.error("exportBuiltNetwork error:", err);
     if (!res.headersSent) res.status(err.status || 500).json(err.code ? refusalBody(err, "EXPORT_FAILED") : { error: err.message });
@@ -1020,6 +1075,7 @@ module.exports = {
   exportBuiltNetwork,
   dumpDbToCsvFiles,
   assertExportable,
+  openSnapshot,
   runPreExportValidation,
   summarizeReport,
   // Exposed for unit tests (see exportLineEnding.test.js, routeGates.test.js).

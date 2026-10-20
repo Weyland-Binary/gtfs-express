@@ -491,9 +491,12 @@ const dumpTableToCsv = (db, { table, file, columns: specColumns }, tmpDir) => {
  * the DB exists from upload time onwards and is the source of truth (the CSV cache may be stale after edit-mode exit).
  *
  * @param {string} sessionId - Validated UUID v4 session identifier.
+ * @param {{ db?: import("better-sqlite3").Database }} [options] - `db`: the connection to dump instead of the
+ *   session's handle — the export's read snapshot (exportService.openSnapshot), so the feed validated is the feed
+ *   streamed.
  * @returns {Promise<object>} The validation report returned by canonicalValidatorService.validateWithCanonical.
  */
-const loadValidationDataFromSession = async (sessionId) => {
+const loadValidationDataFromSession = async (sessionId, { db: snapshot = null } = {}) => {
   const sessionDir = path.join(GTFS_UPLOAD_DIR, sessionId);
 
   if (!fs.existsSync(sessionDir)) {
@@ -502,7 +505,7 @@ const loadValidationDataFromSession = async (sessionId) => {
     throw err;
   }
 
-  const db = ensureDbHandle(sessionId);
+  const db = snapshot || ensureDbHandle(sessionId);
   if (!db) {
     const err = new Error(
       `No SQLite DB available for session ${sessionId}. Upload a GTFS file first.`,
