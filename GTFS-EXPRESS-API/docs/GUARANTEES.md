@@ -2,8 +2,17 @@
 
 The code and the tests name six guarantees by their number. They hold on every path that hands a GTFS out of the
 server (a change committed, the GTFS export, a share and its new versions, a network built, a project version's
-package), whatever the client or the model says. Each is proved by a level-0 suite under
-`GTFS-EXPRESS-API/src/__tests__/guarantees/`, with the wrong inputs it must reject.
+package), whatever the client or the model says. Each is proved by a level-0 suite, with the wrong inputs it must
+reject; the suites named in the table below are kept with the evaluation corpus in the private repository. This
+repository carries, under `GTFS-EXPRESS-API/src/__tests__/guarantees/`, the G1 suites anyone can run (`g1Gate`: the
+gate's refusals; `g1ExportSnapshot`: the export streams the read snapshot it validated, a write landing during the
+validation never reaches the archive), run in CI on every push.
+
+What the server enforces and what a model judges are not the same thing, and the table says which is which: the
+validator (G1), the replay of the previewed change (G6), the named decision (G4) are the server's; with a brief, the
+verdict per demand (G3, G5) is the independent reviewer's — a model, kept apart from the agent and held to evidence,
+whose report the person accepts or not. A plan's clauses (G4) are the ones the client sends with it: a plan sent
+without clauses has none to fail.
 
 A change of an existing network is delivered in one of two ways: **with a brief** (the direct mode,
 `services/direct`: an agent changes a working copy, the engine states the facts, an independent reviewer reports each

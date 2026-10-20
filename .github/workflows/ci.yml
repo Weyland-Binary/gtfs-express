@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  api:
+    name: API (lint, tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: GTFS-EXPRESS-API
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: GTFS-EXPRESS-API/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      # The suites run against the canonical validator's deterministic stub (NODE_ENV=test under Jest); no model is called.
+      - run: npm test
+
+  web:
+    name: Web (lint, tests, build, i18n)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: GTFS-EXPRESS-WEB
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: GTFS-EXPRESS-WEB/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+      - run: npm run i18n:check
