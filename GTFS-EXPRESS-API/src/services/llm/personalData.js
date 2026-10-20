@@ -32,7 +32,11 @@
  *
  * A name is matched whole (case-insensitive, its words separated by any
  * spaces; a letter, a digit, a hyphen or an apostrophe next to it means it is
- * part of another word: "Martin" never touches "Saint-Martin"). Every name a
+ * part of another word: "Martin" never touches "Saint-Martin"). A one-word
+ * name followed by a capitalised word is the start of a longer proper name, not
+ * the person: "Jean" never touches the stop « Jean Jaurès » — the agent reads
+ * the feed's names as they are and writes its SQL with them (a pseudonym there
+ * made the query miss, or hit another row). Every name a
  * person may sign with is matched, the two-character ones included (« Li »,
  * « Wu »: the shortest an acknowledgement accepts, acknowledgement.NAME_OK),
  * since each name here is a known person of the request, never a dictionary;
@@ -213,6 +217,10 @@ const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const NOT_PART = "[\\p{L}\\p{N}_'’-]";
 const patterns = new Map();
 
+// After a one-word name: a capitalised word makes it the first word of a longer proper name (« Jean Jaurès »). Read
+// case-sensitively, apart from the names' pattern: under its `i` flag \p{Lu} would match any letter.
+const STARTS_PROPER_NAME = /^\s+\p{Lu}/u;
+
 /** One regular expression for a set of names (longest first), cached. */
 const patternOf = (names) => {
   const list = usable(names).sort((a, b) => b.length - a.length);
@@ -239,7 +247,7 @@ const emailPseudonymOf = (email) => {
 
 /** A string with the registered persons (`re`, or none) and then any e-mail address replaced. */
 const scrubString = (text, re) => {
-  const named = re ? text.replace(re, (m) => pseudonymOf(m)) : text;
+  const named = re ? text.replace(re, (m, offset, whole) => (!/\s/.test(m) && STARTS_PROPER_NAME.test(whole.slice(offset + m.length, offset + m.length + 8)) ? m : pseudonymOf(m))) : text;
   return named.includes("@") ? named.replace(EMAIL_RE, (m) => emailPseudonymOf(m)) : named;
 };
 
@@ -249,14 +257,22 @@ const scrubText = (text, names) => {
   return scrubString(text, patternOf(names));
 };
 
+// What the API reads as protocol, never as text: a block's type, the ids that pair a tool call with its result, a
+// media type, a cache breakpoint — and a thinking block's signature, which a rewritten byte makes the API refuse.
+const PROTOCOL_KEYS = new Set(["type", "id", "tool_use_id", "media_type", "cache_control", "signature"]);
+// Blocks sent back exactly as the model returned them: a thinking block is verified against its signature, and the
+// model only ever saw scrubbed inputs, so they carry nothing to replace. A tool call's name is the code's own word.
+const VERBATIM_BLOCKS = new Set(["thinking", "redacted_thinking"]);
+const TOOL_CALLS = new Set(["tool_use", "server_tool_use"]);
+
 /** Every string of a value (objects and arrays walked), a base64 payload (a PDF, an image) left as it is. */
 const scrubValue = (value, re) => {
   if (typeof value === "string") return scrubString(value, re);
   if (Array.isArray(value)) return value.map((v) => scrubValue(v, re));
   if (!isObject(value)) return value;
-  if (value.type === "base64") return value;
+  if (value.type === "base64" || VERBATIM_BLOCKS.has(value.type)) return value;
   const out = {};
-  for (const [k, v] of Object.entries(value)) out[k] = scrubValue(v, re);
+  for (const [k, v] of Object.entries(value)) out[k] = PROTOCOL_KEYS.has(k) || (k === "name" && TOOL_CALLS.has(value.type)) ? v : scrubValue(v, re);
   return out;
 };
 
