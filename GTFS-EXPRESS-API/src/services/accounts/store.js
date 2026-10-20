@@ -51,6 +51,11 @@
  *           and keyed-hashed (an account's own mails found again, the first code sent before it existed included)
  *   admin_actions(id, at, actor_via, actor_user_id, action, target, details) — what the administrator did
  *   The four logs are kept LOG_RETENTION_DAYS (admin/opsData.purge).
+ * v10 (a sign-in no one else can lock):
+ *   login_failures(email, client, failures, since) PK (email, client) — the wrong codes an address received over a
+ *           day from one client (the keyed hash of its IP address): the lock of an address is per client, so a
+ *           stranger's wrong codes lock the stranger, not the person (LOGIN_CODE_MAX_FAILURES_PER_DAY); the address's
+ *           own count, every client together, stays in login_codes (LOGIN_CODE_MAX_FAILURES_PER_DAY_TOTAL)
  *
  * The licence (`licenceOf`): what lets an account modify a network, from four sources — the operator's own
  * address (ADMIN_EMAILS, verified: every right, no end), an entitled subscription (until its period's end, three
@@ -83,11 +88,15 @@ const LOGIN_CODE_TTL_MS = 10 * 60 * 1000;
 const LOGIN_CODE_MAX_ATTEMPTS = 5;
 const LOGIN_CODE_RESEND_MS = 60 * 1000;
 const LOGIN_CODE_MAX_SENDS_PER_HOUR = 6;
-// Wrong codes an address may receive in 24 hours, whatever the codes they were tried on. Five tries a code and six
-// codes an hour would leave 720 guesses a day, unbounded day after day (about one chance in four a year of finding a
-// six-digit code); twenty a day leave about one in two hundred a year. Past them no code is
-// sent or checked for that address until the day has passed.
+// Wrong codes an address may receive in 24 hours from one client (one IP address), whatever the codes they were tried
+// on. Five tries a code and six codes an hour would leave 720 guesses a day, unbounded day after day (about one chance
+// in four a year of finding a six-digit code). Past them no code is sent or checked for that address FROM THAT CLIENT
+// until the day has passed: an address locked by everyone's wrong codes was a lock anyone could put on someone
+// else's sign-in (twenty wrong codes from one IP, about half an hour under the auth limiter) — the administrator's
+// included. Every client together, the address takes LOGIN_CODE_MAX_FAILURES_PER_DAY_TOTAL wrong codes a day: about
+// one chance in four hundred a year of a guess, and five clients to lock it.
 const LOGIN_CODE_MAX_FAILURES_PER_DAY = 20;
+const LOGIN_CODE_MAX_FAILURES_PER_DAY_TOTAL = 100;
 // The trials' record (an address's keyed hash, so that the free trial is given once) is kept three years after the
 // trial began, then purged: the privacy page says this duration (services/legalService.js).
 const TRIAL_RECORD_MS = 3 * 365 * DAY_MS;
@@ -310,6 +319,18 @@ const MIGRATIONS = [
   // 9 — the kind of the administrator's grant: a client's (bought on a quote; null reads as one) or a tester's.
   (db) => {
     if (!columnsOf(db, "users").has("grant_kind")) db.exec("ALTER TABLE users ADD COLUMN grant_kind TEXT");
+  },
+  // 10 — the wrong codes per address and client (LOGIN_CODE_MAX_FAILURES_PER_DAY): the lock is the client's.
+  (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS login_failures (
+        email    TEXT NOT NULL,
+        client   TEXT NOT NULL,
+        failures INTEGER DEFAULT 0,
+        since    TEXT,
+        PRIMARY KEY (email, client)
+      );
+    `);
   },
 ];
 
@@ -770,18 +791,37 @@ const dailyFailuresOf = (row, now) => {
   return { failures: row.failures || 0, until: since + DAY_MS };
 };
 
+/** The client a sign-in comes from, as the store keeps it: the keyed hash of its IP address ("unknown" without one). */
+const clientKeyOf = (client) => keyed(`login-client:${client || "unknown"}`);
+
+/** The wrong codes one client gave for an address over the day: { failures, until } (0 once the day passed). */
+const clientFailuresOf = (db, normalized, client, now) => {
+  const row = db.prepare("SELECT failures, since FROM login_failures WHERE email = ? AND client = ?").get(normalized, client);
+  return dailyFailuresOf(row ? { failures: row.failures, failures_since: row.since } : null, now);
+};
+
+/** The address's lock for this client: its own wrong codes of the day, or every client's together. → { until } | null */
+const lockOf = (db, normalized, row, client, now) => {
+  const total = dailyFailuresOf(row, now);
+  if (total.failures >= LOGIN_CODE_MAX_FAILURES_PER_DAY_TOTAL) return { until: total.until };
+  const mine = clientFailuresOf(db, normalized, client, now);
+  if (mine.failures >= LOGIN_CODE_MAX_FAILURES_PER_DAY) return { until: mine.until };
+  return null;
+};
+
 /**
  * A new sign-in code for an address (whether or not an account holds it: no answer tells). → { ok: true, code,
  * expires_at } | { ok: false, reason: "too_soon" | "too_many", retry_after_s }. The code replaces the previous one.
+ * `client`: the requester's IP address (the lock is per client, see LOGIN_CODE_MAX_FAILURES_PER_DAY).
  */
-const issueLoginCode = (email, now = Date.now()) => {
+const issueLoginCode = (email, now = Date.now(), { client = null } = {}) => {
   const db = getDb();
   const normalized = normalizeEmail(email);
   const row = db.prepare("SELECT * FROM login_codes WHERE email = ?").get(normalized);
-  // An address past its day's wrong codes gets no new one: none could be checked.
-  const daily = dailyFailuresOf(row, now);
-  if (daily.failures >= LOGIN_CODE_MAX_FAILURES_PER_DAY) {
-    return { ok: false, reason: "too_many", retry_after_s: Math.ceil((daily.until - now) / 1000) };
+  // An address past its day's wrong codes (from this client, or from all) gets no new one: none could be checked.
+  const lock = lockOf(db, normalized, row, clientKeyOf(client), now);
+  if (lock) {
+    return { ok: false, reason: "too_many", retry_after_s: Math.ceil((lock.until - now) / 1000) };
   }
   if (row && row.sent_at && now - Date.parse(row.sent_at) < LOGIN_CODE_RESEND_MS) {
     return { ok: false, reason: "too_soon", retry_after_s: Math.ceil((LOGIN_CODE_RESEND_MS - (now - Date.parse(row.sent_at))) / 1000) };
@@ -802,17 +842,19 @@ const issueLoginCode = (email, now = Date.now()) => {
 
 /**
  * Check a sign-in code. → { ok: true } (the code is spent) | { ok: false, reason: "missing" | "expired" |
- * "locked" | "invalid", attempts_left? }. Compared in constant time; five wrong tries spend it.
+ * "locked" | "invalid", attempts_left? }. Compared in constant time; five wrong tries spend it. `client`: the
+ * requester's IP address — a wrong code counts against the address for that client and for all of them together.
  */
-const verifyLoginCode = (email, code, now = Date.now()) => {
+const verifyLoginCode = (email, code, now = Date.now(), { client = null } = {}) => {
   const db = getDb();
   const normalized = normalizeEmail(email);
   const row = db.prepare("SELECT * FROM login_codes WHERE email = ?").get(normalized);
   if (!row) return { ok: false, reason: "missing" };
   if (Date.parse(row.expires_at) <= now) return { ok: false, reason: "expired" };
   if ((row.attempts || 0) >= LOGIN_CODE_MAX_ATTEMPTS) return { ok: false, reason: "locked" };
+  const clientKey = clientKeyOf(client);
+  if (lockOf(db, normalized, row, clientKey, now)) return { ok: false, reason: "locked" };
   const daily = dailyFailuresOf(row, now);
-  if (daily.failures >= LOGIN_CODE_MAX_FAILURES_PER_DAY) return { ok: false, reason: "locked" };
   const expected = Buffer.from(row.code_hash, "hex");
   const actual = Buffer.from(codeHashOf(normalized, String(code || "").replace(/\D/g, "")), "hex");
   if (expected.length === actual.length && crypto.timingSafeEqual(expected, actual)) {
@@ -822,14 +864,21 @@ const verifyLoginCode = (email, code, now = Date.now()) => {
   const attempts = (row.attempts || 0) + 1;
   const failuresSince = daily.until ? row.failures_since : new Date(now).toISOString();
   db.prepare("UPDATE login_codes SET attempts = ?, failures = ?, failures_since = ? WHERE email = ?").run(attempts, daily.failures + 1, failuresSince, normalized);
+  const mine = clientFailuresOf(db, normalized, clientKey, now);
+  db.prepare(
+    `INSERT INTO login_failures (email, client, failures, since) VALUES (?, ?, ?, ?)
+     ON CONFLICT(email, client) DO UPDATE SET failures = excluded.failures, since = excluded.since`,
+  ).run(normalized, clientKey, mine.failures + 1, mine.until ? new Date(mine.until - DAY_MS).toISOString() : new Date(now).toISOString());
   return attempts >= LOGIN_CODE_MAX_ATTEMPTS ? { ok: false, reason: "locked" } : { ok: false, reason: "invalid", attempts_left: LOGIN_CODE_MAX_ATTEMPTS - attempts };
 };
 
-// An expired code's row stays while it counts wrong codes of the day (dailyFailuresOf).
-const purgeExpiredLoginCodes = () =>
-  getDb()
-    .prepare("DELETE FROM login_codes WHERE expires_at < ? AND (failures_since IS NULL OR failures_since < ?)")
-    .run(new Date(Date.now() - 60 * 60 * 1000).toISOString(), new Date(Date.now() - DAY_MS).toISOString()).changes;
+// An expired code's row stays while it counts wrong codes of the day (dailyFailuresOf); a client's count, its day.
+const purgeExpiredLoginCodes = () => {
+  const db = getDb();
+  const dayAgo = new Date(Date.now() - DAY_MS).toISOString();
+  db.prepare("DELETE FROM login_failures WHERE since IS NULL OR since < ?").run(dayAgo);
+  return db.prepare("DELETE FROM login_codes WHERE expires_at < ? AND (failures_since IS NULL OR failures_since < ?)").run(new Date(Date.now() - 60 * 60 * 1000).toISOString(), dayAgo).changes;
+};
 
 /** Forget the trials begun more than TRIAL_RECORD_MS ago (their address may have a trial again). */
 const purgeOldTrials = (now = Date.now()) => getDb().prepare("DELETE FROM trials WHERE started_at < ?").run(new Date(now - TRIAL_RECORD_MS).toISOString()).changes;
@@ -907,7 +956,10 @@ const deleteUser = (userId) => {
     const user = db.prepare("SELECT email FROM users WHERE id = ?").get(String(userId));
     db.prepare("DELETE FROM user_sessions WHERE user_id = ?").run(String(userId));
     db.prepare("DELETE FROM subscriptions WHERE user_id = ?").run(String(userId));
-    if (user) db.prepare("DELETE FROM login_codes WHERE email = ?").run(normalizeEmail(user.email));
+    if (user) {
+      db.prepare("DELETE FROM login_codes WHERE email = ?").run(normalizeEmail(user.email));
+      db.prepare("DELETE FROM login_failures WHERE email = ?").run(normalizeEmail(user.email));
+    }
     // The AI's cost stays in the operator's totals, no longer tied to anyone.
     db.prepare("UPDATE ai_usage SET user_id = NULL WHERE user_id = ?").run(String(userId));
     db.prepare("DELETE FROM reader_questions WHERE user_id = ?").run(String(userId));
@@ -1040,6 +1092,7 @@ module.exports = {
   TRIAL_RECORD_MS,
   LOGIN_CODE_MAX_ATTEMPTS,
   LOGIN_CODE_MAX_FAILURES_PER_DAY,
+  LOGIN_CODE_MAX_FAILURES_PER_DAY_TOTAL,
   sessionKeyOf,
   LOGIN_CODE_TTL_MS,
   recordBillingEvent,

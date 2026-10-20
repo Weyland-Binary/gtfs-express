@@ -101,7 +101,7 @@ const requestCode = async (req, res, next) => {
     const existing = store.findUserByEmail(email);
     // A disabled account gets the same answer and no code: nothing tells it apart from any other address.
     if (existing && existing.disabled) return res.status(202).json(accepted);
-    const issued = store.issueLoginCode(email);
+    const issued = store.issueLoginCode(email, Date.now(), { client: req.ip });
     if (!issued.ok) {
       res.set("Retry-After", String(issued.retry_after_s));
       return res.status(429).json({ error: "LOGIN_CODE_TOO_SOON", message: "A code was sent a moment ago: wait before asking for another one.", retry_after_s: issued.retry_after_s });
@@ -129,7 +129,7 @@ const verifyCode = (req, res) => {
   const code = typeof body.code === "string" || typeof body.code === "number" ? String(body.code).replace(/\D/g, "") : "";
   if (code.length !== 6) return invalid(res, "The code has six digits.");
   const forConsole = body.purpose === "admin";
-  const checked = store.verifyLoginCode(email, code);
+  const checked = store.verifyLoginCode(email, code, Date.now(), { client: req.ip });
   if (!checked.ok && forConsole) consoleDenied(email, checked.reason || "code");
   if (!checked.ok) {
     if (checked.reason === "invalid") return res.status(401).json({ error: "LOGIN_CODE_INVALID", message: "This code is not the one sent.", attempts_left: checked.attempts_left });
