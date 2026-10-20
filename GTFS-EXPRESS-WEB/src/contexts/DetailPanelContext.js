@@ -4,6 +4,7 @@ import React, {
   useState,
   useCallback,
   useEffect,
+  useMemo,
 } from "react";
 import { resolveRoute } from "../utils/routes";
 
@@ -161,21 +162,28 @@ export function DetailPanelProvider({ children }) {
     setSqlConsoleVisible(false);
   }, []);
 
+  // One value per actual change: every useDetailPanel() consumer (the
+  // header, the panel, the grid's row links) re-renders only when a field
+  // below changes, not on each render of the provider. The callbacks are
+  // all stable (useCallback with no deps).
+  const value = useMemo(
+    () => ({
+      panelOpen,
+      entity,
+      history,
+      openPanel,
+      closePanel,
+      goBack,
+      sqlConsoleVisible,
+      toggleSqlConsole,
+      showSqlConsole,
+      hideSqlConsole,
+    }),
+    [panelOpen, entity, history, openPanel, closePanel, goBack, sqlConsoleVisible, toggleSqlConsole, showSqlConsole, hideSqlConsole],
+  );
+
   return (
-    <DetailPanelContext.Provider
-      value={{
-        panelOpen,
-        entity,
-        history,
-        openPanel,
-        closePanel,
-        goBack,
-        sqlConsoleVisible,
-        toggleSqlConsole,
-        showSqlConsole,
-        hideSqlConsole,
-      }}
-    >
+    <DetailPanelContext.Provider value={value}>
       {children}
     </DetailPanelContext.Provider>
   );

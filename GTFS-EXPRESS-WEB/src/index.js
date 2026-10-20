@@ -13,6 +13,7 @@ import GTFSApp from "./components/GTFSApp";
 import MobileBanner from "./components/MobileBanner";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { RouterProvider, useRoute, legacyRedirect, getNetworkId, documentTitle, history } from "./utils/routes";
+import { reloadOnceForStaleChunk } from "./utils/chunkErrors";
 import "./index.css";
 
 // Service-worker cleanup: an earlier build of this app — or any other
@@ -35,6 +36,18 @@ if ("serviceWorker" in navigator) {
     })
     .catch(() => {});
 }
+
+// A stale chunk after a deploy: a tab opened before it asks for the old
+// hashed chunk names, which the new build no longer serves. Vite's preload
+// helper says so with `vite:preloadError` (a lazy import or its CSS that
+// failed): the page reloads ONCE to read the new index.html — at most once
+// per window (utils/chunkErrors: a sessionStorage stamp), so a chunk really
+// missing on the server never turns into a reload loop. Not reloaded (the
+// stamp is recent, or storage is blocked): the error is left to throw, and
+// the screen's error boundary (Deferred) offers the reload in place.
+window.addEventListener("vite:preloadError", (event) => {
+  if (reloadOnceForStaleChunk()) event.preventDefault();
+});
 
 // Old links keep working: `?share=` → /partage/:token, `#admin` →
 // /admin, `?sql=1` → the SQL tab of the network open in this browser tab

@@ -119,6 +119,29 @@ export const useLanguage = () => {
   return context;
 };
 
+/**
+ * `t` where a LanguageProvider may be missing: the root error boundary sits
+ * above it (index.js), and a crash of the provider itself must still say
+ * something. Inside a provider, its `t`; outside, the saved language's
+ * dictionary when it is loaded (preloadLanguage, before the first render),
+ * then English, then French (always in the app), then the key. No params:
+ * the boundary's sentences have none.
+ */
+const translateOutsideProvider = (key) => {
+  let code = DEFAULT_LANGUAGE;
+  try {
+    code = getInitialLanguage();
+  } catch {
+    // localStorage blocked: the default language.
+  }
+  return lookup(loaded[code], key) ?? lookup(loaded.en, key) ?? lookup(loaded[DEFAULT_LANGUAGE], key) ?? key;
+};
+
+export const useOptionalT = () => {
+  const context = useContext(LanguageContext);
+  return context?.t || translateOutsideProvider;
+};
+
 export const LanguageProvider = ({ children }) => {
   const [language, setLanguageState] = useState(() => getInitialLanguage());
   // Bumped when a dictionary arrives (the active language's, or English for a fallback): `t` reads again.

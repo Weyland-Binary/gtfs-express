@@ -3,6 +3,7 @@ import React, {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -119,8 +120,12 @@ export function DestructiveGuardProvider({ children }) {
 
   const reasonLabel = reason ? t(`guard.reason.${reason}`) : null;
 
+  // Changes with `editing` / `unsavedChanges` only (through isDirty → guard):
+  // opening or closing the dialog does not re-render every guard() caller.
+  const value = useMemo(() => ({ guard, isDirty }), [guard, isDirty]);
+
   return (
-    <DestructiveGuardContext.Provider value={{ guard, isDirty }}>
+    <DestructiveGuardContext.Provider value={value}>
       {children}
       <Dialog
         open={dialogOpen}

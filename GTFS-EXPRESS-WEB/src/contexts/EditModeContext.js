@@ -3,6 +3,7 @@ import React, {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -17,6 +18,9 @@ import { refusalOf } from "../utils/refusalToAction";
 import { resolveDelivery } from "../utils/projectStore";
 
 const EditModeContext = createContext(null);
+// The snackbar's own context (ToastProvider below): a toast shown or closed
+// re-renders the snackbar only, never the useEditMode() consumers.
+const ToastContext = createContext(null);
 
 /**
  * The delivered file's name: `<network>_v<N>_<date>.zip`, as the server
@@ -65,14 +69,115 @@ const downloadBlob = (blob, name) => {
  *   recordEdit(msg)   — call after a successful mutation: bump + toast
  *   patchStop(stop)   — registers a live override for a stop (name, etc.)
  *   showToast(msg, s) — shows a snackbar (success | error | info | warning)
+ *
+ * The value is memoized (one object per actual change of a field), and the
+ * snackbar lives in its own provider (ToastProvider): every edit toasts, and
+ * a toast must not re-render the grid, the maps and the panels that read
+ * useEditMode(). `showToast` stays on useEditMode() (stable); useToast()
+ * gives it without subscribing to the edit state.
  */
 
 function SlideUp(props) {
   return <Slide {...props} direction="up" />;
 }
 
-export function EditModeProvider({ children }) {
+/**
+ * The snackbar of the edit session: its state (`toast`) is held here, so
+ * showing or closing one re-renders this provider and its Snackbar only —
+ * `children` is the same element from one toast to the next, and the
+ * context value ({ showToast, closeToast }) never changes.
+ */
+export function ToastProvider({ children }) {
   const { t } = useLanguage();
+  const [toast, setToast] = useState(null); // { message, severity, action, key }
+
+  // `action` (optional): { label, onClick } rendered as a button inside the
+  // snackbar — used for the inline "Undo" on every successful edit.
+  const showToast = useCallback((message, severity = "success", action = null) => {
+    setToast({ message, severity, action, key: Date.now() });
+  }, []);
+
+  const closeToast = useCallback(() => setToast(null), []);
+
+  const value = useMemo(() => ({ showToast, closeToast }), [showToast, closeToast]);
+
+  return (
+    <ToastContext.Provider value={value}>
+      {children}
+      <Snackbar
+        key={toast?.key}
+        open={Boolean(toast)}
+        autoHideDuration={toast?.action ? 6000 : 3500}
+        onClose={closeToast}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+        // Above the status bar, never over it: its controls (« Quitter l'édition », « Annuler », « Livrer… ») stay in
+        // reach while a message shows — a pointer resting on a message keeps it open.
+        sx={{ bottom: { xs: 112, sm: 96 } }}
+        TransitionComponent={SlideUp}
+      >
+        {toast ? (
+          <Alert
+            onClose={closeToast}
+            severity={toast.severity}
+            variant="filled"
+            action={
+              toast.action ? (
+                <>
+                  <Button
+                    color="inherit"
+                    size="small"
+                    onClick={() => {
+                      closeToast();
+                      toast.action.onClick();
+                    }}
+                    sx={{ fontWeight: 700, textTransform: "none" }}
+                  >
+                    {toast.action.label}
+                  </Button>
+                  <IconButton
+                    size="small"
+                    color="inherit"
+                    aria-label={t("app.cancel")}
+                    onClick={closeToast}
+                  >
+                    <CloseIcon fontSize="inherit" />
+                  </IconButton>
+                </>
+              ) : undefined
+            }
+            sx={{
+              minWidth: 280,
+              boxShadow: "0 8px 24px rgba(0,0,0,0.18)",
+              fontWeight: 600,
+              alignItems: "center",
+            }}
+          >
+            {toast.message}
+          </Alert>
+        ) : undefined}
+      </Snackbar>
+    </ToastContext.Provider>
+  );
+}
+
+export function useToast() {
+  const ctx = useContext(ToastContext);
+  if (!ctx) throw new Error("useToast must be used within a ToastProvider (EditModeProvider includes one)");
+  return ctx;
+}
+
+// The public provider: the toasts around the edit state, which shows them.
+export function EditModeProvider({ children }) {
+  return (
+    <ToastProvider>
+      <EditModeState>{children}</EditModeState>
+    </ToastProvider>
+  );
+}
+
+function EditModeState({ children }) {
+  const { t } = useLanguage();
+  const { showToast } = useToast();
   // `editing === undefined` ⇒ backend status not yet known (first mount,
   // before `refreshStatus()` has responded). We render a skeleton rather
   // than a false "off" to avoid the visual flash after reload.
@@ -139,15 +244,6 @@ export function EditModeProvider({ children }) {
   const [lastValidationResult, setLastValidationResult] = useState(null);
   const [undoing, setUndoing] = useState(false);
   const [redoing, setRedoing] = useState(false);
-  const [toast, setToast] = useState(null); // { message, severity }
-
-  // `action` (optional): { label, onClick } rendered as a button inside the
-  // snackbar — used for the inline "Undo" on every successful edit.
-  const showToast = useCallback((message, severity = "success", action = null) => {
-    setToast({ message, severity, action, key: Date.now() });
-  }, []);
-
-  const closeToast = useCallback(() => setToast(null), []);
 
   // Every failure of the backend is said in the reader's language, through
   // humanError: the API envelope (any of its forms), the HTTP status or a
@@ -645,99 +741,80 @@ export function EditModeProvider({ children }) {
     refreshStatus();
   }, [refreshStatus]);
 
-  return (
-    <EditModeContext.Provider
-      value={{
-        editing,
-        statusReady,
-        entering,
-        counts,
-        pendingEdits,
-        undoneEdits,
-        unsavedChanges,
-        touchedEntities,
-        clearTouchedEntities,
-        dataVersion,
-        stopOverrides,
-        undoing,
-        redoing,
-        error,
-        enterEditMode,
-        exitEditMode,
-        resetEditStateLocal,
-        refreshStatus,
-        undoLast,
-        redoLast,
-        jumpToHistory,
-        exportGTFS,
-        recordEdit,
-        patchStop,
-        showToast,
-        clearError,
-        // Incremental validation feedback
-        lastValidationResult,
-        clearValidationResult,
-        // The hold on edit mode (the reader's « Après »)
-        editHold,
-        holdEditing,
-        releaseEditing,
-      }}
-    >
-      {children}
-      <Snackbar
-        key={toast?.key}
-        open={Boolean(toast)}
-        autoHideDuration={toast?.action ? 6000 : 3500}
-        onClose={closeToast}
-        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
-        // Above the status bar, never over it: its controls (« Quitter l'édition », « Annuler », « Livrer… ») stay in
-        // reach while a message shows — a pointer resting on a message keeps it open.
-        sx={{ bottom: { xs: 112, sm: 96 } }}
-        TransitionComponent={SlideUp}
-      >
-        {toast ? (
-          <Alert
-            onClose={closeToast}
-            severity={toast.severity}
-            variant="filled"
-            action={
-              toast.action ? (
-                <>
-                  <Button
-                    color="inherit"
-                    size="small"
-                    onClick={() => {
-                      closeToast();
-                      toast.action.onClick();
-                    }}
-                    sx={{ fontWeight: 700, textTransform: "none" }}
-                  >
-                    {toast.action.label}
-                  </Button>
-                  <IconButton
-                    size="small"
-                    color="inherit"
-                    aria-label={t("app.cancel")}
-                    onClick={closeToast}
-                  >
-                    <CloseIcon fontSize="inherit" />
-                  </IconButton>
-                </>
-              ) : undefined
-            }
-            sx={{
-              minWidth: 280,
-              boxShadow: "0 8px 24px rgba(0,0,0,0.18)",
-              fontWeight: 600,
-              alignItems: "center",
-            }}
-          >
-            {toast.message}
-          </Alert>
-        ) : undefined}
-      </Snackbar>
-    </EditModeContext.Provider>
+  // One object per actual change of a field (see the header): the callbacks
+  // are useCallback'd above, so the list below is the whole dependency set.
+  const value = useMemo(
+    () => ({
+      editing,
+      statusReady,
+      entering,
+      counts,
+      pendingEdits,
+      undoneEdits,
+      unsavedChanges,
+      touchedEntities,
+      clearTouchedEntities,
+      dataVersion,
+      stopOverrides,
+      undoing,
+      redoing,
+      error,
+      enterEditMode,
+      exitEditMode,
+      resetEditStateLocal,
+      refreshStatus,
+      undoLast,
+      redoLast,
+      jumpToHistory,
+      exportGTFS,
+      recordEdit,
+      patchStop,
+      showToast,
+      clearError,
+      // Incremental validation feedback
+      lastValidationResult,
+      clearValidationResult,
+      // The hold on edit mode (the reader's « Après »)
+      editHold,
+      holdEditing,
+      releaseEditing,
+    }),
+    [
+      editing,
+      statusReady,
+      entering,
+      counts,
+      pendingEdits,
+      undoneEdits,
+      unsavedChanges,
+      touchedEntities,
+      clearTouchedEntities,
+      dataVersion,
+      stopOverrides,
+      undoing,
+      redoing,
+      error,
+      enterEditMode,
+      exitEditMode,
+      resetEditStateLocal,
+      refreshStatus,
+      undoLast,
+      redoLast,
+      jumpToHistory,
+      exportGTFS,
+      recordEdit,
+      patchStop,
+      showToast,
+      clearError,
+      lastValidationResult,
+      clearValidationResult,
+      editHold,
+      holdEditing,
+      releaseEditing,
+    ],
   );
+
+  return <EditModeContext.Provider value={value}>{children}</EditModeContext.Provider>;
 }
 
 export function useEditMode() {
