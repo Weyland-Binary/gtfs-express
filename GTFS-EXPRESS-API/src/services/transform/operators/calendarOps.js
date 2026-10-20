@@ -113,7 +113,7 @@ const NAME = { mon: "Monday", tue: "Tuesday", wed: "Wednesday", thu: "Thursday",
 const NEAR_EDGE_DAYS = 7; // a service ending this close to the feed's end runs "until the end"
 const SHRINK_DAYS = 28; // a service stopping this long before its end_date gets a shorter period
 const SHORT_NOTICE_DAYS = 7; // below this, GTFS-RT is the channel (GTFS Best Practices)
-const MAX_VALIDITY_DAYS = 1100; // the feed model and scopes read at most ~1200 days
+const MAX_VALIDITY_DAYS = 1100; // extend_validity's own bound on the period it creates (about three years)
 const TABLES = ["calendar", "calendar_dates", "trips", "stop_times", "frequencies", "transfers"];
 
 // ── words ────────────────────────────────────────────────────────────────
@@ -787,7 +787,10 @@ const consequences = (db, model, plan, { spill: spillWarn = false, lang } = {}) 
   // A date the lines no longer serve at all still sees the previous evening's trips running
   // past midnight: they belong to the day before.
   const targeted = plan.parts.filter((p) => p.g >= 0);
-  const emptied = !spillWarn ? [] : [...new Set(changed.flatMap((p) => p.before))].filter((d) => targeted.some((p) => p.before.includes(d)) && !targeted.some((p) => p.after.includes(d))).sort();
+  // As sets: a part's dates run to the feed's end (decades for a calendar valid until 2099), never scanned per date.
+  const targetedBefore = new Set(targeted.flatMap((p) => p.before));
+  const targetedAfter = new Set(targeted.flatMap((p) => p.after));
+  const emptied = !spillWarn ? [] : [...new Set(changed.flatMap((p) => p.before))].filter((d) => targetedBefore.has(d) && !targetedAfter.has(d)).sort();
   const spill = new Set();
   const spillDates = new Set();
   let spillEnd = 0;

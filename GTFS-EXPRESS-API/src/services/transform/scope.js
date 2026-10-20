@@ -57,6 +57,7 @@ const crypto = require("crypto");
 const R = require("./resolve");
 const G = require("./gtfsOps");
 const calendars = require("./calendars");
+const { MAX_RANGE_DAYS } = calendars;
 const { _internals: fm } = require("./feedModel");
 const { tr } = require("./i18n");
 
@@ -148,7 +149,7 @@ const activeDates = (model, serviceId) => {
   const out = [];
   const s = model.services.get(serviceId);
   if (s && model.range) {
-    for (let d = model.range.start, i = 0; d <= model.range.end && i < 1200; d = fm.addDays(d, 1), i++) if (model.runsOn(serviceId, d)) out.push(d);
+    for (let d = model.range.start, i = 0; d <= model.range.end && i < MAX_RANGE_DAYS; d = fm.addDays(d, 1), i++) if (model.runsOn(serviceId, d)) out.push(d);
   }
   Object.freeze(out); // shared by every caller: read-only
   cache.set(serviceId, out);

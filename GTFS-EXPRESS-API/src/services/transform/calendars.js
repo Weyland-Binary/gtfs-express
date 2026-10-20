@@ -41,8 +41,12 @@ const parseDate = (v) => {
   return `${y}${mo}${d}`;
 };
 
-// The dates from `from` to `to`, `max` at most (a calendar valid until 2099 is read on its first 1200 days).
-const rangeDates = (from, to, max = 1200) => {
+// The longest span read day by day: a runaway guard (a malformed 99991231), never a horizon. A calendar valid until
+// 2099 is read to its end — a shorter cap made every write on such a feed end its services at the cap.
+const MAX_RANGE_DAYS = 36600;
+
+// The dates from `from` to `to`, `max` at most.
+const rangeDates = (from, to, max = MAX_RANGE_DAYS) => {
   const out = [];
   if (!from || !to || to < from) return out;
   for (let d = from, i = 0; d <= to && i < max; d = fm.addDays(d, 1), i++) out.push(d);
@@ -52,7 +56,6 @@ const rangeDates = (from, to, max = 1200) => {
 // read) — whole, a century at most, never cut at 1200 days in silence (« du 01/01/2024 au 31/12/2027 » over a feed
 // of one year is that year, every day of it); as written otherwise (its dates then fall outside the feed, which the
 // scope says where they are used).
-const MAX_RANGE_DAYS = 36600;
 const withinFeed = (a, b, lo, hi) => (lo && hi && a <= hi && b >= lo ? rangeDates(a < lo ? lo : a, b > hi ? hi : b, MAX_RANGE_DAYS) : rangeDates(a, b, MAX_RANGE_DAYS));
 
 const ALIASES = {
@@ -266,4 +269,4 @@ const named = async (name, { calendars = null, country = null, region = null, fr
   }
 };
 
-module.exports = { named, parseDate, rangeDates, canonical, _internals: { _cache, regionMatches } };
+module.exports = { named, parseDate, rangeDates, MAX_RANGE_DAYS, canonical, _internals: { _cache, regionMatches } };

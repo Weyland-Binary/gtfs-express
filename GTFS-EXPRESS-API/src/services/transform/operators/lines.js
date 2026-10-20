@@ -179,6 +179,7 @@ const S = require("../scope");
 const geo = require("../geometry");
 const runtime = require("../runtime");
 const calendars = require("../calendars");
+const { MAX_RANGE_DAYS } = calendars;
 const { _internals: fm } = require("../feedModel");
 const { nameKey } = require("../../network/networkSpec")._internals;
 const { tr, number } = require("../i18n");
@@ -431,7 +432,7 @@ const networkDays = (model) => {
   const svcs = [...trips.keys()].filter((id) => model.services.has(id)).sort();
   const out = new Map();
   if (model.range) {
-    for (let d = model.range.start, i = 0; d <= model.range.end && i < 1200; d = addDays(d, 1), i++) {
+    for (let d = model.range.start, i = 0; d <= model.range.end && i < MAX_RANGE_DAYS; d = addDays(d, 1), i++) {
       const w = new Map();
       for (const sid of svcs) {
         if (!model.runsOn(sid, d)) continue;
@@ -499,7 +500,7 @@ const calendarsFor = (model, dows, scope) => {
   // holiday_weekdays "weekday": the network's Saturday-run weekdays count as their own weekday for this line.
   const types = scope.holidayWeekdays === "weekday" ? new Map([...all_].map(([d, t]) => [d, saturdayWeekday(all_, d) ? new Set([dowOf(d)]) : t])) : all_;
   const inRange = [];
-  if (model.range) for (let d = model.range.start, i = 0; d <= model.range.end && i < 1200; d = addDays(d, 1), i++) if (S.inScope({ ...scope, dows: null }, d)) inRange.push(d);
+  if (model.range) for (let d = model.range.start, i = 0; d <= model.range.end && i < MAX_RANGE_DAYS; d = addDays(d, 1), i++) if (S.inScope({ ...scope, dows: null }, d)) inRange.push(d);
   const target = new Set(inRange.filter((d) => types.has(d) && dows.some((w) => types.get(d).has(w))));
   const idle = dows.filter((w) => !inRange.some((d) => types.get(d)?.has(w)));
   for (const d of inRange) if (!types.has(d) && idle.includes(dowOf(d))) target.add(d);
@@ -687,7 +688,7 @@ const resolveCreate = async (model, p, ctx = {}) => {
   // Two entries running the same dates: series must not overlap, departures not repeat.
   const datesOf = (e) => {
     const set = new Set();
-    if (model.range) for (let d = model.range.start, i = 0; d <= model.range.end && i < 1200; d = addDays(d, 1), i++) if (S.inScope({ ...e.scope, dows: e.dows }, d)) set.add(d);
+    if (model.range) for (let d = model.range.start, i = 0; d <= model.range.end && i < MAX_RANGE_DAYS; d = addDays(d, 1), i++) if (S.inScope({ ...e.scope, dows: e.dows }, d)) set.add(d);
     return set;
   };
   const dateSets = entries.map(datesOf);

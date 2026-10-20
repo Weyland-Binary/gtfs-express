@@ -18,6 +18,7 @@
 "use strict";
 
 const { routeStats, tripsOfRoute, PERIODS } = require("./feedModel");
+const { MAX_RANGE_DAYS } = require("./calendars");
 
 const DAY_TYPES = [
   ["weekday", ["tue", "mon", "wed", "thu", "fri"]],
@@ -96,7 +97,7 @@ const changedPeriods = (before, after, routeId) => {
   // timetable typical of another weekday (a holiday on the Sunday timetable
   // counts as a Sunday).
   const days = [];
-  for (let d = lo, i = 0; d <= hi && i < 1200; d = addDays(d, 1), i++) days.push({ d, dow: dowOf(d), b: dayFp(before, fb, d), a: dayFp(after, fa, d) });
+  for (let d = lo, i = 0; d <= hi && i < MAX_RANGE_DAYS; d = addDays(d, 1), i++) days.push({ d, dow: dowOf(d), b: dayFp(before, fb, d), a: dayFp(after, fa, d) });
   const freq = new Map();
   for (const x of days) {
     const k = `${x.dow}|${x.b}`;

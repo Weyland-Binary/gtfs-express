@@ -110,6 +110,7 @@ const blocking = require("../blocking");
 const runtime = require("../runtime");
 const { tripsOfRoute, memo, _internals: fm } = require("../feedModel");
 const { tr } = require("../i18n");
+const { MAX_RANGE_DAYS } = require("../calendars");
 
 const { secToTime } = fm;
 const RUNNING_TIMES = ["existing"];
@@ -730,7 +731,7 @@ const resolve = async (model, p, ctx) => {
   const runsAny = new Set();
   for (const t of lineTrips) for (const d of S.activeDates(model, t.service_id)) runsAny.add(d);
   const empty = [];
-  if (model.range) for (let d = model.range.start, i = 0; d <= model.range.end && i < 1200; d = fm.addDays(d, 1), i++) if (S.inScope(scope, d) && !served.has(d) && !runsAny.has(d)) empty.push(d);
+  if (model.range) for (let d = model.range.start, i = 0; d <= model.range.end && i < MAX_RANGE_DAYS; d = fm.addDays(d, 1), i++) if (S.inScope(scope, d) && !served.has(d) && !runsAny.has(d)) empty.push(d);
   // Of those dates, the ones on a weekday the direction runs on no date of the feed (the Sundays of a « daily » order
   // on a line that runs none): a day type new to it — the others (a public holiday) are exceptions of a day it runs.
   // Read on the whole feed, not the scope: a scope of one week would make its one holiday Wednesday a « new » day.
