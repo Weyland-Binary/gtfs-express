@@ -1,0 +1,20 @@
+node_modules/
+.env
+.env.local
+.env.production
+uploads/
+# Accounts, workspace, project folders and share links a local run writes (PROJECTS_DIR,
+# WORKSPACE_DIR and SHARES_DIR default beside the uploads); anchored so src/services/projects stays tracked
+/projects/
+/shares/
+npm-debug.log*
+*.log
+
+# Beta gate — secret data, never commit (codes.example.json is the template)
+beta/codes.json
+beta/usage.jsonl
+
+# Yarn (unused)
+yarn.lock
+.pnp.*
+.yarn/

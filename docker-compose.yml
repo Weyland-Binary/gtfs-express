@@ -1,0 +1,129 @@
+services:
+  frontend:
+    build:
+      context: ./GTFS-EXPRESS-WEB
+      args:
+        - VITE_API_BASE_URL=/api/gtfs
+        # Corporate-proxy escape hatch: set APK_INSECURE=true in the root
+        # .env so `docker compose up --build` picks it up without manual
+        # --build-arg flags. Defaults stay secure for CI/prod.
+        - APK_INSECURE=${APK_INSECURE:-false}
+        # npm's TLS verification, off only behind a TLS-intercepting proxy (same .env).
+        - NPM_STRICT_SSL=${NPM_STRICT_SSL:-true}
+        # Basemap provider / key (optional, see docker-compose.prod.yml).
+        - VITE_BASEMAP_PROVIDER=${BASEMAP_PROVIDER:-}
+        - VITE_CARTO_API_KEY=${CARTO_API_KEY:-}
+        - VITE_MAPTILER_KEY=${MAPTILER_KEY:-}
+    container_name: gtfs-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://localhost/nginx-health",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./GTFS-EXPRESS-API
+      args:
+        # Same corporate-proxy escape hatches as the frontend (see above):
+        # APK packages over http, JAR download with curl -k.
+        - APK_INSECURE=${APK_INSECURE:-false}
+        - CURL_INSECURE=${CURL_INSECURE:-false}
+        - NPM_STRICT_SSL=${NPM_STRICT_SSL:-true}
+    container_name: gtfs-api
+    environment:
+      - NODE_ENV=production
+      - PORT=3004
+      # Set these in a root .env file or export them before running docker compose.
+      # The API refuses to start in production without IP_HASH_SECRET.
+      - ADMIN_TOKEN=${ADMIN_TOKEN:-dev-admin-token-change-in-production}
+      - IP_HASH_SECRET=${IP_HASH_SECRET:-dev-ip-hash-secret-change-in-production}
+      # The projects kept without an account are off in production until this is set (its own secret, never rotated with the others).
+      - CLIENT_TOKEN_SECRET=${CLIENT_TOKEN_SECRET:-}
+      # En production, remplacer par votre domaine réel
+      # Exemple : ALLOWED_ORIGINS=https://gtfs.votre-domaine.com
+      - ALLOWED_ORIGINS=http://localhost:80
+      - RATE_LIMIT_WINDOW_MS=3600000
+      - RATE_LIMIT_MAX_REQUESTS=3000
+      - RATE_LIMIT_MAX_UPLOADS=20
+      - SESSION_CLEANUP_AGE_MS=7200000
+      - MAX_SESSIONS=50
+      # AI companion (chat + NL2SQL). Off by default: set ANTHROPIC_API_KEY
+      # in a root .env (or export it) and flip the flags to test the guided
+      # repair flow locally.
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # Where the model runs (empty: the direct API with the key above;
+      # bedrock or vertex for processing in the EU — DEPLOYMENT.md, "Model
+      # provider"), and those providers' credentials, empty unless set.
+      - LLM_PROVIDER=${LLM_PROVIDER:-}
+      - LLM_AWS_REGION=${LLM_AWS_REGION:-}
+      - LLM_VERTEX_PROJECT_ID=${LLM_VERTEX_PROJECT_ID:-}
+      - LLM_VERTEX_REGION=${LLM_VERTEX_REGION:-}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN:-}
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
+      - NL2SQL_ENABLED=${NL2SQL_ENABLED:-false}
+      - NL2SQL_CHAT_ENABLED=${NL2SQL_CHAT_ENABLED:-false}
+      - NL2SQL_CHAT_MODEL=${NL2SQL_CHAT_MODEL:-claude-sonnet-4-6}
+      - NL2SQL_FREE_MESSAGES_PER_SESSION=${NL2SQL_FREE_MESSAGES_PER_SESSION:-0}
+      # User accounts: signing in with a six-digit code sent by e-mail, no
+      # password. Without the paid offer (not passed here: the open model)
+      # reading and every modification stay open to everyone. Off by default:
+      # the auth routes answer 503 and no projects.db is created. projects.db
+      # lives in the container at /app/projects (no volume in the dev stack:
+      # recreating the container loses the dev accounts).
+      - ACCOUNTS_ENABLED=${ACCOUNTS_ENABLED:-false}
+      - PROJECTS_DIR=${PROJECTS_DIR:-/app/projects}
+      - RATE_LIMIT_MAX_AUTH=${RATE_LIMIT_MAX_AUTH:-}
+      # The sign-in codes: written to the API's log (`docker compose logs api`),
+      # since this stack runs NODE_ENV=production, where an unset provider
+      # sends nothing. ADMIN_EMAILS: your own address(es), every right once
+      # verified by a code.
+      - MAIL_PROVIDER=${MAIL_PROVIDER:-log}
+      - ADMIN_EMAILS=${ADMIN_EMAILS:-}
+      - NETWORK_STUDIO_ENABLED=${NETWORK_STUDIO_ENABLED:-false}
+      # Corporate-network escape hatches for the container -> api.anthropic.com
+      # leg (LOCAL DEV ONLY — never set these in production):
+      #   NODE_TLS_REJECT_UNAUTHORIZED=0   tolerate an SSL-intercepting proxy
+      #   HTTPS_PROXY + NODE_USE_ENV_PROXY=1  route Node's fetch through an
+      #                                        explicit corporate proxy (Node 24)
+      - NODE_TLS_REJECT_UNAUTHORIZED=${NODE_TLS_REJECT_UNAUTHORIZED:-1}
+      - NODE_USE_ENV_PROXY=${NODE_USE_ENV_PROXY:-0}
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - NO_PROXY=${NO_PROXY:-}
+    volumes:
+      - uploads_data:/app/uploads
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://localhost:3004/health",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  uploads_data:

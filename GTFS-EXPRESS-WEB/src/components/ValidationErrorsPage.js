@@ -1,0 +1,588 @@
+import React, {
+  useMemo,
+  useState,
+  useCallback,
+  useEffect,
+  useRef,
+} from "react";
+import {
+  Typography,
+  Box,
+  useTheme,
+  alpha,
+  Snackbar,
+  Alert,
+  Button,
+  CircularProgress,
+} from "@mui/material";
+import CheckCircleOutlineIcon from "@mui/icons-material/CheckCircleOutline";
+import AutoFixHighIcon from "@mui/icons-material/AutoFixHigh";
+import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
+import LockOutlinedIcon from "@mui/icons-material/LockOutlined";
+import TaskAltIcon from "@mui/icons-material/TaskAlt";
+import { keyframes } from "@mui/system";
+import { useLanguage } from "../contexts/LanguageContext";
+import { fetchWithSession } from "../utils/sessionManager";
+import API_BASE_URL from "../config";
+
+// Validation sub-components
+import ValidationToolbar from "./validation/ValidationToolbar";
+import ValidationSummary from "./validation/ValidationSummary";
+import ValidationFilterBar from "./validation/ValidationFilterBar";
+import RuleGroupList, { severityOfGroup } from "./validation/RuleGroupList";
+import RescueBanner from "./validation/RescueBanner";
+import FixQueueBar from "./validation/FixQueueBar";
+import { isFixableFinding } from "./validation/useFixDialog";
+import AutoFixedBanner from "./validation/AutoFixedBanner";
+import QualityAuditPanel from "./validation/QualityAuditPanel";
+import { licenceLockOf, openPaywall, useFeatures } from "../utils/featuresApi";
+import { CHAT_OPEN_EVENT } from "./chat/ChatAssistantFAB";
+
+const getSeverityColor = (theme, sev) =>
+  (theme.palette.severities[sev] || theme.palette.severities.error).main;
+
+const fadeIn = keyframes`
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+`;
+
+/**
+ * Flatten the report.errors object (fileName → array) into a flat array
+ * where each finding carries its fileName.
+ */
+function flattenErrors(groupedErrors) {
+  const all = [];
+  Object.entries(groupedErrors).forEach(([fileName, errors]) => {
+    errors.forEach((err) => all.push({ ...err, fileName }));
+  });
+  return all;
+}
+
+/**
+ * Validation report — single rule-grouped view, faithful to the canonical
+ * engine's output.
+ *
+ * Layout (top → bottom):
+ *   header        title + status, re-validate / re-upload actions
+ *   rescue banner export-lock CTA / repair progress / success
+ *   auto-fixed    findings the tolerant import already resolved
+ *                 (duplicate rows dropped) — announced, never listed as
+ *                 outstanding work, no re-validation required
+ *   summary       clickable severity stats (filters)
+ *   filters       free-text search + per-file chips
+ *   rule list     one row per canonical rule; expanding shows EXACTLY the
+ *                 fields the engine returned for that rule
+ *
+ * One organisation only, by rule like MobilityData's own report: lighter to
+ * scan than a choice of views (by file, by entity) behind a toggle.
+ */
+function ValidationErrorsPage({
+  report,
+  onReupload,
+  onBack,
+  onReportRefreshed,
+  baselineCounts,
+  // True when entities were edited since this report; the app re-runs the
+  // validator in the background (backgroundValidating while it does).
+  stale = false,
+  backgroundValidating = false,
+  // { table: droppedCount } from the tolerant import — lets the "fixed at
+  // import" note survive re-validation (fresh reports carry no such rows).
+  importAdjustments = null,
+}) {
+  const theme = useTheme();
+  const isDark = theme.palette.mode === "dark";
+  const { t } = useLanguage();
+  const { features } = useFeatures();
+  const chatEnabled = Boolean(features?.chat?.enabled);
+  const editLock = licenceLockOf(features?.access);
+  // A modification without the licence opens the offer instead.
+  const gated = (fn) => () => (editLock ? openPaywall("edit", editLock, fn) : fn());
+
+  // ── State ──
+  const [revalidating, setRevalidating] = useState(false);
+  const [revalidateToast, setRevalidateToast] = useState(null);
+  const [severityFilter, setSeverityFilter] = useState(
+    new Set(["error", "warning", "info"]),
+  );
+  const [fileFilter, setFileFilter] = useState(new Set()); // empty = all files
+  const [searchQuery, setSearchQuery] = useState("");
+  const [expandedGroups, setExpandedGroups] = useState(new Set());
+  // Fix queue: walk the fixable findings one by one (bottom bar).
+  const [fixQueueOpen, setFixQueueOpen] = useState(false);
+
+  const searchInputRef = useRef(null);
+
+  // ── Derived data ──
+  const groupedErrors = report.errors; // { fileName: [finding, ...] }
+
+  // Split once: findings the tolerant import already resolved (duplicate
+  // rows dropped at load time) are announced separately and excluded from
+  // every "work to do" tally below.
+  const { activeFindings, autoFixedFindings } = useMemo(() => {
+    const all = flattenErrors(groupedErrors);
+    return {
+      activeFindings: all.filter((f) => !f.resolvedByImport),
+      autoFixedFindings: all.filter((f) => f.resolvedByImport),
+    };
+  }, [groupedErrors]);
+
+  // Unfiltered counts (always stable — do not depend on filters)
+  // Weighted like utils/validationSummary.js: an aggregate "N more not
+  // sampled" marker counts for N occurrences, not 1, so these numbers agree
+  // with the header badge, the dashboard and the repair-progress baseline.
+  const severityCounts = useMemo(() => {
+    const counts = { error: 0, warning: 0, info: 0 };
+    activeFindings.forEach((f) => {
+      const s = f.severity || "error";
+      const w = f.aggregate ? Math.max(0, Number(f.aggregateCount) || 0) : 1;
+      if (counts[s] !== undefined) counts[s] += w;
+    });
+    return counts;
+  }, [activeFindings]);
+
+  // The rules of each severity (a rule counted under its worst finding), for the report's head.
+  const ruleCounts = useMemo(() => {
+    const byRule = {};
+    activeFindings.forEach((f) => {
+      const key = f.ruleCode || "__ungrouped__";
+      (byRule[key] = byRule[key] || []).push(f);
+    });
+    const counts = { error: 0, warning: 0, info: 0 };
+    Object.values(byRule).forEach((occurrences) => {
+      counts[severityOfGroup(occurrences)] += 1;
+    });
+    return counts;
+  }, [activeFindings]);
+
+  const weightOf = (f) =>
+    f.aggregate ? Math.max(0, Number(f.aggregateCount) || 0) : 1;
+
+  const fileCounts = useMemo(() => {
+    const counts = {};
+    activeFindings.forEach((f) => {
+      if (f.fileName) counts[f.fileName] = (counts[f.fileName] || 0) + weightOf(f);
+    });
+    return counts;
+  }, [activeFindings]);
+
+  // Filtered findings (severity + file + search)
+  const filteredFindings = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return activeFindings.filter((f) => {
+      if (!severityFilter.has(f.severity || "error")) return false;
+      if (fileFilter.size > 0 && !fileFilter.has(f.fileName)) return false;
+      if (q) {
+        const inCode = (f.ruleCode || "").toLowerCase().includes(q);
+        const inMsg = (f.message || "").toLowerCase().includes(q);
+        if (!inCode && !inMsg) return false;
+      }
+      return true;
+    });
+  }, [activeFindings, severityFilter, fileFilter, searchQuery]);
+
+  // Rule groups from filtered findings, errors first then by volume.
+  const sortedRuleGroups = useMemo(() => {
+    const map = {};
+    filteredFindings.forEach((f) => {
+      const key = f.ruleCode || "__ungrouped__";
+      if (!map[key]) map[key] = [];
+      map[key].push(f);
+    });
+    const sevOrder = { error: 0, warning: 1, info: 2 };
+    return Object.entries(map)
+      .map(([ruleCode, occurrences]) => ({ ruleCode, occurrences }))
+      .sort((a, b) => {
+        const aWorst = a.occurrences.reduce(
+          (w, o) => Math.min(w, sevOrder[o.severity || "error"] ?? 2),
+          2,
+        );
+        const bWorst = b.occurrences.reduce(
+          (w, o) => Math.min(w, sevOrder[o.severity || "error"] ?? 2),
+          2,
+        );
+        if (aWorst !== bWorst) return aWorst - bWorst;
+        const weight = (g) => g.occurrences.reduce((acc, o) => acc + weightOf(o), 0);
+        return weight(b) - weight(a);
+      });
+  }, [filteredFindings]);
+
+  // Fixable findings in display order (rule groups, then occurrences):
+  // those the fix flow can open an editor for (entity identified by the
+  // server, supported entity type). Feeds the "Fix one by one" queue.
+  const fixableFindings = useMemo(
+    () =>
+      sortedRuleGroups.flatMap((g) =>
+        g.occurrences.filter((o) => isFixableFinding(o)),
+      ),
+    [sortedRuleGroups],
+  );
+
+  const importAdjustmentsTotal = useMemo(
+    () =>
+      Object.values(importAdjustments || {}).reduce(
+        (acc, n) => acc + (Number(n) || 0),
+        0,
+      ),
+    [importAdjustments],
+  );
+
+  // ── Derived UI values ──
+  const statusColor =
+    severityCounts.error > 0
+      ? getSeverityColor(theme, "error")
+      : severityCounts.warning > 0
+        ? getSeverityColor(theme, "warning")
+        : theme.palette.success.main;
+
+  // Weighted like every other screen (badge, dashboard, export dialog).
+  const totalFindings = activeFindings.reduce((acc, f) => acc + weightOf(f), 0);
+  const filteredTotal = filteredFindings.reduce((acc, f) => acc + weightOf(f), 0);
+  const ruleCount = sortedRuleGroups.length;
+
+  // ── Handlers ──
+  const toggleSeverity = useCallback((sev) => {
+    setSeverityFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(sev)) {
+        if (next.size > 1) next.delete(sev);
+      } else {
+        next.add(sev);
+      }
+      return next;
+    });
+  }, []);
+
+  const toggleFileFilter = useCallback(
+    (fileName, solo) => {
+      if (fileName === null) {
+        setFileFilter(new Set());
+        return;
+      }
+      setFileFilter((prev) => {
+        if (solo) return new Set([fileName]);
+        const next = new Set(prev);
+        if (next.has(fileName)) next.delete(fileName);
+        else next.add(fileName);
+        if (next.size === Object.keys(fileCounts).length) return new Set();
+        return next;
+      });
+    },
+    [fileCounts],
+  );
+
+  const toggleGroup = useCallback((ruleCode) => {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(ruleCode)) next.delete(ruleCode);
+      else next.add(ruleCode);
+      return next;
+    });
+  }, []);
+
+  const clearAllFilters = useCallback(() => {
+    setSeverityFilter(new Set(["error", "warning", "info"]));
+    setFileFilter(new Set());
+    setSearchQuery("");
+  }, []);
+
+  // Re-validate the LIVE session state (works read-only — the backend dumps
+  // the current SQLite DB and runs the canonical engine on it). The fresh
+  // report is lifted to GTFSApp so every consumer (header badge, home cards,
+  // this page) sees the same truth.
+  const handleRevalidate = useCallback(async () => {
+    if (revalidating) return;
+    setRevalidating(true);
+    const startedAt = Date.now();
+    try {
+      const res = await fetchWithSession(`${API_BASE_URL}/edit/validate`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        const err = new Error(`HTTP ${res.status}`);
+        err.status = res.status;
+        throw err;
+      }
+      const fresh = await res.json();
+      if (onReportRefreshed) onReportRefreshed(fresh, startedAt);
+      setRevalidateToast({
+        severity: "success",
+        message: t("validation.revalidate.toastDone"),
+      });
+    } catch (err) {
+      setRevalidateToast({
+        severity: "warning",
+        message:
+          err.isRateLimit || err.status === 429
+            ? t("validation.revalidate.rateLimited")
+            : t("validation.revalidate.failed"),
+      });
+    } finally {
+      setRevalidating(false);
+    }
+  }, [revalidating, onReportRefreshed, t]);
+
+  // ── Keyboard shortcuts ──
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.ctrlKey && e.key === "f") {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        return;
+      }
+      const tag = document.activeElement?.tagName;
+      const isInput =
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        document.activeElement?.isContentEditable;
+      if (!isInput) {
+        if (e.key === "1") toggleSeverity("error");
+        if (e.key === "2") toggleSeverity("warning");
+        if (e.key === "3") toggleSeverity("info");
+      }
+      if (e.key === "Escape") {
+        if (document.activeElement === searchInputRef.current) {
+          setSearchQuery("");
+        } else {
+          setExpandedGroups(new Set());
+        }
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [toggleSeverity]);
+
+  const allClear = totalFindings === 0;
+  const scrollbarSx = {
+    "&::-webkit-scrollbar": { width: 6 },
+    "&::-webkit-scrollbar-thumb": { bgcolor: alpha(theme.palette.text.primary, isDark ? 0.18 : 0.12), borderRadius: 3 },
+  };
+
+  // ─── Render ───────────────────────────────────────────────────────────────
+  return (
+    <Box
+      data-testid="validation-page"
+      sx={{
+        flex: 1,
+        display: "flex",
+        flexDirection: "column",
+        minHeight: 0,
+        overflow: "hidden",
+        animation: `${fadeIn} 0.3s ease-out`,
+        bgcolor: "background.default",
+      }}
+    >
+      {/* The report's own bar only for a file refused at import: re-uploading is then the one way on. Else the head
+          below says the verdict (the status bar too), and « Revalider » sits in it. */}
+      {report?.structural && (
+      <ValidationToolbar
+        onReupload={onReupload}
+        onBack={onBack}
+        totalFindings={totalFindings}
+        ruleCount={ruleCount}
+        filteredTotal={filteredTotal}
+        severityCounts={severityCounts}
+        statusColor={statusColor}
+        onRevalidate={handleRevalidate}
+        revalidating={revalidating}
+      />
+      )}
+
+      {/* Repair-station banner: locked / progress / success states */}
+      <RescueBanner
+        severityCounts={severityCounts}
+        baselineCounts={baselineCounts}
+        revalidating={revalidating}
+        onRevalidate={handleRevalidate}
+      />
+
+      {/* Out-of-date report: edits happened since it was produced. */}
+      {stale && (
+        <Alert
+          severity="info"
+          icon={backgroundValidating ? <CircularProgress size={18} /> : undefined}
+          data-testid="validation-stale-banner"
+          action={
+            !backgroundValidating && (
+              <Button
+                size="small"
+                color="inherit"
+                onClick={handleRevalidate}
+                disabled={revalidating}
+                sx={{ textTransform: "none", fontWeight: 700 }}
+              >
+                {t("validation.revalidate.button")}
+              </Button>
+            )
+          }
+          sx={{ borderRadius: 0, flexShrink: 0 }}
+        >
+          {backgroundValidating || revalidating
+            ? t("validation.stale.checking")
+            : t("validation.stale.banner")}
+        </Alert>
+      )}
+
+      {/* The report's head: each severity with its findings and rules (the filter too), « Revalider », the acts. */}
+      {!report?.structural && (
+        <ValidationSummary
+          severityCounts={severityCounts}
+          ruleCounts={ruleCounts}
+          severityFilter={severityFilter}
+          onToggleSeverity={toggleSeverity}
+          onRevalidate={handleRevalidate}
+          revalidating={revalidating}
+          actions={
+            (fixableFindings.length > 0 || chatEnabled) && !fixQueueOpen ? (
+              <>
+                {fixableFindings.length > 0 && (
+                  <Button
+                    variant="outlined"
+                    color="inherit"
+                    onClick={gated(() => setFixQueueOpen(true))}
+                    data-testid="fix-queue-start"
+                    data-locked={editLock ? "1" : undefined}
+                    startIcon={editLock ? <LockOutlinedIcon sx={{ fontSize: 16 }} /> : <AutoFixHighIcon sx={{ fontSize: 16 }} />}
+                    sx={{ textTransform: "none", fontWeight: 600, fontSize: "0.82rem", borderRadius: "8px", height: 34, px: 1.5, borderColor: theme.palette.divider, "&:hover": { borderColor: alpha(theme.palette.text.primary, 0.3), backgroundColor: theme.palette.action.hover } }}
+                  >
+                    {t("validation.fixQueue.start", { count: fixableFindings.length })}
+                  </Button>
+                )}
+                {chatEnabled && (
+                  <Button
+                    variant="contained"
+                    disableElevation
+                    onClick={gated(() => window.dispatchEvent(new CustomEvent(CHAT_OPEN_EVENT, { detail: { message: t("validation.aiRepairAll.prompt") } })))}
+                    data-testid="ai-repair-all"
+                    data-locked={editLock ? "1" : undefined}
+                    startIcon={editLock ? <LockOutlinedIcon sx={{ fontSize: 16 }} /> : <AutoAwesomeIcon sx={{ fontSize: 16 }} />}
+                    sx={{ textTransform: "none", fontWeight: 600, fontSize: "0.82rem", borderRadius: "8px", height: 34, px: 1.5, background: `linear-gradient(135deg, ${theme.palette.ai.gradientStart}, ${theme.palette.ai.gradientEnd})` }}
+                  >
+                    {t("validation.aiRepairAll.button")}
+                  </Button>
+                )}
+              </>
+            ) : null
+          }
+        />
+      )}
+
+      {/* Two panes filling the window: the validator's rules by severity, the Diagnostic beside them; each scrolls
+          on its own. */}
+      <Box
+        sx={{
+          flex: 1,
+          minHeight: 0,
+          display: { xs: "flex", md: "grid" },
+          flexDirection: "column",
+          gridTemplateColumns: { md: "minmax(0, 1fr) clamp(360px, 30vw, 500px)" },
+          gridTemplateRows: { md: "minmax(0, 1fr)" },
+          overflow: { xs: "auto", md: "hidden" },
+        }}
+      >
+        <Box
+          component="section"
+          aria-label={t("validation.pane.validator")}
+          data-testid="validation-rules-pane"
+          sx={{ minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", backgroundColor: theme.palette.background.paper, ...scrollbarSx }}
+        >
+          <Box sx={{ position: "sticky", top: 0, zIndex: 2, backgroundColor: theme.palette.background.paper, borderBottom: `1px solid ${theme.palette.divider}`, px: { xs: 2, md: 3 }, py: 1.5, display: "flex", flexDirection: "column", gap: 1.25 }}>
+            <Box sx={{ display: "flex", alignItems: "baseline", gap: 1.25, flexWrap: "wrap" }}>
+              <Typography component="h2" sx={{ fontSize: "0.95rem", fontWeight: 650, letterSpacing: "-0.01em" }}>
+                {t("validation.pane.validator")}
+              </Typography>
+              {!allClear && (
+                <Typography sx={{ fontSize: "0.8rem", color: "text.secondary", fontVariantNumeric: "tabular-nums" }}>
+                  {t("validation.header.summary", { findings: filteredTotal, rules: sortedRuleGroups.length })}
+                </Typography>
+              )}
+            </Box>
+            {!allClear && (
+              <ValidationFilterBar
+                fileCounts={fileCounts}
+                fileFilter={fileFilter}
+                onToggleFile={toggleFileFilter}
+                searchQuery={searchQuery}
+                onSearchChange={setSearchQuery}
+                searchInputRef={searchInputRef}
+              />
+            )}
+          </Box>
+
+          {/* Findings the import already fixed — announce, don't alarm. */}
+          {(autoFixedFindings.length > 0 || importAdjustmentsTotal > 0) && (
+            <Box sx={{ px: { xs: 2, md: 3 }, pt: 1.5 }}>
+              {autoFixedFindings.length > 0 ? (
+                <AutoFixedBanner findings={autoFixedFindings} />
+              ) : (
+                <Alert severity="success" icon={<TaskAltIcon />} sx={{ borderRadius: 3 }}>
+                  {t("validation.autoFixed.persist", { count: importAdjustmentsTotal })}
+                </Alert>
+              )}
+            </Box>
+          )}
+
+          {allClear ? (
+            <Box sx={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 1.25, py: 8 }}>
+              <CheckCircleOutlineIcon sx={{ fontSize: 56, color: theme.palette.success.main }} />
+              <Typography variant="h6" sx={{ fontWeight: 650 }}>
+                {t("validation.allClear.title")}
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                {t("validation.allClear.body")}
+              </Typography>
+            </Box>
+          ) : (
+            <RuleGroupList
+              flat
+              sectioned
+              sortedRuleGroups={sortedRuleGroups}
+              expandedGroups={expandedGroups}
+              onToggleGroup={toggleGroup}
+              onClearFilters={clearAllFilters}
+              isLoading={false}
+              totalFindingsCount={totalFindings}
+            />
+          )}
+        </Box>
+
+        {/* Beyond the validator: the semantic Diagnostic (its own « repair all » only when the report shows none). */}
+        <Box
+          component="aside"
+          data-testid="validation-diagnostic-pane"
+          sx={{ minHeight: 0, overflowY: "auto", backgroundColor: theme.palette.background.paper, borderLeft: { md: `1px solid ${theme.palette.divider}` }, borderTop: { xs: `1px solid ${theme.palette.divider}`, md: "none" }, px: { xs: 2, md: 3 }, py: 2, display: "flex", flexDirection: "column", ...scrollbarSx }}
+        >
+          <QualityAuditPanel dense pane repairAll={allClear} />
+        </Box>
+      </Box>
+
+      {fixQueueOpen && (
+        <FixQueueBar
+          findings={fixableFindings}
+          onClose={() => setFixQueueOpen(false)}
+        />
+      )}
+
+      {/* Revalidation feedback */}
+      <Snackbar
+        open={Boolean(revalidateToast)}
+        autoHideDuration={4000}
+        onClose={() => setRevalidateToast(null)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      >
+        {revalidateToast ? (
+          <Alert
+            severity={revalidateToast.severity}
+            onClose={() => setRevalidateToast(null)}
+          >
+            {revalidateToast.message}
+          </Alert>
+        ) : (
+          <span />
+        )}
+      </Snackbar>
+    </Box>
+  );
+}
+
+export default ValidationErrorsPage;

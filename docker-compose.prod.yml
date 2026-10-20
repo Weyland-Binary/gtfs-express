@@ -1,0 +1,456 @@
+# Production stack of GTFS Express (DEPLOYMENT.md). Every variable the API's
+# code reads is either passed below (empty means the code's default) or named,
+# with its reason, in the allowlist of
+# GTFS-EXPRESS-API/src/__tests__/deployEnvCoverage.test.js, which fails
+# otherwise; every directory the API writes durable data to sits on a volume.
+
+# Docker's own logs of every container (docker logs / gtfs logs), rotated:
+# five files of 10 MB at most per container, the oldest dropped first.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  frontend:
+    logging: *default-logging
+    build:
+      context: ./GTFS-EXPRESS-WEB
+      args:
+        - VITE_API_BASE_URL=/api/gtfs
+        # Basemap tiles: a CARTO or MapTiler key (paid tiers beyond their
+        # free quota) or nothing for OpenFreeMap. Set in .env.production.local.
+        - VITE_BASEMAP_PROVIDER=${BASEMAP_PROVIDER:-}
+        - VITE_CARTO_API_KEY=${CARTO_API_KEY:-}
+        - VITE_MAPTILER_KEY=${MAPTILER_KEY:-}
+    container_name: gtfs-frontend
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://localhost/nginx-health",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    networks:
+      - internal
+
+  api:
+    logging: *default-logging
+    build:
+      context: ./GTFS-EXPRESS-API
+    container_name: gtfs-api
+    environment:
+      - NODE_ENV=production
+      - PORT=3004
+      - ALLOWED_ORIGINS=https://${DOMAIN}
+      # Where the API writes, pinned to the volumes below (never an override:
+      # a directory outside a volume is lost at the next rebuild). uploads:
+      # the sessions and the event and upload logs; projects: the accounts,
+      # the workspace (workspace.db, the frozen version zips, the documents,
+      # the delivery packages) and the studio projects; shares: the public
+      # shares; beta (a bind mount): the AI use log, and the use log of the
+      # retired access codes (no longer written, swept until it ages out).
+      - GTFS_UPLOAD_DIR=/app/uploads
+      - PROJECTS_DIR=/app/projects
+      - WORKSPACE_DIR=/app/projects/workspace
+      - SHARES_DIR=/app/shares
+      - BETA_USAGE_PATH=/app/beta/usage.jsonl
+      - NL2SQL_CHAT_USAGE_PATH=/app/beta/chat-usage.jsonl
+      # Proxies in front of the API: how many hops back along X-Forwarded-For
+      # req.ip is read (per-IP rate limits, hashed addresses in the logs).
+      # This stack puts two proxies in front of the API — Caddy, then the
+      # frontend's Nginx — hence 2. A proxy of the host in front of Caddy
+      # adds one, and Caddy must then trust it (trusted_proxies): read the
+      # value on the server, DEPLOYMENT.md, "Client addresses behind the proxies".
+      - TRUST_PROXY_HOPS=${TRUST_PROXY_HOPS:-2}
+      # Days the API's JSONL logs keep a line (events, uploads, the retired
+      # beta-code use, AI use; swept daily). Empty → 365; 0 keeps everything. The
+      # owner's decision (DEPLOYMENT.md, "Logs").
+      - LOG_RETENTION_DAYS=${LOG_RETENTION_DAYS:-}
+      - RATE_LIMIT_WINDOW_MS=${RATE_LIMIT_WINDOW_MS:-3600000}
+      - RATE_LIMIT_MAX_REQUESTS=${RATE_LIMIT_MAX_REQUESTS:-500}
+      - RATE_LIMIT_MAX_UPLOADS=${RATE_LIMIT_MAX_UPLOADS:-10}
+      - RATE_LIMIT_SAMPLE_WINDOW_MS=${RATE_LIMIT_SAMPLE_WINDOW_MS:-900000}
+      - RATE_LIMIT_MAX_SAMPLES=${RATE_LIMIT_MAX_SAMPLES:-5}
+      - SESSION_CLEANUP_AGE_MS=${SESSION_CLEANUP_AGE_MS:-3600000}
+      - MAX_SESSIONS=${MAX_SESSIONS:-20}
+      # Admin dashboard (#admin route) : si vide, l'endpoint /api/gtfs/admin/*
+      # renvoie 503 et la page admin reste inaccessible. Sert aussi de
+      # secret pour le HMAC qui anonymise les IPs dans les logs d'events.
+      - ADMIN_TOKEN=${ADMIN_TOKEN:-}
+      # Sel HMAC des IP/codes hashés dans les logs d'audit. DOIT être distinct
+      # de ADMIN_TOKEN (rotation indépendante). Vide →
+      # fallback ADMIN_TOKEN (compat), mais le définir est l'état nominal.
+      - IP_HASH_SECRET=${IP_HASH_SECRET:-}
+      # NL2SQL — assistant IA (génération SQL depuis le langage naturel).
+      # Requiert une clé API Anthropic valide dans .env à la racine.
+      # NL2SQL_ENABLED=false → endpoint 503 + bouton masqué côté UI (kill switch).
+      - NL2SQL_ENABLED=${NL2SQL_ENABLED:-true}
+      - NL2SQL_CHAT_ENABLED=${NL2SQL_CHAT_ENABLED:-false}
+      - NL2SQL_MODEL=${NL2SQL_MODEL:-claude-haiku-4-5}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # Fournisseur du modèle (DEPLOYMENT.md, section 9) : vide = l'API directe
+      # avec la clé ci-dessus ; bedrock (région UE) ou vertex (eu) pour un
+      # traitement dans l'UE. Puis les identifiants de ces fournisseurs, vides
+      # sauf s'ils sont définis dans .env.production.local (jamais journalisés).
+      - LLM_PROVIDER=${LLM_PROVIDER:-}
+      - LLM_AWS_REGION=${LLM_AWS_REGION:-}
+      - LLM_VERTEX_PROJECT_ID=${LLM_VERTEX_PROJECT_ID:-}
+      - LLM_VERTEX_REGION=${LLM_VERTEX_REGION:-}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN:-}
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
+      # Réglages chat + garde-fous de coût IA. Vides → défauts de config.js
+      # (chat: claude-sonnet-4-6 ; aucun message gratuit sans licence sous
+      # l'offre payante, 15/IP/jour s'ils sont activés ; 30 msg/h, 100 req/24h
+      # sans licence, budget global 500/24h). The global budget is checked
+      # first; a licensed account's daily quota (200,
+      # BETA_NL2SQL_DAILY_LIMIT_PER_CODE below) and the trials' share (100)
+      # stay below it. The owner's values; the API warns at boot and in
+      # /admin/ai-usage when they contradict each other (DEPLOYMENT.md, "AI
+      # budget and per-account quotas").
+      - NL2SQL_CHAT_MODEL=${NL2SQL_CHAT_MODEL:-}
+      - NL2SQL_FREE_MESSAGES_PER_SESSION=${NL2SQL_FREE_MESSAGES_PER_SESSION:-}
+      - NL2SQL_FREE_MESSAGES_PER_IP_DAY=${NL2SQL_FREE_MESSAGES_PER_IP_DAY:-}
+      - NL2SQL_CHAT_RATE_LIMIT=${NL2SQL_CHAT_RATE_LIMIT:-}
+      - NL2SQL_RATE_LIMIT=${NL2SQL_RATE_LIMIT:-}
+      - NL2SQL_DAILY_LIMIT_PER_CODE=${NL2SQL_DAILY_LIMIT_PER_CODE:-}
+      - NL2SQL_DAILY_BUDGET_TOTAL=${NL2SQL_DAILY_BUDGET_TOTAL:-}
+      # La part de ce budget que l'IA non payée peut prendre (essais, messages
+      # gratuits) : le reste est réservé aux licences (vide → 100 ; 0 : pas de
+      # part à part). L'essai : requêtes IA par compte et par jour (vide → 30).
+      - NL2SQL_DAILY_BUDGET_UNPAID=${NL2SQL_DAILY_BUDGET_UNPAID:-}
+      - TRIAL_AI_DAILY_LIMIT=${TRIAL_AI_DAILY_LIMIT:-}
+      - TRIAL_AI_BUDGET_EUR=${TRIAL_AI_BUDGET_EUR:-}
+      - LICENCE_AI_BUDGET_EUR_MONTH=${LICENCE_AI_BUDGET_EUR_MONTH:-}
+      - TESTER_AI_BUDGET_USD_MONTH=${TESTER_AI_BUDGET_USD_MONTH:-}
+      # The reading companion: questions per month for a signed-in account without the licence (empty: 20;
+      # 0: off) and its envelope in euros per month (empty: 3).
+      - READER_AI_QUESTIONS_MONTH=${READER_AI_QUESTIONS_MONTH:-}
+      - READER_AI_BUDGET_EUR_MONTH=${READER_AI_BUDGET_EUR_MONTH:-}
+      - AI_USD_PER_EUR=${AI_USD_PER_EUR:-}
+      # Network Studio — planificateur et fournisseurs de données. Vides →
+      # défauts de config.js : Opus 5.5, et les instances PUBLIQUES de démo
+      # (OSRM profil voiture, Photon, Nominatim, Overpass) qui ne tiennent pas
+      # une charge de production : pointer vers des instances auto-hébergées
+      # (OSRM/Valhalla avec profil bus) avant toute ouverture à volume.
+      - NETWORK_PLANNER_MODEL=${NETWORK_PLANNER_MODEL:-}
+      # Mode direct du Change Studio, le brouillon « avec une demande » (un agent modifie en SQL, un relecteur
+      # indépendant mesure). Modèles vides → Opus 5.5 pour l'agent, Sonnet 5.5 pour le relecteur.
+      - DIRECT_AGENT_MODEL=${DIRECT_AGENT_MODEL:-}
+      - DIRECT_REVIEWER_MODEL=${DIRECT_REVIEWER_MODEL:-}
+      - DIRECT_MAX_ROUNDS=${DIRECT_MAX_ROUNDS:-}
+      # Modèle des tours d'essai gratuit des planificateurs (vide → modèle économique du chat).
+      - PLANNER_FREE_MODEL=${PLANNER_FREE_MODEL:-}
+      - NETWORK_PLANNER_EFFORT=${NETWORK_PLANNER_EFFORT:-}
+      # Corrections automatiques d'un tour de planificateur face au moteur (vide → 3 ; 0 coupe la boucle).
+      - PLANNER_CORRECTION_ATTEMPTS=${PLANNER_CORRECTION_ATTEMPTS:-}
+      - AI_TURN_MAX_WEIGHTED_TOKENS=${AI_TURN_MAX_WEIGHTED_TOKENS:-}
+      - PDF_OCR_ENABLED=${PDF_OCR_ENABLED:-}
+      - PDF_OCR_MAX_PAGES=${PDF_OCR_MAX_PAGES:-}
+      - GTFS_VALIDATOR_JAVA_XMX=${GTFS_VALIDATOR_JAVA_XMX:-}
+      - GTFS_VALIDATOR_MAX_CONCURRENT=${GTFS_VALIDATOR_MAX_CONCURRENT:-}
+      - NETWORK_ROUTING_ENABLED=${NETWORK_ROUTING_ENABLED:-}
+      - OSRM_URL=${OSRM_URL:-}
+      - NETWORK_ROUTING_CURB=${NETWORK_ROUTING_CURB:-}
+      - GEOCODER_URL=${GEOCODER_URL:-}
+      # En France, la Base Adresse Nationale complète le géocodeur (adresses).
+      - BAN_URL=${BAN_URL:-}
+      - GEOCODER_BAN_ENABLED=${GEOCODER_BAN_ENABLED:-}
+      - NOMINATIM_URL=${NOMINATIM_URL:-}
+      - OVERPASS_URL=${OVERPASS_URL:-}
+      # Données de demande (services/demand) : population communale et contours
+      # (geo.api.gouv.fr), établissements par tranche d'effectifs (API Recherche
+      # d'entreprises), établissements scolaires et effectifs (Éducation nationale).
+      # Fichiers INSEE locaux optionnels : carroyage Filosofi 200 m par département
+      # (INSEE_GRID_DIR, voir scripts/prepare-insee-grid.js) et flux domicile-travail
+      # / domicile-études (MOBPRO_FILE, MOBSCO_FILE), montés en lecture seule.
+      - DEMAND_PROVIDERS_ENABLED=${DEMAND_PROVIDERS_ENABLED:-}
+      - GEO_API_URL=${GEO_API_URL:-}
+      - RECHERCHE_ENTREPRISES_URL=${RECHERCHE_ENTREPRISES_URL:-}
+      - EDUCATION_API_URL=${EDUCATION_API_URL:-}
+      - INSEE_GRID_DIR=${INSEE_GRID_DIR:-}
+      - MOBPRO_FILE=${MOBPRO_FILE:-}
+      - MOBSCO_FILE=${MOBSCO_FILE:-}
+      - DEMAND_CACHE_DIR=${DEMAND_CACHE_DIR:-}
+      # Estimations, optimisations et scénarios : budget horaire par IP (par compte
+      # sous licence) et calculs simultanés par processus (vides → 120, 1200 et 2).
+      - RATE_LIMIT_MAX_DEMAND=${RATE_LIMIT_MAX_DEMAND:-}
+      - BETA_RATE_LIMIT_MAX_DEMAND=${BETA_RATE_LIMIT_MAX_DEMAND:-}
+      - DEMAND_MAX_CONCURRENT=${DEMAND_MAX_CONCURRENT:-}
+      # Comptes sous licence (noms BETA_ conservés) — caps confortables par
+      # compte. Vides → défauts config.js (30000 req/h, 200 uploads/h, 600 SQL/min,
+      # 30 reval/min, 60 IA/h, 200 IA/jour par compte ; aucun plafond par compte
+      # pour ADMIN_EMAILS). Bucket dédié par compte, le trafic sans licence garde
+      # les caps RATE_LIMIT_* ci-dessus.
+      - RATE_LIMIT_MAX_REVALIDATE=${RATE_LIMIT_MAX_REVALIDATE:-}
+      - BETA_RATE_LIMIT_MAX_REQUESTS=${BETA_RATE_LIMIT_MAX_REQUESTS:-}
+      - BETA_RATE_LIMIT_MAX_UPLOADS=${BETA_RATE_LIMIT_MAX_UPLOADS:-}
+      - BETA_RATE_LIMIT_MAX_SQL=${BETA_RATE_LIMIT_MAX_SQL:-}
+      - BETA_RATE_LIMIT_MAX_REVALIDATE=${BETA_RATE_LIMIT_MAX_REVALIDATE:-}
+      - BETA_NL2SQL_RATE_LIMIT=${BETA_NL2SQL_RATE_LIMIT:-}
+      - BETA_NL2SQL_DAILY_LIMIT_PER_CODE=${BETA_NL2SQL_DAILY_LIMIT_PER_CODE:-}
+      # Sous-pool de sessions réservé au trafic SANS licence. Vide → un quart de
+      # MAX_SESSIONS réservé aux comptes sous licence avec l'offre payante
+      # (PAID_ACCESS_ENABLED=true), aucune réservation sinon. Un nombre → ce plafond.
+      - MAX_KEYLESS_SESSIONS=${MAX_KEYLESS_SESSIONS:-}
+      # Comptes utilisateurs (lecture gratuite ; connexion par un code envoyé par
+      # e-mail ; toute modification avec la licence sous l'offre payante). Défaut
+      # false : les routes /auth/* répondent 503 ACCOUNTS_DISABLED, rien
+      # d'autre ne change et projects.db n'est jamais créé. Les comptes
+      # vivent dans le volume projects_data (ci-dessous), jamais dans les
+      # sessions — à sauvegarder (DEPLOYMENT.md, Backups).
+      - ACCOUNTS_ENABLED=${ACCOUNTS_ENABLED:-false}
+      # Studio Réseau (concevoir un réseau). false par défaut : ses routes répondent 404 NETWORK_STUDIO_DISABLED.
+      - NETWORK_STUDIO_ENABLED=${NETWORK_STUDIO_ENABLED:-false}
+      # Demandes et saisies de code de connexion par IP et par 15 min (vide → 10).
+      - RATE_LIMIT_MAX_AUTH=${RATE_LIMIT_MAX_AUTH:-}
+      # The workspace: the journey's projects on the server, for everyone.
+      # Without CLIENT_TOKEN_SECRET (openssl rand -hex 32, its own secret,
+      # never rotated with the others: the projects kept without an account
+      # would be orphaned) it answers 503 WORKSPACE_DISABLED in production
+      # and the web keeps the projects in the browser only. WORKSPACE_ENABLED
+      # empty → on. The retention and the caps (empty → the code's defaults:
+      # 30 days without an account, 365 with one, 50 projects per browser,
+      # 10 versions and 200 MB per project, a snapshot after 20 edits or 10
+      # idle minutes, 300 workspace requests per window) are the owner's,
+      # announced on screen and in the terms from these same values.
+      - CLIENT_TOKEN_SECRET=${CLIENT_TOKEN_SECRET:-}
+      - WORKSPACE_ENABLED=${WORKSPACE_ENABLED:-}
+      - PROJECTS_RETENTION_DAYS=${PROJECTS_RETENTION_DAYS:-}
+      - ACCOUNT_PROJECTS_RETENTION_DAYS=${ACCOUNT_PROJECTS_RETENTION_DAYS:-}
+      - WORKSPACE_MAX_PROJECTS=${WORKSPACE_MAX_PROJECTS:-}
+      - WORKSPACE_MAX_VERSIONS=${WORKSPACE_MAX_VERSIONS:-}
+      - WORKSPACE_MAX_VERSION_BYTES=${WORKSPACE_MAX_VERSION_BYTES:-}
+      - SNAPSHOT_EDITS=${SNAPSHOT_EDITS:-}
+      - SNAPSHOT_IDLE_MINUTES=${SNAPSHOT_IDLE_MINUTES:-}
+      - WORKSPACE_RATE_LIMIT_MAX=${WORKSPACE_RATE_LIMIT_MAX:-}
+      # Public shares (read-only snapshots behind a token, on shares_data):
+      # days a share stays open. Empty → 90.
+      - SHARE_TTL_DAYS=${SHARE_TTL_DAYS:-}
+      # Where a person asks for an access, and who processes the documents
+      # sent to the assistant, as the web names them. Empty: no "request
+      # access" link; the web says "the assistant" without naming anyone.
+      - SUPPORT_EMAIL=${SUPPORT_EMAIL:-}
+      - REQUEST_ACCESS_URL=${REQUEST_ACCESS_URL:-}
+      - PLAN_CONTACT_EMAIL=${PLAN_CONTACT_EMAIL:-}
+      - MODEL_PROVIDER_NAME=${MODEL_PROVIDER_NAME:-}
+      # Les mentions légales (LCEN art. 6-III) que la page /conditions affiche :
+      # l'éditeur (nom ou raison sociale, forme et capital, siège, RCS ou SIREN,
+      # TVA, directeur de la publication, e-mail — à défaut SUPPORT_EMAIL —,
+      # téléphone) et l'hébergeur (nom, adresse, téléphone, sur une ligne). Vide :
+      # la page dit que l'exploitant ne l'a pas renseigné. SOURCE_CODE_URL : où
+      # le code source de la version en service est offert (AGPL §13).
+      - LEGAL_PUBLISHER=${LEGAL_PUBLISHER:-}
+      - LEGAL_STATUS=${LEGAL_STATUS:-}
+      - LEGAL_ADDRESS=${LEGAL_ADDRESS:-}
+      - LEGAL_REGISTRATION=${LEGAL_REGISTRATION:-}
+      - LEGAL_VAT=${LEGAL_VAT:-}
+      - LEGAL_DIRECTOR=${LEGAL_DIRECTOR:-}
+      - LEGAL_EMAIL=${LEGAL_EMAIL:-}
+      - LEGAL_PHONE=${LEGAL_PHONE:-}
+      - LEGAL_HOST=${LEGAL_HOST:-}
+      - SOURCE_CODE_URL=${SOURCE_CODE_URL:-}
+      # The payment links (empty: no checkout link).
+      - STRIPE_CHECKOUT_URL_PRO=${STRIPE_CHECKOUT_URL_PRO:-}
+      - STRIPE_CHECKOUT_URL_PRO_MONTHLY=${STRIPE_CHECKOUT_URL_PRO_MONTHLY:-}
+      # L'offre payante (services/paidAccess) : la lecture reste libre ;
+      # l'édition et le Network Studio exigent un compte abonné (ou des droits
+      # accordés par l'admin). false par défaut ; true exige
+      # ACCOUNTS_ENABLED=true (sinon l'API refuse de démarrer). Stripe : la clé
+      # secrète crée les sessions Checkout et du portail, les identifiants de
+      # prix nomment les offres, le secret du webhook vérifie les événements
+      # (endpoint : https://<domaine>/gtfs/billing/webhook). BILLING_RETURN_URL
+      # est l'adresse publique du web (retour après paiement). Les secrets
+      # vivent dans le .env du serveur, jamais dans le dépôt.
+      - PAID_ACCESS_ENABLED=${PAID_ACCESS_ENABLED:-false}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
+      - STRIPE_PRICE_PRO=${STRIPE_PRICE_PRO:-}
+      - STRIPE_PRICE_TEAM=${STRIPE_PRICE_TEAM:-}
+      - STRIPE_PRICE_PRO_MONTHLY=${STRIPE_PRICE_PRO_MONTHLY:-}
+      - BILLING_RETURN_URL=${BILLING_RETURN_URL:-}
+      # La licence (2026-10-08) : connexion par un code envoyé par e-mail, sans
+      # mot de passe. ADMIN_EMAILS : les adresses de l'exploitant (séparées par
+      # des virgules), accès illimité une fois l'adresse vérifiée. TRIAL_DAYS :
+      # l'essai gratuit (vide → 14 ; 0 : aucun). LICENCE_PRICE_EUR_YEAR : le prix
+      # annuel affiché, en euros HT (indicatif ; vide → 4900) ; LICENCE_PRICE_EUR_MONTH
+      # le prix au mois, sans engagement, payé en ligne seulement (vide → 590 ;
+      # STRIPE_PRICE_PRO_MONTHLY ou STRIPE_CHECKOUT_URL_PRO_MONTHLY). MAIL_PROVIDER : brevo (avec
+      # MAIL_API_KEY et MAIL_FROM) ; vide → aucun envoi (la connexion répond 503,
+      # et avec PAID_ACCESS_ENABLED=true l'API refuse de démarrer).
+      - ADMIN_EMAILS=${ADMIN_EMAILS:-}
+      - TRIAL_DAYS=${TRIAL_DAYS:-}
+      - LICENCE_PRICE_EUR_YEAR=${LICENCE_PRICE_EUR_YEAR:-}
+      - LICENCE_PRICE_EUR_MONTH=${LICENCE_PRICE_EUR_MONTH:-}
+      - MAIL_PROVIDER=${MAIL_PROVIDER:-}
+      - MAIL_API_KEY=${MAIL_API_KEY:-}
+      - MAIL_FROM=${MAIL_FROM:-}
+      - MAIL_FROM_NAME=${MAIL_FROM_NAME:-}
+      # The coherence report's school calendar (OpenHolidays, cached a day):
+      # empty → on; false keeps the server offline for it (weekdays are then
+      # one "weekday", and the report says so).
+      - SCHOOL_HOLIDAYS_FETCH_ENABLED=${SCHOOL_HOLIDAYS_FETCH_ENABLED:-}
+      # Other public, keyless sources of the studios (territory dossier,
+      # holidays, weather, country context, the feeds' catalogs). Empty → the
+      # public instances named in config.js.
+      - OPENHOLIDAYS_URL=${OPENHOLIDAYS_URL:-}
+      - NAGER_URL=${NAGER_URL:-}
+      - WIKIDATA_SPARQL_URL=${WIKIDATA_SPARQL_URL:-}
+      - OPEN_METEO_URL=${OPEN_METEO_URL:-}
+      - WORLD_BANK_URL=${WORLD_BANK_URL:-}
+      - EXCHANGE_RATE_URL=${EXCHANGE_RATE_URL:-}
+      - MOBILITY_CATALOG_URL=${MOBILITY_CATALOG_URL:-}
+      - PAN_URL=${PAN_URL:-}
+      # Per-IP (per-account with a licence) caps of the remaining routes.
+      # Empty → the code's defaults: SQL 60 a minute, chat attachments 10 a
+      # minute, and a minute's coverage 60 (licensed 120), offer sheets 20
+      # (60) and coherence exports 20 (60).
+      - RATE_LIMIT_MAX_SQL=${RATE_LIMIT_MAX_SQL:-}
+      - RATE_LIMIT_MAX_ATTACHMENTS=${RATE_LIMIT_MAX_ATTACHMENTS:-}
+      - COVERAGE_RATE_LIMIT_MAX=${COVERAGE_RATE_LIMIT_MAX:-}
+      - BETA_COVERAGE_RATE_LIMIT_MAX=${BETA_COVERAGE_RATE_LIMIT_MAX:-}
+      - SPREADSHEET_RATE_LIMIT_MAX=${SPREADSHEET_RATE_LIMIT_MAX:-}
+      - BETA_SPREADSHEET_RATE_LIMIT_MAX=${BETA_SPREADSHEET_RATE_LIMIT_MAX:-}
+      - TRANSFORM_PREVIEW_RATE_LIMIT_MAX=${TRANSFORM_PREVIEW_RATE_LIMIT_MAX:-}
+      - BETA_TRANSFORM_PREVIEW_RATE_LIMIT_MAX=${BETA_TRANSFORM_PREVIEW_RATE_LIMIT_MAX:-}
+      - COHERENCE_EXPORT_RATE_LIMIT_MAX=${COHERENCE_EXPORT_RATE_LIMIT_MAX:-}
+      - BETA_COHERENCE_EXPORT_RATE_LIMIT_MAX=${BETA_COHERENCE_EXPORT_RATE_LIMIT_MAX:-}
+      # Chat attachments (CSV / TSV / XLSX imported as read-only tables).
+      # Empty → 5 MB, 5,000 rows, 64 columns, 3 tables, 500 characters a cell.
+      - CHAT_ATTACHMENT_MAX_BYTES=${CHAT_ATTACHMENT_MAX_BYTES:-}
+      - CHAT_ATTACHMENT_MAX_ROWS=${CHAT_ATTACHMENT_MAX_ROWS:-}
+      - CHAT_ATTACHMENT_MAX_COLS=${CHAT_ATTACHMENT_MAX_COLS:-}
+      - CHAT_ATTACHMENT_MAX_TABLES=${CHAT_ATTACHMENT_MAX_TABLES:-}
+      - CHAT_ATTACHMENT_MAX_CELL_CHARS=${CHAT_ATTACHMENT_MAX_CELL_CHARS:-}
+    volumes:
+      - uploads_data:/app/uploads
+      # projects.db (comptes utilisateurs, ACCOUNTS_ENABLED). Volume nommé,
+      # hors des uploads : le balayage des sessions ne le touche jamais. L'image
+      # crée /app/projects au nom d'appuser : un volume nommé neuf en hérite
+      # la propriété au premier montage (DEPLOYMENT.md, « User accounts »).
+      # Also the workspace, for everyone once CLIENT_TOKEN_SECRET is set:
+      # workspace/workspace.db and each project's frozen version zips,
+      # documents and delivery packages (DEPLOYMENT.md, "Backups").
+      - projects_data:/app/projects
+      # The public shares (SHARE_TTL_DAYS, 90 days): a volume of their own,
+      # so that a rebuild keeps them (DEPLOYMENT.md, "Backups").
+      - shares_data:/app/shares
+      # Volume bind sur beta/ — le journal d'usage de l'IA (chat-usage.jsonl)
+      # et celui des anciens codes d'accès (usage.jsonl, plus écrit), sur
+      # l'hôte, jamais dans l'image.
+      - ./GTFS-EXPRESS-API/beta:/app/beta
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://localhost:3004/health",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+    networks:
+      - internal
+
+  caddy:
+    logging: *default-logging
+    image: caddy:2-alpine
+    container_name: gtfs-caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - DOMAIN=${DOMAIN}
+      - STATS_USER=${STATS_USER}
+      - STATS_HASH=${STATS_HASH}
+      # true → Caddy serves a static English maintenance page (503) on every
+      # route. Toggle in .env.production.local then `up -d caddy` to apply.
+      - MAINTENANCE=${MAINTENANCE:-false}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+      - caddy_logs:/logs
+      - goaccess_html:/stats:ro
+    depends_on:
+      frontend:
+        condition: service_healthy
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    networks:
+      - internal
+
+  goaccess:
+    logging: *default-logging
+    image: allinurl/goaccess:1.9.3
+    container_name: gtfs-goaccess
+    volumes:
+      - caddy_logs:/logs:ro
+      - goaccess_html:/output
+    entrypoint: /bin/sh
+    command: >-
+      -c "until [ -f /logs/access.log ]; do echo 'Waiting for access.log...'; sleep 2; done &&
+      goaccess /logs/access.log
+      --log-format=CADDY
+      --real-time-html
+      --output=/output/index.html
+      --no-global-config
+      --ws-url=wss://${DOMAIN}:443/stats/
+      --addr=0.0.0.0
+      --port=7890"
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    networks:
+      - internal
+
+volumes:
+  uploads_data:
+  projects_data:
+  shares_data:
+  caddy_data:
+  caddy_config:
+  caddy_logs:
+  goaccess_html:
+
+networks:
+  internal:

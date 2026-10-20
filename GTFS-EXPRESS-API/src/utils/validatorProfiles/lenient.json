@@ -1,0 +1,21 @@
+{
+  "name": "lenient",
+  "title": "Lenient (legacy feeds)",
+  "description": "Demotes Fares v2 ERRORs to WARNINGs (allows incomplete fare definitions during migration to Fares v2) and demotes a handful of strict Best-Practice ERRORs that legacy feeds frequently violate. Intended for migrating historical feeds where the publisher needs to upload first and clean up incrementally.",
+  "promote_warning_to_error": false,
+  "promote_info_to_warning": false,
+  "overrides": {
+    "duplicate_fare_media": "info",
+    "fare_product_with_multiple_default_rider_categories": "warning",
+    "fare_transfer_rule_duration_limit_type_without_duration_limit": "warning",
+    "fare_transfer_rule_duration_limit_without_type": "warning",
+    "fare_transfer_rule_invalid_transfer_count": "warning",
+    "fare_transfer_rule_missing_transfer_count": "warning",
+    "fare_transfer_rule_with_forbidden_transfer_count": "warning",
+    "invalid_currency": "warning",
+    "invalid_currency_amount": "warning",
+    "route_color_contrast": "info",
+    "route_short_name_too_long": "info",
+    "duplicate_route_name": "info"
+  }
+}
