@@ -566,6 +566,13 @@ const validatorConcurrency = () => {
 
 let validatorsRunning = 0;
 const validatorQueue = [];
+// The validator's environment: what a JVM needs to run (its binaries, its options, a temporary directory, the
+// proxy it may sit behind), never the API's secrets — the model's and the payment provider's keys, the HMAC
+// secrets — which a child process has no use for (the SQL and PDF children are started the same way).
+const VALIDATOR_ENV_KEYS = ["PATH", "HOME", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "TZ", "JAVA_HOME", "JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy", "SYSTEMROOT", "SystemRoot", "WINDIR", "USERPROFILE"];
+const validatorEnv = () => Object.fromEntries(VALIDATOR_ENV_KEYS.filter((k) => process.env[k] !== undefined).map((k) => [k, process.env[k]]));
+const STDERR_KEEP = 4096;
+
 const withValidatorSlot = async (fn) => {
   if (validatorsRunning >= validatorConcurrency()) await new Promise((resolve) => validatorQueue.push(resolve));
   else validatorsRunning += 1;
@@ -616,13 +623,15 @@ const validateWithCanonical = async (inputPath, options = {}) => {
   const timeoutMs = Number(options.timeoutMs) || 120_000;
 
   await withValidatorSlot(() => new Promise((resolve, reject) => {
-    const proc = spawn(getJavaBin(), args, { stdio: ["ignore", "pipe", "pipe"] });
+    const proc = spawn(getJavaBin(), args, { stdio: ["ignore", "pipe", "pipe"], env: validatorEnv() });
+    // The end of stderr only: a validator logging without end must not grow the API's heap.
     let stderr = "";
     proc.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
+      stderr = `${stderr}${chunk}`.slice(-STDERR_KEEP);
     });
+    // SIGKILL: a JVM busy in a GC storm or a stuck thread can ignore SIGTERM, and its slot would never come back.
     const timer = setTimeout(() => {
-      proc.kill("SIGTERM");
+      proc.kill("SIGKILL");
       reject(new Error(`Canonical validator timed out after ${timeoutMs}ms`));
     }, timeoutMs);
     proc.on("error", (err) => {
@@ -797,5 +806,5 @@ module.exports = {
   enrichWithRowIds,
   applyImportAdjustments,
   assertReadyForProduction,
-  _internals: { withValidatorSlot, VALIDATOR_MAX_CONCURRENT, VALIDATOR_MARGIN_BYTES, parseJavaSize, validatorXmx, containerMemoryLimit, concurrencyFor, validatorConcurrency, javaArgs, _resetConcurrency: () => { concurrencyKnown = null; } },
+  _internals: { validatorEnv, withValidatorSlot, VALIDATOR_MAX_CONCURRENT, VALIDATOR_MARGIN_BYTES, parseJavaSize, validatorXmx, containerMemoryLimit, concurrencyFor, validatorConcurrency, javaArgs, _resetConcurrency: () => { concurrencyKnown = null; } },
 };

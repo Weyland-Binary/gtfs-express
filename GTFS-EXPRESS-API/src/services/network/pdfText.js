@@ -17,7 +17,10 @@
  * process, never the API. A PDF whose text cannot be read (a scan without a
  * text layer, a parser failure, the timeout) keeps no text: its quotes stay
  * "pdf" (unverifiable, acknowledged by name at delivery) and its sentences
- * are not measured.
+ * are not measured. At most PDF_CONCURRENCY children run at once (each a
+ * heap of HEAP_MB, plus tesseract's for a scan): the others wait their turn,
+ * their timeout counted from their start — a burst of uploads queues instead
+ * of taking the container's memory.
  *
  *   extractPdfText(buffer, { timeoutMs, maxPages, ocr }) → Promise<{ pages: [text], text, chars, ocr: null | { pages: [n], skipped, error? } } | { error }>
  *     `ocr.pages` the pages OCR read (1-based), `skipped` those past ocr.maxPages left to their empty text layer
@@ -28,6 +31,7 @@
 
 "use strict";
 
+const os = require("os");
 const path = require("path");
 const { spawn } = require("child_process");
 
@@ -40,7 +44,25 @@ const OCR_SETUP_MS = 10000;
 const OCR_PAGE_MS = 6000;
 const PAGE_BREAK = "\f";
 
-const extractPdfText = (buffer, { timeoutMs = TIMEOUT_MS, maxPages = 100, ocr = null } = {}) =>
+// Children at once: half the CPUs, one to three (a parse and an OCR are CPU-bound).
+const PDF_CONCURRENCY = Math.max(1, Math.min(3, Math.floor((os.cpus().length || 1) / 2)));
+let running = 0;
+const queue = [];
+const withSlot = async (fn) => {
+  if (running >= PDF_CONCURRENCY) await new Promise((resolve) => queue.push(resolve));
+  else running += 1;
+  try {
+    return await fn();
+  } finally {
+    const next = queue.shift();
+    if (next) next();
+    else running -= 1;
+  }
+};
+
+const extractPdfText = (buffer, options = {}) => withSlot(() => readInChild(buffer, options));
+
+const readInChild = (buffer, { timeoutMs = TIMEOUT_MS, maxPages = 100, ocr = null } = {}) =>
   new Promise((resolve) => {
     let out = "";
     let err = "";
@@ -99,4 +121,4 @@ const pageAt = (text, index) => {
   return page;
 };
 
-module.exports = { extractPdfText, pageAt, PAGE_BREAK, _internals: { WORKER, TIMEOUT_MS, HEAP_MB, OCR_SETUP_MS, OCR_PAGE_MS } };
+module.exports = { extractPdfText, pageAt, PAGE_BREAK, _internals: { WORKER, TIMEOUT_MS, HEAP_MB, OCR_SETUP_MS, OCR_PAGE_MS, PDF_CONCURRENCY, inFlight: () => ({ running, queued: queue.length }) } };

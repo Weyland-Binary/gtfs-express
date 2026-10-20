@@ -57,11 +57,15 @@ const inV4Block = (ip) => {
   });
 };
 
-/** The IPv4 address a well-known-prefix NAT64 address (64:ff9b::/96) embeds, else null. */
-const nat64Embedded = (a) => {
+/** An IPv6 literal's eight 16-bit groups (a dotted IPv4 tail read as the last two), else null. */
+const v6Groups = (a) => {
   let s = a;
   const dotted = /(\d+\.\d+\.\d+\.\d+)$/.exec(s);
-  if (dotted) s = `${s.slice(0, -dotted[1].length)}0:0`;
+  if (dotted) {
+    const o = dotted[1].split(".").map(Number);
+    if (o.some((x) => x > 255)) return null;
+    s = `${s.slice(0, -dotted[1].length)}${((o[0] << 8) | o[1]).toString(16)}:${((o[2] << 8) | o[3]).toString(16)}`;
+  }
   const halves = s.split("::");
   if (halves.length > 2) return null;
   const head = halves[0] ? halves[0].split(":") : [];
@@ -69,10 +73,17 @@ const nat64Embedded = (a) => {
   const fill = halves.length === 2 ? 8 - head.length - rest.length : 0;
   if (fill < 0) return null;
   const groups = [...head, ...Array(fill).fill("0"), ...rest].map((g) => (/^[0-9a-f]{1,4}$/.test(g) ? parseInt(g, 16) : NaN));
-  if (groups.length !== 8 || groups.some((g) => !Number.isFinite(g))) return null;
-  if (groups[0] !== 0x64 || groups[1] !== 0xff9b || groups.slice(2, 6).some((g) => g !== 0)) return null;
-  if (dotted) return dotted[1];
-  return [groups[6] >> 8, groups[6] & 255, groups[7] >> 8, groups[7] & 255].join(".");
+  return groups.length === 8 && groups.every((g) => Number.isFinite(g)) ? groups : null;
+};
+
+/** The IPv4 address two groups hold, dotted. */
+const v4Of = (hi, lo) => [hi >> 8, hi & 255, lo >> 8, lo & 255].join(".");
+
+/** The IPv4 address a well-known-prefix NAT64 address (64:ff9b::/96) embeds, else null. */
+const nat64Embedded = (a) => {
+  const g = v6Groups(a);
+  if (!g || g[0] !== 0x64 || g[1] !== 0xff9b || g.slice(2, 6).some((x) => x !== 0)) return null;
+  return v4Of(g[6], g[7]);
 };
 
 /** True when an IP literal is not a public unicast address. */
@@ -94,6 +105,18 @@ const isPrivateAddress = (ip) => {
     if (nat64) return inV4Block(nat64);
     if (/^64:ff9b:/.test(a)) return true; // other NAT64 prefixes (local-use 64:ff9b:1::/48…)
     if (/^2001:db8:/.test(a)) return true; // documentation
+    const g = v6Groups(a);
+    if (!g) return true;
+    // IPv4-compatible (::a.b.c.d, deprecated) and SIIT (::ffff:0:a.b.c.d): an IPv4 address in IPv6 clothing that a
+    // stack may route to the IPv4 host — 127.0.0.1 or the metadata service as well as any other.
+    if (g.slice(0, 6).every((x) => x === 0)) return true;
+    if (g.slice(0, 4).every((x) => x === 0) && g[4] === 0xffff && g[5] === 0) return true;
+    // 6to4 (2002::/16): the IPv4 address of its relay is groups 1–2, judged as that address.
+    if (g[0] === 0x2002) return inV4Block(v4Of(g[1], g[2]));
+    // Teredo (2001::/32): the client's IPv4 address is hidden (inverted) in it; no feed is served from a tunnel.
+    if (g[0] === 0x2001 && g[1] === 0) return true;
+    // Discard-only 100::/64.
+    if (g[0] === 0x100 && g.slice(1, 4).every((x) => x === 0)) return true;
     return false;
   }
   return true; // not an IP: callers pass addresses only
