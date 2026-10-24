@@ -1,0 +1,287 @@
+# Staging stack of GTFS Express — runs NEXT TO production on the same host
+# without touching it. Always used with its own project name:
+#
+#   docker compose -p gtfs-staging -f deploy/staging/docker-compose.staging.yml \
+#     --env-file deploy/staging/.env.staging up -d --build
+#
+# Isolation from production (docker-compose.prod.yml):
+#   • project name gtfs-staging: every volume and network is prefixed
+#     gtfs-staging_… (never uploads_data, projects_data, caddy_* of prod);
+#   • container names gtfs-staging-api / gtfs-staging-frontend (prod:
+#     gtfs-api, gtfs-frontend, gtfs-caddy, gtfs-goaccess);
+#   • its own network; no Caddy, no certificate, no port 80/443: the web is
+#     published on 127.0.0.1 only (STAGING_PORT, default 18080), reached
+#     through an SSH tunnel — nothing is exposed to the internet;
+#   • its own env file (deploy/staging/.env.staging), never the prod .env;
+#   • memory caps well below the prod API's, so a staging build or run
+#     cannot starve production.
+# The build context is the checkout this file lives in (a separate
+# directory from production's, e.g. /opt/gtfs-staging on the branch further).
+
+name: gtfs-staging
+
+# Every variable the API's code reads is passed below (empty means the code's
+# default) or named, with its reason, in the allowlist of
+# GTFS-EXPRESS-API/src/__tests__/deployEnvCoverage.test.js — the same rule as
+# production's file. Docker's own logs of each container are rotated: five
+# files of 10 MB at most.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  frontend:
+    logging: *default-logging
+    build:
+      context: ../../GTFS-EXPRESS-WEB
+      args:
+        - VITE_API_BASE_URL=/api/gtfs
+        - VITE_BASEMAP_PROVIDER=${BASEMAP_PROVIDER:-}
+        - VITE_MAPTILER_KEY=${MAPTILER_KEY:-}
+    container_name: gtfs-staging-frontend
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      # Loopback only: open it from your machine with an SSH tunnel.
+      - "127.0.0.1:${STAGING_PORT:-18080}:80"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/nginx-health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    networks:
+      - staging
+
+  api:
+    logging: *default-logging
+    build:
+      context: ../../GTFS-EXPRESS-API
+    container_name: gtfs-staging-api
+    environment:
+      - NODE_ENV=production
+      - PORT=3004
+      - ALLOWED_ORIGINS=http://127.0.0.1:${STAGING_PORT:-18080},http://localhost:${STAGING_PORT:-18080}
+      # Where the API writes, pinned to the staging volumes below.
+      - GTFS_UPLOAD_DIR=/app/uploads
+      - PROJECTS_DIR=/app/projects
+      - WORKSPACE_DIR=/app/projects/workspace
+      - SHARES_DIR=/app/shares
+      - BETA_USAGE_PATH=/app/beta/usage.jsonl
+      - NL2SQL_CHAT_USAGE_PATH=/app/beta/chat-usage.jsonl
+      # One proxy in front of the API here (the frontend's Nginx; the SSH
+      # tunnel is not one): empty → 1. Days the JSONL logs keep a line:
+      # empty → 365, 0 keeps everything.
+      - TRUST_PROXY_HOPS=${TRUST_PROXY_HOPS:-}
+      - LOG_RETENTION_DAYS=${LOG_RETENTION_DAYS:-}
+      - MAX_SESSIONS=${MAX_SESSIONS:-8}
+      # Heap of the import's child process (MB). 512 = the 1 GB limit − the API's
+      # heap in use (about 256 MB) − 256 MB of margin; a validator JVM (512 MB)
+      # running beside an import goes beyond it on this one-tester server.
+      - IMPORT_CHILD_HEAP_MB=${IMPORT_CHILD_HEAP_MB:-512}
+      - IMPORT_QUEUE_MAX=${IMPORT_QUEUE_MAX:-4}
+      - MAX_KEYLESS_SESSIONS=${MAX_KEYLESS_SESSIONS:-}
+      - SESSION_CLEANUP_AGE_MS=${SESSION_CLEANUP_AGE_MS:-3600000}
+      # The staging admin token (grants the studio entitlement to your account).
+      - ADMIN_TOKEN=${ADMIN_TOKEN:-}
+      - IP_HASH_SECRET=${IP_HASH_SECRET:-}
+      - CLIENT_TOKEN_SECRET=${CLIENT_TOKEN_SECRET:-}
+      # What staging is for: accounts on.
+      - ACCOUNTS_ENABLED=${ACCOUNTS_ENABLED:-true}
+      - RATE_LIMIT_MAX_AUTH=${RATE_LIMIT_MAX_AUTH:-}
+      # The workspace (on once CLIENT_TOKEN_SECRET is set), its retention and
+      # caps, and the shares' lifetime: empty → the code's defaults, as in
+      # production.
+      - WORKSPACE_ENABLED=${WORKSPACE_ENABLED:-}
+      - PROJECTS_RETENTION_DAYS=${PROJECTS_RETENTION_DAYS:-}
+      - ACCOUNT_PROJECTS_RETENTION_DAYS=${ACCOUNT_PROJECTS_RETENTION_DAYS:-}
+      - WORKSPACE_MAX_PROJECTS=${WORKSPACE_MAX_PROJECTS:-}
+      - WORKSPACE_MAX_VERSIONS=${WORKSPACE_MAX_VERSIONS:-}
+      - WORKSPACE_MAX_VERSION_BYTES=${WORKSPACE_MAX_VERSION_BYTES:-}
+      - SNAPSHOT_EDITS=${SNAPSHOT_EDITS:-}
+      - SNAPSHOT_IDLE_MINUTES=${SNAPSHOT_IDLE_MINUTES:-}
+      - WORKSPACE_RATE_LIMIT_MAX=${WORKSPACE_RATE_LIMIT_MAX:-}
+      - SHARE_TTL_DAYS=${SHARE_TTL_DAYS:-}
+      # Contact, model provider's name and offers, as the web shows them.
+      - SUPPORT_EMAIL=${SUPPORT_EMAIL:-}
+      - REQUEST_ACCESS_URL=${REQUEST_ACCESS_URL:-}
+      - PLAN_CONTACT_EMAIL=${PLAN_CONTACT_EMAIL:-}
+      - MODEL_PROVIDER_NAME=${MODEL_PROVIDER_NAME:-}
+      # Les mentions légales (LCEN art. 6-III) que la page /conditions affiche :
+      # l'éditeur (nom ou raison sociale, forme et capital, siège, RCS ou SIREN,
+      # TVA, directeur de la publication, e-mail — à défaut SUPPORT_EMAIL —,
+      # téléphone) et l'hébergeur (nom, adresse, téléphone, sur une ligne). Vide :
+      # la page dit que l'exploitant ne l'a pas renseigné. SOURCE_CODE_URL : où
+      # le code source de la version en service est offert (AGPL §13).
+      - LEGAL_PUBLISHER=${LEGAL_PUBLISHER:-}
+      - LEGAL_STATUS=${LEGAL_STATUS:-}
+      - LEGAL_ADDRESS=${LEGAL_ADDRESS:-}
+      - LEGAL_REGISTRATION=${LEGAL_REGISTRATION:-}
+      - LEGAL_VAT=${LEGAL_VAT:-}
+      - LEGAL_DIRECTOR=${LEGAL_DIRECTOR:-}
+      - LEGAL_EMAIL=${LEGAL_EMAIL:-}
+      - LEGAL_PHONE=${LEGAL_PHONE:-}
+      - LEGAL_HOST=${LEGAL_HOST:-}
+      - SOURCE_CODE_URL=${SOURCE_CODE_URL:-}
+      - STRIPE_CHECKOUT_URL_PRO=${STRIPE_CHECKOUT_URL_PRO:-}
+      - STRIPE_CHECKOUT_URL_PRO_MONTHLY=${STRIPE_CHECKOUT_URL_PRO_MONTHLY:-}
+      # The paid offer: on in staging (accounts are on), so that the paywall,
+      # the plans and the subscription are tried before production; the
+      # administrator's grants keep the testers working. Stripe in test mode
+      # (sk_test_…, the test prices, the webhook's whsec_…) or nothing: the
+      # plans then fall back to the operator's address.
+      - PAID_ACCESS_ENABLED=${PAID_ACCESS_ENABLED:-true}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
+      - STRIPE_PRICE_PRO=${STRIPE_PRICE_PRO:-}
+      - STRIPE_PRICE_TEAM=${STRIPE_PRICE_TEAM:-}
+      - STRIPE_PRICE_PRO_MONTHLY=${STRIPE_PRICE_PRO_MONTHLY:-}
+      - BILLING_RETURN_URL=${BILLING_RETURN_URL:-}
+      # The licence: signing in is a code sent by e-mail. Staging writes the
+      # message to the API's log by default (MAIL_PROVIDER=log: read the code
+      # with `docker compose logs api`); brevo with MAIL_API_KEY and MAIL_FROM
+      # sends it. ADMIN_EMAILS: your own address, every right without an end.
+      - ADMIN_EMAILS=${ADMIN_EMAILS:-}
+      - TRIAL_DAYS=${TRIAL_DAYS:-}
+      - LICENCE_PRICE_EUR_YEAR=${LICENCE_PRICE_EUR_YEAR:-}
+      - LICENCE_PRICE_EUR_MONTH=${LICENCE_PRICE_EUR_MONTH:-}
+      - MAIL_PROVIDER=${MAIL_PROVIDER:-log}
+      - MAIL_API_KEY=${MAIL_API_KEY:-}
+      - MAIL_FROM=${MAIL_FROM:-}
+      - MAIL_FROM_NAME=${MAIL_FROM_NAME:-}
+      # Rate limits: empty → the code's defaults.
+      - RATE_LIMIT_WINDOW_MS=${RATE_LIMIT_WINDOW_MS:-}
+      - RATE_LIMIT_MAX_REQUESTS=${RATE_LIMIT_MAX_REQUESTS:-}
+      - RATE_LIMIT_MAX_UPLOADS=${RATE_LIMIT_MAX_UPLOADS:-}
+      - RATE_LIMIT_SAMPLE_WINDOW_MS=${RATE_LIMIT_SAMPLE_WINDOW_MS:-}
+      - RATE_LIMIT_MAX_SAMPLES=${RATE_LIMIT_MAX_SAMPLES:-}
+      - RATE_LIMIT_MAX_REVALIDATE=${RATE_LIMIT_MAX_REVALIDATE:-}
+      - RATE_LIMIT_MAX_DEMAND=${RATE_LIMIT_MAX_DEMAND:-}
+      - RATE_LIMIT_MAX_SQL=${RATE_LIMIT_MAX_SQL:-}
+      - RATE_LIMIT_MAX_ATTACHMENTS=${RATE_LIMIT_MAX_ATTACHMENTS:-}
+      - TRANSFORM_PREVIEW_RATE_LIMIT_MAX=${TRANSFORM_PREVIEW_RATE_LIMIT_MAX:-}
+      - COHERENCE_EXPORT_RATE_LIMIT_MAX=${COHERENCE_EXPORT_RATE_LIMIT_MAX:-}
+      - DIFF_RATE_LIMIT_MAX=${DIFF_RATE_LIMIT_MAX:-}
+      - BETA_RATE_LIMIT_MAX_REQUESTS=${BETA_RATE_LIMIT_MAX_REQUESTS:-}
+      - BETA_RATE_LIMIT_MAX_UPLOADS=${BETA_RATE_LIMIT_MAX_UPLOADS:-}
+      - BETA_RATE_LIMIT_MAX_SQL=${BETA_RATE_LIMIT_MAX_SQL:-}
+      - BETA_RATE_LIMIT_MAX_REVALIDATE=${BETA_RATE_LIMIT_MAX_REVALIDATE:-}
+      - BETA_RATE_LIMIT_MAX_DEMAND=${BETA_RATE_LIMIT_MAX_DEMAND:-}
+      - BETA_TRANSFORM_PREVIEW_RATE_LIMIT_MAX=${BETA_TRANSFORM_PREVIEW_RATE_LIMIT_MAX:-}
+      - BETA_COHERENCE_EXPORT_RATE_LIMIT_MAX=${BETA_COHERENCE_EXPORT_RATE_LIMIT_MAX:-}
+      - DEMAND_MAX_CONCURRENT=${DEMAND_MAX_CONCURRENT:-}
+      # The public sources and the models' settings: empty → the code's defaults
+      # (the public instances named in config.js).
+      # The Change Studio's direct mode (a brief draft): the agent's and the reviewer's models, its rounds.
+      - DIRECT_AGENT_MODEL=${DIRECT_AGENT_MODEL:-}
+      - DIRECT_REVIEWER_MODEL=${DIRECT_REVIEWER_MODEL:-}
+      - DIRECT_MAX_ROUNDS=${DIRECT_MAX_ROUNDS:-}
+      - PLANNER_FREE_MODEL=${PLANNER_FREE_MODEL:-}
+      - NETWORK_PLANNER_EFFORT=${NETWORK_PLANNER_EFFORT:-}
+      - AI_TURN_MAX_WEIGHTED_TOKENS=${AI_TURN_MAX_WEIGHTED_TOKENS:-}
+      - PDF_OCR_ENABLED=${PDF_OCR_ENABLED:-}
+      - PDF_OCR_MAX_PAGES=${PDF_OCR_MAX_PAGES:-}
+      - GTFS_VALIDATOR_JAVA_XMX=${GTFS_VALIDATOR_JAVA_XMX:-}
+      - GTFS_VALIDATOR_MAX_CONCURRENT=${GTFS_VALIDATOR_MAX_CONCURRENT:-}
+      - NETWORK_ROUTING_ENABLED=${NETWORK_ROUTING_ENABLED:-}
+      - NETWORK_ROUTING_CURB=${NETWORK_ROUTING_CURB:-}
+      - OSRM_URL=${OSRM_URL:-}
+      - NOMINATIM_URL=${NOMINATIM_URL:-}
+      - SCHOOL_HOLIDAYS_FETCH_ENABLED=${SCHOOL_HOLIDAYS_FETCH_ENABLED:-}
+      - OPENHOLIDAYS_URL=${OPENHOLIDAYS_URL:-}
+      - NAGER_URL=${NAGER_URL:-}
+      - MOBILITY_CATALOG_URL=${MOBILITY_CATALOG_URL:-}
+      - PAN_URL=${PAN_URL:-}
+      - DEMAND_PROVIDERS_ENABLED=${DEMAND_PROVIDERS_ENABLED:-}
+      - GEO_API_URL=${GEO_API_URL:-}
+      - RECHERCHE_ENTREPRISES_URL=${RECHERCHE_ENTREPRISES_URL:-}
+      - EDUCATION_API_URL=${EDUCATION_API_URL:-}
+      - INSEE_GRID_DIR=${INSEE_GRID_DIR:-}
+      - MOBPRO_FILE=${MOBPRO_FILE:-}
+      - MOBSCO_FILE=${MOBSCO_FILE:-}
+      - DEMAND_CACHE_DIR=${DEMAND_CACHE_DIR:-}
+      - CHAT_ATTACHMENT_MAX_BYTES=${CHAT_ATTACHMENT_MAX_BYTES:-}
+      - CHAT_ATTACHMENT_MAX_ROWS=${CHAT_ATTACHMENT_MAX_ROWS:-}
+      - CHAT_ATTACHMENT_MAX_COLS=${CHAT_ATTACHMENT_MAX_COLS:-}
+      - CHAT_ATTACHMENT_MAX_TABLES=${CHAT_ATTACHMENT_MAX_TABLES:-}
+      - CHAT_ATTACHMENT_MAX_CELL_CHARS=${CHAT_ATTACHMENT_MAX_CELL_CHARS:-}
+      # The AI (planners, objectives extraction): off unless a key is set in .env.staging.
+      - NL2SQL_ENABLED=${NL2SQL_ENABLED:-}
+      - NL2SQL_MODEL=${NL2SQL_MODEL:-}
+      - NL2SQL_CHAT_ENABLED=${NL2SQL_CHAT_ENABLED:-false}
+      - NL2SQL_CHAT_MODEL=${NL2SQL_CHAT_MODEL:-}
+      - NL2SQL_FREE_MESSAGES_PER_SESSION=${NL2SQL_FREE_MESSAGES_PER_SESSION:-}
+      - NL2SQL_FREE_MESSAGES_PER_IP_DAY=${NL2SQL_FREE_MESSAGES_PER_IP_DAY:-}
+      - NL2SQL_CHAT_RATE_LIMIT=${NL2SQL_CHAT_RATE_LIMIT:-}
+      - NL2SQL_RATE_LIMIT=${NL2SQL_RATE_LIMIT:-}
+      - NL2SQL_DAILY_LIMIT_PER_CODE=${NL2SQL_DAILY_LIMIT_PER_CODE:-}
+      - BETA_NL2SQL_RATE_LIMIT=${BETA_NL2SQL_RATE_LIMIT:-}
+      - BETA_NL2SQL_DAILY_LIMIT_PER_CODE=${BETA_NL2SQL_DAILY_LIMIT_PER_CODE:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # Where the model runs (empty: the direct API with the key above) and
+      # the Bedrock / Vertex credentials, empty unless set in .env.staging.
+      - LLM_PROVIDER=${LLM_PROVIDER:-}
+      - LLM_AWS_REGION=${LLM_AWS_REGION:-}
+      - LLM_VERTEX_PROJECT_ID=${LLM_VERTEX_PROJECT_ID:-}
+      - LLM_VERTEX_REGION=${LLM_VERTEX_REGION:-}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN:-}
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
+      # A small daily cap on AI requests (all users of the staging server together).
+      - NL2SQL_DAILY_BUDGET_TOTAL=${NL2SQL_DAILY_BUDGET_TOTAL:-60}
+      # The trials' share of it, and the trial's own daily cap per account.
+      - NL2SQL_DAILY_BUDGET_UNPAID=${NL2SQL_DAILY_BUDGET_UNPAID:-20}
+      - TRIAL_AI_DAILY_LIMIT=${TRIAL_AI_DAILY_LIMIT:-}
+      - TRIAL_AI_BUDGET_EUR=${TRIAL_AI_BUDGET_EUR:-}
+      - LICENCE_AI_BUDGET_EUR_MONTH=${LICENCE_AI_BUDGET_EUR_MONTH:-}
+      - TESTER_AI_BUDGET_USD_MONTH=${TESTER_AI_BUDGET_USD_MONTH:-}
+      # The reading companion: questions per month for a signed-in account without the licence (empty: 20;
+      # 0: off) and its envelope in euros per month (empty: 3).
+      - READER_AI_QUESTIONS_MONTH=${READER_AI_QUESTIONS_MONTH:-}
+      - READER_AI_BUDGET_EUR_MONTH=${READER_AI_BUDGET_EUR_MONTH:-}
+      - AI_USD_PER_EUR=${AI_USD_PER_EUR:-}
+      # What all the server's model calls may cost over a UTC day, in euros (empty: 100; 0: off).
+      - AI_DAILY_BUDGET_EUR_TOTAL=${AI_DAILY_BUDGET_EUR_TOTAL:-}
+    volumes:
+      - staging_uploads:/app/uploads
+      - staging_projects:/app/projects
+      # The public shares, and beta/ (the AI use log): a named
+      # volume here. It starts empty (beta/ is not in git and .dockerignore
+      # keeps its files out of the image) and owned by the API user; a code
+      # file is copied in by hand (deploy/staging/README.fr.md).
+      - staging_shares:/app/shares
+      - staging_beta:/app/beta
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3004/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    networks:
+      - staging
+
+volumes:
+  staging_uploads:
+  staging_projects:
+  staging_shares:
+  staging_beta:
+
+networks:
+  staging:

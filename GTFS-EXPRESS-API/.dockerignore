@@ -1,0 +1,24 @@
+node_modules
+npm-debug.log*
+.env
+.env.local
+.env.production
+.env.example
+uploads/
+.git
+.gitignore
+README.md
+DESCRIPTION.md
+Dockerfile
+docker-compose.yml
+yarn.lock
+.pnp.*
+.yarn/
+
+# Beta gate — the codes (secret) and every use log and archive (personal
+# data kept LOG_RETENTION_DAYS), must NEVER be baked into the image: in
+# production beta/ is the live folder bind-mounted from the host (see
+# docker-compose.prod.yml), and a file copied into an image layer would
+# outlive the retention sweep and the backups. Only the example may enter.
+beta/*
+!beta/codes.example.json
