@@ -1,0 +1,77 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+
+# Yarn (unused — npm only)
+yarn.lock
+yarn-debug.log*
+yarn-error.log*
+.pnp.*
+.yarn/
+
+# Environment variables
+.env
+.env.local
+.env.production
+.env.production.local
+.env*.local
+
+# Beta access codes + runtime usage logs (never commit — runtime data)
+GTFS-EXPRESS-API/beta/
+
+# Local SSH secrets (never commit)
+credentials.txt
+id_ed25519*
+
+# Build outputs
+dist/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+PRODUCT_OVERVIEW.md
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Dev notes (internal roadmap — not part of the project)
+TODO.txt
+docs/
+# …but the OpenAPI contract is part of the project (served by the API,
+# coverage-tested by openapiCoverage.test.js) — re-include it explicitly.
+!GTFS-EXPRESS-API/docs/
+GTFS-EXPRESS-API/docs/*
+!GTFS-EXPRESS-API/docs/openapi.yaml
+!GTFS-EXPRESS-API/docs/INTEGRATION.md
+!GTFS-EXPRESS-API/docs/GUARANTEES.md
+
+# HTTP client
+requests.http
+
+# Local-only Docker Compose overrides (e.g. disabling the beta gate for local
+# testing). MUST stay out of the repo — never applies to prod (-f prod file).
+docker-compose.override.yml
+docker-compose.override.yaml
+
+# Confidential evaluation cases are versioned in the private repository only (never public);
+# their per-case working folders (downloaded feeds, about 1 GB) stay on each machine
+eval/private/scratch/
+
+# Staging stack secrets (deploy/staging/.env.staging.example is the template)
+deploy/staging/.env.staging
