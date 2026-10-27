@@ -33,7 +33,7 @@
   },
   "dependencies": {
     "@anthropic-ai/bedrock-sdk": "0.34.2",
-    "@anthropic-ai/sdk": "^0.128.0",
+    "@anthropic-ai/sdk": "^1.3.0",
     "@anthropic-ai/vertex-sdk": "0.20.2",
     "@napi-rs/canvas": "^1.0.10",
     "archiver": "^7.0.1",
