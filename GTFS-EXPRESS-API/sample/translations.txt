@@ -1,0 +1,91 @@
+table_name,field_name,language,translation,record_id,record_sub_id,field_value
+agency,agency_name,fr,Réseau de démonstration de New York,NYCDEMO,,
+agency,agency_name,es,Red de Tránsito Demo de Nueva York,NYCDEMO,,
+feed_info,feed_publisher_name,fr,Studio de transit synthétique,,,Synthetic Transit Studio
+feed_info,feed_publisher_name,es,Estudio de Tránsito Sintético,,,Synthetic Transit Studio
+routes,route_long_name,fr,Broadway Local Inwood ↔ Centre du commerce mondial,S1,,
+routes,route_long_name,es,Broadway Local Inwood ↔ Centro de Comercio Mundial,S1,,
+routes,route_long_name,fr,Astoria ↔ Centre de Brooklyn,S2,,
+routes,route_long_name,es,Astoria ↔ Centro de Brooklyn,S2,,
+routes,route_long_name,fr,Centre de Brooklyn ↔ Coney Island,S3,,
+routes,route_long_name,es,Centro de Brooklyn ↔ Coney Island,S3,,
+routes,route_long_name,fr,Navette aéroport LaGuardia SBS,B1,,
+routes,route_long_name,es,Enlace aeropuerto LaGuardia SBS,B1,,
+routes,route_long_name,fr,Traversée de la 14e Rue,B2,,
+routes,route_long_name,es,Travesía de la Calle 14,B2,,
+routes,route_long_name,fr,Front de mer de Brooklyn,B4,,
+routes,route_long_name,es,Frente Marítimo de Brooklyn,B4,,
+routes,route_long_name,fr,Connexion aéroport JFK,B5,,
+routes,route_long_name,es,Conexión aeropuerto JFK,B5,,
+routes,route_long_name,fr,Navette Central Park,B6,,
+routes,route_long_name,es,Lanzadera Central Park,B6,,
+routes,route_long_name,fr,Ligne de nuit Manhattan ↔ Coney Island,N1,,
+routes,route_long_name,es,Servicio nocturno Manhattan ↔ Coney Island,N1,,
+routes,route_long_name,fr,Ferry de l'East River,F1,,
+routes,route_long_name,es,Ferry del East River,F1,,
+stops,stop_name,fr,Inwood — 207e Rue,INW_S,,
+stops,stop_name,es,Inwood — Calle 207,INW_S,,
+stops,stop_name,fr,Harlem — 125e Rue,HAR_S,,
+stops,stop_name,es,Harlem — Calle 125,HAR_S,,
+stops,stop_name,fr,72e Rue,UWS_S,,
+stops,stop_name,es,Calle 72,UWS_S,,
+stops,stop_name,fr,Times Square — 42e Rue,TSQ_S,,
+stops,stop_name,es,Times Square — Calle 42,TSQ_S,,
+stops,stop_name,fr,Grand Central,GCT_S,,
+stops,stop_name,es,Grand Central,GCT_S,,
+stops,stop_name,fr,Centre du commerce mondial,WTC_S,,
+stops,stop_name,es,Centro de Comercio Mundial,WTC_S,,
+stops,stop_name,fr,Astoria-Ditmars,AST_S,,
+stops,stop_name,es,Astoria-Ditmars,AST_S,,
+stops,stop_name,fr,Long Island City,LIC_S,,
+stops,stop_name,es,Long Island City,LIC_S,,
+stops,stop_name,fr,Centre de Brooklyn,DBK_S,,
+stops,stop_name,es,Centro de Brooklyn,DBK_S,,
+stops,stop_name,fr,Williamsburg,WBG_S,,
+stops,stop_name,es,Williamsburg,WBG_S,,
+stops,stop_name,fr,Parc Prospect,PPK_S,,
+stops,stop_name,es,Parque Prospect,PPK_S,,
+stops,stop_name,fr,Coney Island — Avenue Stillwell,CNY_S,,
+stops,stop_name,es,Coney Island — Avenida Stillwell,CNY_S,,
+stops,stop_name,fr,Aéroport LaGuardia — Terminal B,LGA_B,,
+stops,stop_name,es,Aeropuerto LaGuardia — Terminal B,LGA_B,,
+stops,stop_name,fr,Aéroport JFK — Terminal 8,JFK_B,,
+stops,stop_name,es,Aeropuerto JFK — Terminal 8,JFK_B,,
+stops,stop_name,fr,Wall Street — Quai 11,WSL_F,,
+stops,stop_name,es,Wall Street — Muelle 11,WSL_F,,
+stops,stop_name,fr,DUMBO — Ferry Fulton,DUM_F,,
+stops,stop_name,es,DUMBO — Ferry Fulton,DUM_F,,
+stops,stop_name,fr,Ferry de la 34e Rue Est,34F,,
+stops,stop_name,es,Ferry de la Calle 34 Este,34F,,
+trips,trip_headsign,fr,Centre du commerce mondial,,,World Trade Center
+trips,trip_headsign,es,Centro de Comercio Mundial,,,World Trade Center
+trips,trip_headsign,fr,Inwood — 207e Rue,,,Inwood-207 St
+trips,trip_headsign,es,Inwood — Calle 207,,,Inwood-207 St
+trips,trip_headsign,fr,Centre de Brooklyn,,,Downtown Brooklyn
+trips,trip_headsign,es,Centro de Brooklyn,,,Downtown Brooklyn
+trips,trip_headsign,fr,Astoria-Ditmars,,,Astoria-Ditmars
+trips,trip_headsign,es,Astoria-Ditmars,,,Astoria-Ditmars
+trips,trip_headsign,fr,Coney Island — Avenue Stillwell,,,Coney Island-Stillwell Av
+trips,trip_headsign,es,Coney Island — Avenida Stillwell,,,Coney Island-Stillwell Av
+trips,trip_headsign,fr,Times Square — 42e Rue,,,Times Sq-42 St
+trips,trip_headsign,es,Times Square — Calle 42,,,Times Sq-42 St
+trips,trip_headsign,fr,Grand Central,,,Grand Central
+trips,trip_headsign,es,Grand Central,,,Grand Central
+trips,trip_headsign,fr,Long Island City,,,Long Island City
+trips,trip_headsign,es,Long Island City,,,Long Island City
+trips,trip_headsign,fr,Aéroport LaGuardia — Terminal B,,,LaGuardia Terminal B
+trips,trip_headsign,es,Aeropuerto LaGuardia — Terminal B,,,LaGuardia Terminal B
+trips,trip_headsign,fr,Aéroport JFK — Terminal 8,,,JFK Terminal 8
+trips,trip_headsign,es,Aeropuerto JFK — Terminal 8,,,JFK Terminal 8
+trips,trip_headsign,fr,Wall Street — Quai 11,,,Wall St / Pier 11
+trips,trip_headsign,es,Wall Street — Muelle 11,,,Wall St / Pier 11
+trips,trip_headsign,fr,Ferry de la 34e Rue Est,,,East 34 St Ferry
+trips,trip_headsign,es,Ferry de la Calle 34 Este,,,East 34 St Ferry
+trips,trip_headsign,fr,Harlem — 125e Rue,,,Harlem-125 St
+trips,trip_headsign,es,Harlem — Calle 125,,,Harlem-125 St
+trips,trip_headsign,fr,Chelsea Market,,,Chelsea Market
+trips,trip_headsign,es,Chelsea Market,,,Chelsea Market
+trips,trip_headsign,fr,Lower East Side,,,Lower East Side
+trips,trip_headsign,es,Lower East Side,,,Lower East Side
+trips,trip_headsign,fr,Hudson Yards,,,Hudson Yards
+trips,trip_headsign,es,Hudson Yards,,,Hudson Yards

@@ -1,0 +1,174 @@
+const { validateSessionId } = require("./sessionManager");
+const { refuseInvalidSession, refuseSessionNotFound } = require("./sessionManager");
+// The reader's lens on a simulated draft (X-View-Preview), else the working copy.
+const { readDbFor } = require("./transform/previewLens");
+
+/**
+ * The service_ids active on a YYYYMMDD date under calendar and calendar_dates.
+ * Takes plain arrays, so DB rows and test fixtures serve alike.
+ */
+const getServiceIdsForDate = (date, calendar, calendarDates) => {
+  const dateInt = parseInt(date, 10);
+  // Date.UTC + getUTCDay keeps the weekday independent of the server's
+  // timezone: new Date("YYYY-MM-DD").getDay() parses as UTC midnight but
+  // reads the weekday in local time, shifting it back one day on any
+  // UTC-negative host.
+  const year = parseInt(date.slice(0, 4), 10);
+  const month = parseInt(date.slice(4, 6), 10);
+  const day = parseInt(date.slice(6, 8), 10);
+  const utcDate = new Date(Date.UTC(year, month - 1, day));
+  // Date.UTC silently normalises out-of-range fields (20260732 → Aug 1),
+  // which would fabricate a weekday for a nonexistent date. Reject inputs
+  // that do not round-trip so they keep resolving to "no service".
+  const isRealDate =
+    utcDate.getUTCFullYear() === year &&
+    utcDate.getUTCMonth() === month - 1 &&
+    utcDate.getUTCDate() === day;
+  const daysOfWeek = [
+    "sunday",
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+  ];
+  const dayOfWeekStr = isRealDate ? daysOfWeek[utcDate.getUTCDay()] : undefined;
+
+  let serviceIds = calendar
+    .filter((service) => {
+      const startDateInt = parseInt(service.start_date, 10);
+      const endDateInt = parseInt(service.end_date, 10);
+      return (
+        startDateInt <= dateInt &&
+        endDateInt >= dateInt &&
+        String(service[dayOfWeekStr]) === "1"
+      );
+    })
+    .map((service) => service.service_id);
+
+  const exceptionServiceIds = calendarDates
+    .filter(
+      (service) =>
+        parseInt(service.date, 10) === dateInt &&
+        String(service.exception_type) === "1",
+    )
+    .map((service) => service.service_id);
+
+  const removedServiceIds = calendarDates
+    .filter(
+      (service) =>
+        parseInt(service.date, 10) === dateInt &&
+        String(service.exception_type) === "2",
+    )
+    .map((service) => service.service_id);
+
+  return serviceIds
+    .concat(exceptionServiceIds)
+    .filter((id) => !removedServiceIds.includes(id));
+};
+
+/** The request's read DB handle, or null once the refusal is sent. */
+const requireReadDb = (req, res) => {
+  const sessionId = req.headers["x-session-id"];
+  if (!sessionId || !validateSessionId(sessionId)) {
+    refuseInvalidSession(res);
+    return null;
+  }
+  const db = readDbFor(req, res, sessionId);
+  if (db === false) return null;
+  if (!db) {
+    refuseSessionNotFound(res);
+    return null;
+  }
+  return db;
+};
+
+const getCalendarForRoute = async (req, res) => {
+  try {
+    const db = requireReadDb(req, res);
+    if (!db) return;
+    const { route_id } = req.params;
+
+    const calendarForRoute = db
+      .prepare(
+        `SELECT DISTINCT c.service_id, c.monday, c.tuesday, c.wednesday,
+                c.thursday, c.friday, c.saturday, c.sunday,
+                c.start_date, c.end_date
+           FROM calendar c
+           JOIN trips t ON t.service_id = c.service_id
+          WHERE t.route_id = ?`,
+      )
+      .all(route_id);
+
+    res.json(calendarForRoute);
+  } catch (err) {
+    console.error("getCalendarForRoute error:", err.message);
+    res.status(500).json({ error: "Error fetching calendar." });
+  }
+};
+
+const getCalendarDatesForRoute = async (req, res) => {
+  try {
+    const db = requireReadDb(req, res);
+    if (!db) return;
+    const { route_id } = req.params;
+
+    const calendarDatesForRoute = db
+      .prepare(
+        `SELECT DISTINCT cd.service_id, cd.date, cd.exception_type
+           FROM calendar_dates cd
+           JOIN trips t ON t.service_id = cd.service_id
+          WHERE t.route_id = ?`,
+      )
+      .all(route_id);
+
+    res.json(calendarDatesForRoute);
+  } catch (err) {
+    console.error("getCalendarDatesForRoute error:", err.message);
+    res.status(500).json({ error: "Error fetching calendar dates." });
+  }
+};
+
+const getCalendarByServiceId = async (req, res) => {
+  try {
+    const db = requireReadDb(req, res);
+    if (!db) return;
+    const { service_id } = req.params;
+
+    const entry = db
+      .prepare("SELECT * FROM calendar WHERE service_id = ?")
+      .get(service_id);
+    if (!entry) {
+      return res.status(404).json({ error: "Calendar not found." });
+    }
+    res.json(entry);
+  } catch (err) {
+    console.error("getCalendarByServiceId error:", err.message);
+    res.status(500).json({ error: "Error fetching calendar." });
+  }
+};
+
+const getCalendarDatesByServiceId = async (req, res) => {
+  try {
+    const db = requireReadDb(req, res);
+    if (!db) return;
+    const { service_id } = req.params;
+
+    const entries = db
+      .prepare("SELECT * FROM calendar_dates WHERE service_id = ?")
+      .all(service_id);
+    res.json(entries);
+  } catch (err) {
+    console.error("getCalendarDatesByServiceId error:", err.message);
+    res.status(500).json({ error: "Error fetching calendar dates." });
+  }
+};
+
+module.exports = {
+  getServiceIdsForDate,
+  getCalendarForRoute,
+  getCalendarDatesForRoute,
+  getCalendarByServiceId,
+  getCalendarDatesByServiceId,
+};
