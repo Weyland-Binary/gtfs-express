@@ -1,0 +1,29 @@
+# An OSRM router with the bus profile, beside the application's stack: reachable by the API on the stack's internal
+# network only, never published on the host. Build the graph first with build.sh (it writes OSRM_DATA and
+# OSRM_GRAPH into <data>/.env, which this file reads with --env-file).
+#
+#   docker compose --env-file /opt/osrm/.env -f deploy/osrm/docker-compose.osrm.yml up -d
+#   then OSRM_URL=http://osrm-bus:5000/route/v1/driving in .env.production.local, and restart the API.
+#
+# The network name is the production stack's internal one (gtfs-interpreter_internal); for the lab, the override
+# sets it to the lab's.
+services:
+  osrm-bus:
+    image: ${OSRM_IMAGE:-ghcr.io/project-osrm/osrm-backend:v5.27.1}
+    container_name: osrm-bus
+    restart: unless-stopped
+    command: osrm-routed --algorithm mld --max-table-size 100 /data/${OSRM_GRAPH}
+    volumes:
+      - ${OSRM_DATA:-/opt/osrm}:/data:ro
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5000/nearest/v1/driving/2.3,48.85 >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+networks:
+  internal:
+    name: ${OSRM_NETWORK:-gtfs-interpreter_internal}
+    external: true

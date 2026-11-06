@@ -1,0 +1,2 @@
+attribution_id,agency_id,organization_name,is_producer,is_operator,is_authority,attribution_url,attribution_email,attribution_phone
+ATTR_SYNTH_01,NYCDEMO,Synthetic Transit Studio,1,0,0,https://example.com/synthetic-transit-studio,contact@example.com,+1 212-555-0100

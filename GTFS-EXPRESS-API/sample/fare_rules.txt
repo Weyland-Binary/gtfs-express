@@ -1,0 +1,11 @@
+fare_id,route_id,origin_id,destination_id,contains_id
+fare_local,S1,,,
+fare_local,S2,,,
+fare_local,S3,,,
+fare_airport,B1,,,
+fare_local,B2,,,
+fare_local,B4,,,
+fare_airport,B5,,,
+fare_local,B6,,,
+fare_local,N1,,,
+fare_ferry,F1,,,

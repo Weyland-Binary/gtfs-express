@@ -1,0 +1,8 @@
+{
+  "name": "strict",
+  "title": "Strict (CI / pre-publication gate)",
+  "description": "Promotes every WARNING to ERROR and every INFO to WARNING, on top of the canonical baseline. Use this profile in CI pipelines or before publishing a feed to a portal that does not tolerate quality warnings. Export is blocked by any finding when this profile is active.",
+  "promote_warning_to_error": true,
+  "promote_info_to_warning": true,
+  "overrides": {}
+}
