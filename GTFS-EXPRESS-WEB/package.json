@@ -31,7 +31,7 @@
     "@maplibre/maplibre-gl-leaflet": "^0.1.4",
     "@mui/icons-material": "^5.14.8",
     "@mui/material": "^5.0.0",
-    "@mui/system": "^5.15.20",
+    "@mui/system": "^9.5.0",
     "@react-leaflet/core": "2.1.0",
     "codemirror": "^6.0.2",
     "leaflet": "^1.9.4",
