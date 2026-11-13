@@ -1,0 +1,77 @@
+# The public repository's checks: what holds without the test suites, which stay in the development repository.
+# They run on this repository only (a public repository's minutes are free); in a copy where the condition fails, every
+# job is skipped and costs nothing. Each release is one new commit on main: its run is the release's check, and the
+# deployment waits for it.
+name: Checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  code:
+    name: Lint, i18n, OpenAPI, web build, audit
+    if: github.repository == 'Weyland-Binary/gtfs-express'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            GTFS-EXPRESS-API/package-lock.json
+            GTFS-EXPRESS-WEB/package-lock.json
+      - name: Install the API
+        working-directory: GTFS-EXPRESS-API
+        run: npm ci
+      - name: Install the web app
+        working-directory: GTFS-EXPRESS-WEB
+        run: npm ci
+      - name: Lint the API
+        working-directory: GTFS-EXPRESS-API
+        run: npx eslint src
+      - name: Lint the web app
+        working-directory: GTFS-EXPRESS-WEB
+        run: npx eslint src
+      - name: Same keys in every language
+        working-directory: GTFS-EXPRESS-WEB
+        run: node ../scripts/i18n-check.js
+      - name: The French glossary
+        working-directory: GTFS-EXPRESS-WEB
+        run: node scripts/i18n-check.js
+      - name: OpenAPI description is valid
+        working-directory: GTFS-EXPRESS-API
+        run: npx --yes @redocly/cli@1.34.5 lint --extends=minimal --format=summary docs/openapi.yaml
+      - name: Build the web app
+        working-directory: GTFS-EXPRESS-WEB
+        run: npm run build
+      - name: Audit the API's dependencies
+        working-directory: GTFS-EXPRESS-API
+        run: npm audit --omit=dev --audit-level=high
+      - name: Audit the web app's dependencies
+        working-directory: GTFS-EXPRESS-WEB
+        run: npm audit --omit=dev --audit-level=high
+
+  images:
+    name: Build the images
+    if: github.repository == 'Weyland-Binary/gtfs-express'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the API image
+        run: docker build --pull -t gtfs-express-api:check GTFS-EXPRESS-API
+      - name: Build the web image
+        run: docker build --pull -t gtfs-express-web:check --build-arg VITE_API_BASE_URL=/api/gtfs GTFS-EXPRESS-WEB

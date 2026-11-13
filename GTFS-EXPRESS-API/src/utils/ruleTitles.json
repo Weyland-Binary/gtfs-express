@@ -1,0 +1,849 @@
+{
+  "$description": "A short title for every notice of the MobilityData validator (its notice schema) and every rule of rules.json, in the languages of locales/. Served by GET /edit/validate/catalogue?lang=.",
+  "titles": {
+    "attribution_without_role": {
+      "en": "Attribution without a role",
+      "fr": "Attribution sans rôle"
+    },
+    "bidirectional_exit_gate": {
+      "en": "Exit gate pathway in both directions",
+      "fr": "Portillon de sortie déclaré dans les deux sens"
+    },
+    "big_gap_in_service": {
+      "en": "Service gap of more than 13 days",
+      "fr": "Service interrompu plus de 13 jours"
+    },
+    "block_trips_with_overlapping_stop_times": {
+      "en": "Trips of one block overlapping",
+      "fr": "Courses d'un même bloc qui se chevauchent"
+    },
+    "csv_parsing_failed": {
+      "en": "CSV file cannot be read",
+      "fr": "Fichier CSV illisible"
+    },
+    "decreasing_or_equal_shape_pt_sequence": {
+      "en": "Shape point order not increasing",
+      "fr": "Ordre des points du tracé qui n'augmente pas"
+    },
+    "decreasing_or_equal_stop_sequence": {
+      "en": "Stop sequence not increasing",
+      "fr": "Ordre des arrêts qui n'augmente pas"
+    },
+    "decreasing_or_equal_stop_time_distance": {
+      "en": "Distance travelled not increasing",
+      "fr": "Distance parcourue qui n'augmente pas"
+    },
+    "decreasing_shape_distance": {
+      "en": "Shape distance going backwards",
+      "fr": "Distance du tracé qui recule"
+    },
+    "decreasing_stop_time": {
+      "en": "Time going backwards",
+      "fr": "Horaire qui recule"
+    },
+    "duplicate_fare_media": {
+      "en": "Two fare media with one name and type",
+      "fr": "Deux supports tarifaires identiques"
+    },
+    "duplicate_geo_json_key": {
+      "en": "Duplicated key in locations.geojson",
+      "fr": "Clé en double dans locations.geojson"
+    },
+    "duplicate_geography_id": {
+      "en": "Geography id used in several files",
+      "fr": "Identifiant géographique repris dans plusieurs fichiers"
+    },
+    "duplicate_key": {
+      "en": "Duplicated identifier",
+      "fr": "Identifiant en double"
+    },
+    "duplicate_route_name": {
+      "en": "Two routes with the same name",
+      "fr": "Deux lignes au même nom"
+    },
+    "duplicated_column": {
+      "en": "Column named twice",
+      "fr": "Colonne en double"
+    },
+    "empty_column_name": {
+      "en": "Column without a name",
+      "fr": "Colonne sans nom"
+    },
+    "empty_file": {
+      "en": "Empty file",
+      "fr": "Fichier vide"
+    },
+    "empty_row": {
+      "en": "Row holding only spaces",
+      "fr": "Ligne vide"
+    },
+    "equal_shape_distance_diff_coordinates": {
+      "en": "Shape points at one distance but apart",
+      "fr": "Points du tracé à la même distance mais éloignés"
+    },
+    "equal_shape_distance_diff_coordinates_distance_below_threshold": {
+      "en": "Shape points at one distance, under 1.11 m apart",
+      "fr": "Points du tracé à la même distance, à moins de 1,11 m"
+    },
+    "equal_shape_distance_same_coordinates": {
+      "en": "Duplicated shape point",
+      "fr": "Point de tracé en double"
+    },
+    "expired_calendar": {
+      "en": "Service already ended",
+      "fr": "Service déjà terminé"
+    },
+    "fare_product_with_multiple_default_rider_categories": {
+      "en": "Fare product with several default categories",
+      "fr": "Produit tarifaire avec plusieurs catégories par défaut"
+    },
+    "fare_transfer_rule_duration_limit_type_without_duration_limit": {
+      "en": "Duration limit type without a limit",
+      "fr": "Type de durée limite sans durée"
+    },
+    "fare_transfer_rule_duration_limit_without_type": {
+      "en": "Duration limit without its type",
+      "fr": "Durée limite sans son type"
+    },
+    "fare_transfer_rule_invalid_transfer_count": {
+      "en": "Invalid transfer count",
+      "fr": "Nombre de correspondances invalide"
+    },
+    "fare_transfer_rule_missing_transfer_count": {
+      "en": "Transfer count missing",
+      "fr": "Nombre de correspondances manquant"
+    },
+    "fare_transfer_rule_with_forbidden_transfer_count": {
+      "en": "Transfer count not allowed here",
+      "fr": "Nombre de correspondances interdit ici"
+    },
+    "fare_transfer_rule_without_transfer_count": {
+      "en": "Transfer count missing",
+      "fr": "Nombre de correspondances manquant"
+    },
+    "fast_travel_between_consecutive_stops": {
+      "en": "Too fast between two consecutive stops",
+      "fr": "Trop rapide entre deux arrêts consécutifs"
+    },
+    "fast_travel_between_far_stops": {
+      "en": "Too fast between two far stops",
+      "fr": "Trop rapide entre deux arrêts éloignés"
+    },
+    "feed_expiration_date30_days": {
+      "en": "GTFS ending within 30 days",
+      "fr": "GTFS qui finit dans moins de 30 jours"
+    },
+    "feed_expiration_date7_days": {
+      "en": "GTFS ending within 7 days",
+      "fr": "GTFS qui finit dans moins de 7 jours"
+    },
+    "feed_expiration_date_30_days": {
+      "en": "GTFS ending within 30 days",
+      "fr": "GTFS qui finit dans moins de 30 jours"
+    },
+    "feed_expiration_date_7_days": {
+      "en": "GTFS ending within 7 days",
+      "fr": "GTFS qui finit dans moins de 7 jours"
+    },
+    "feed_expired": {
+      "en": "GTFS expired",
+      "fr": "GTFS expiré"
+    },
+    "feed_info_lang_and_agency_lang_mismatch": {
+      "en": "GTFS and agency languages differ",
+      "fr": "Langues du GTFS et de l'exploitant différentes"
+    },
+    "feed_valid_beyond_total_service_window": {
+      "en": "GTFS valid 14 days past its last service",
+      "fr": "GTFS valable 14 jours après son dernier service"
+    },
+    "forbidden_arrival_or_departure_time": {
+      "en": "Times given with a pickup window",
+      "fr": "Horaires donnés avec une fenêtre de prise en charge"
+    },
+    "forbidden_continuous_pickup_drop_off": {
+      "en": "Continuous pickup or drop-off with a window",
+      "fr": "Montée ou descente continue avec une fenêtre"
+    },
+    "forbidden_drop_off_type": {
+      "en": "Window on a regular drop-off",
+      "fr": "Fenêtre sur une descente régulière"
+    },
+    "forbidden_geography_id": {
+      "en": "Stop time with several places",
+      "fr": "Horaire rattaché à plusieurs lieux"
+    },
+    "forbidden_pickup_type": {
+      "en": "Window on a regular pickup",
+      "fr": "Fenêtre sur une montée régulière"
+    },
+    "forbidden_prior_day_booking_field_value": {
+      "en": "Field not allowed for a prior-day booking",
+      "fr": "Champ interdit pour une réservation la veille"
+    },
+    "forbidden_prior_notice_start_day": {
+      "en": "Start day not allowed with a maximum notice",
+      "fr": "Jour de début interdit avec un préavis maximal"
+    },
+    "forbidden_prior_notice_start_time": {
+      "en": "Start time without a start day",
+      "fr": "Heure de début sans jour de début"
+    },
+    "forbidden_real_time_booking_field_value": {
+      "en": "Field not allowed for a real-time booking",
+      "fr": "Champ interdit pour une réservation en temps réel"
+    },
+    "forbidden_same_day_booking_field_value": {
+      "en": "Field not allowed for a same-day booking",
+      "fr": "Champ interdit pour une réservation le jour même"
+    },
+    "forbidden_shape_dist_traveled": {
+      "en": "Distance on a stop time without a stop",
+      "fr": "Distance sur un horaire sans arrêt"
+    },
+    "foreign_key_violation": {
+      "en": "Reference to a missing record",
+      "fr": "Référence vers un enregistrement absent"
+    },
+    "future_calendar": {
+      "en": "Every service starts later",
+      "fr": "Tous les services commencent plus tard"
+    },
+    "future_feed": {
+      "en": "GTFS covering only the future",
+      "fr": "GTFS qui ne couvre que l'avenir"
+    },
+    "geo_json_duplicated_element": {
+      "en": "Duplicated element in locations.geojson",
+      "fr": "Élément en double dans locations.geojson"
+    },
+    "geo_json_unknown_element": {
+      "en": "Unknown element in locations.geojson",
+      "fr": "Élément inconnu dans locations.geojson"
+    },
+    "i_o_error": {
+      "en": "File read error",
+      "fr": "Erreur de lecture d'un fichier"
+    },
+    "inconsistent_agency_lang": {
+      "en": "Agencies in different languages",
+      "fr": "Exploitants dans des langues différentes"
+    },
+    "inconsistent_agency_timezone": {
+      "en": "Agencies in different time zones",
+      "fr": "Exploitants sur des fuseaux horaires différents"
+    },
+    "inconsistent_route_type_for_block_id": {
+      "en": "Block mixing transport modes",
+      "fr": "Bloc qui mêle des modes de transport"
+    },
+    "inconsistent_route_type_for_in_seat_transfer": {
+      "en": "Stay-on-board transfer between two modes",
+      "fr": "Correspondance sans descendre entre deux modes"
+    },
+    "invalid_boolean_value": {
+      "en": "Value other than 0 or 1",
+      "fr": "Valeur autre que 0 ou 1"
+    },
+    "invalid_character": {
+      "en": "Invalid character in a field",
+      "fr": "Caractère invalide dans un champ"
+    },
+    "invalid_color": {
+      "en": "Malformed colour",
+      "fr": "Couleur mal écrite"
+    },
+    "invalid_currency": {
+      "en": "Unknown currency code",
+      "fr": "Code de devise inconnu"
+    },
+    "invalid_currency_amount": {
+      "en": "Amount not matching its currency",
+      "fr": "Montant qui ne suit pas sa devise"
+    },
+    "invalid_date": {
+      "en": "Malformed date",
+      "fr": "Date mal écrite"
+    },
+    "invalid_email": {
+      "en": "Malformed e-mail address",
+      "fr": "Adresse e-mail mal écrite"
+    },
+    "invalid_exact_times": {
+      "en": "exact_times other than 0 or 1",
+      "fr": "exact_times autre que 0 ou 1"
+    },
+    "invalid_feed_end_date": {
+      "en": "Malformed GTFS end date",
+      "fr": "Date de fin du GTFS mal écrite"
+    },
+    "invalid_feed_start_date": {
+      "en": "Malformed GTFS start date",
+      "fr": "Date de début du GTFS mal écrite"
+    },
+    "invalid_float": {
+      "en": "Value that is not a number",
+      "fr": "Valeur qui n'est pas un nombre"
+    },
+    "invalid_geometry": {
+      "en": "Invalid polygon in locations.geojson",
+      "fr": "Polygone invalide dans locations.geojson"
+    },
+    "invalid_headway": {
+      "en": "Invalid headway",
+      "fr": "Intervalle de passage invalide"
+    },
+    "invalid_input_files_in_subfolder": {
+      "en": "GTFS files in a subfolder",
+      "fr": "Fichiers GTFS dans un sous-dossier"
+    },
+    "invalid_integer": {
+      "en": "Value that is not a whole number",
+      "fr": "Valeur qui n'est pas un nombre entier"
+    },
+    "invalid_language_code": {
+      "en": "Unknown language code",
+      "fr": "Code de langue inconnu"
+    },
+    "invalid_phone_number": {
+      "en": "Malformed phone number",
+      "fr": "Numéro de téléphone mal écrit"
+    },
+    "invalid_pickup_drop_off_window": {
+      "en": "Invalid pickup window",
+      "fr": "Fenêtre de prise en charge invalide"
+    },
+    "invalid_prior_notice_duration_min": {
+      "en": "Invalid minimum notice",
+      "fr": "Préavis minimal invalide"
+    },
+    "invalid_row_length": {
+      "en": "Row with the wrong number of values",
+      "fr": "Ligne au mauvais nombre de valeurs"
+    },
+    "invalid_shape_lat": {
+      "en": "Shape latitude out of range",
+      "fr": "Latitude de tracé impossible"
+    },
+    "invalid_shape_lon": {
+      "en": "Shape longitude out of range",
+      "fr": "Longitude de tracé impossible"
+    },
+    "invalid_time": {
+      "en": "Malformed time",
+      "fr": "Heure mal écrite"
+    },
+    "invalid_timezone": {
+      "en": "Unknown time zone",
+      "fr": "Fuseau horaire inconnu"
+    },
+    "invalid_transfer_type": {
+      "en": "Unknown transfer type",
+      "fr": "Type de correspondance inconnu"
+    },
+    "invalid_url": {
+      "en": "Malformed web address",
+      "fr": "Adresse web mal écrite"
+    },
+    "leading_or_trailing_whitespaces": {
+      "en": "Spaces around a value",
+      "fr": "Espaces autour d'une valeur"
+    },
+    "location_with_unexpected_stop_time": {
+      "en": "Stop time at a place that is not a stop",
+      "fr": "Horaire sur un lieu qui n'est pas un arrêt"
+    },
+    "location_without_parent_station": {
+      "en": "Place without its station",
+      "fr": "Lieu sans sa station"
+    },
+    "malformed_json": {
+      "en": "Malformed JSON file",
+      "fr": "Fichier JSON mal formé"
+    },
+    "missing_bike_allowance": {
+      "en": "Ferry trip without bike information",
+      "fr": "Course de ferry sans information vélo"
+    },
+    "missing_calendar_and_calendar_date_files": {
+      "en": "No calendar file",
+      "fr": "Aucun fichier de calendrier"
+    },
+    "missing_feed_contact_email_and_url": {
+      "en": "No contact in feed_info.txt",
+      "fr": "Aucun contact dans feed_info.txt"
+    },
+    "missing_feed_info_date": {
+      "en": "Only one of the GTFS start and end dates",
+      "fr": "Une seule des dates de début et de fin du GTFS"
+    },
+    "missing_feed_info_lang": {
+      "en": "GTFS language missing",
+      "fr": "Langue du GTFS manquante"
+    },
+    "missing_feed_info_publisher_name": {
+      "en": "Publisher name missing",
+      "fr": "Nom de l'éditeur manquant"
+    },
+    "missing_feed_info_publisher_url": {
+      "en": "Publisher address missing",
+      "fr": "Adresse de l'éditeur manquante"
+    },
+    "missing_from_stop_id": {
+      "en": "Transfer without from_stop_id",
+      "fr": "Correspondance sans from_stop_id"
+    },
+    "missing_level_id": {
+      "en": "Stop without its level",
+      "fr": "Arrêt sans son niveau"
+    },
+    "missing_min_transfer_time": {
+      "en": "Timed transfer without its time",
+      "fr": "Correspondance minutée sans durée"
+    },
+    "missing_pickup_drop_off_booking_rule_id": {
+      "en": "Booking rule missing for an on-demand stop",
+      "fr": "Règle de réservation absente pour un arrêt à la demande"
+    },
+    "missing_pickup_or_drop_off_window": {
+      "en": "Start or end of the window missing",
+      "fr": "Début ou fin de fenêtre manquant"
+    },
+    "missing_prior_day_booking_field_value": {
+      "en": "Prior-day booking without its deadline",
+      "fr": "Réservation la veille sans heure limite"
+    },
+    "missing_prior_notice_duration_min": {
+      "en": "Same-day booking without a minimum notice",
+      "fr": "Réservation le jour même sans préavis minimal"
+    },
+    "missing_prior_notice_last_day": {
+      "en": "Prior-day booking without its last day",
+      "fr": "Réservation la veille sans dernier jour"
+    },
+    "missing_prior_notice_last_time": {
+      "en": "Prior-day booking without its last time",
+      "fr": "Réservation la veille sans dernière heure"
+    },
+    "missing_prior_notice_start_time": {
+      "en": "Start day without a start time",
+      "fr": "Jour de début sans heure de début"
+    },
+    "missing_recommended_column": {
+      "en": "Recommended column missing",
+      "fr": "Colonne recommandée absente"
+    },
+    "missing_recommended_field": {
+      "en": "Recommended field empty",
+      "fr": "Champ recommandé vide"
+    },
+    "missing_recommended_file": {
+      "en": "Recommended file missing",
+      "fr": "Fichier recommandé absent"
+    },
+    "missing_required_agency_id": {
+      "en": "agency_id missing with several agencies",
+      "fr": "agency_id manquant avec plusieurs exploitants"
+    },
+    "missing_required_column": {
+      "en": "Required column missing",
+      "fr": "Colonne obligatoire absente"
+    },
+    "missing_required_element": {
+      "en": "Required element missing in locations.geojson",
+      "fr": "Élément obligatoire absent de locations.geojson"
+    },
+    "missing_required_field": {
+      "en": "Required field empty",
+      "fr": "Champ obligatoire vide"
+    },
+    "missing_required_file": {
+      "en": "Required file missing",
+      "fr": "Fichier obligatoire absent"
+    },
+    "missing_stop_name": {
+      "en": "Stop without a name",
+      "fr": "Arrêt sans nom"
+    },
+    "missing_stop_times_record": {
+      "en": "Trip with a single stop time",
+      "fr": "Course avec un seul horaire"
+    },
+    "missing_timepoint_value": {
+      "en": "Exact or approximate time not stated",
+      "fr": "Horaire exact ou approximatif non précisé"
+    },
+    "missing_to_stop_id": {
+      "en": "Transfer without to_stop_id",
+      "fr": "Correspondance sans to_stop_id"
+    },
+    "missing_trip_edge": {
+      "en": "First or last stop without a time",
+      "fr": "Premier ou dernier arrêt sans horaire"
+    },
+    "mixed_case_recommended_field": {
+      "en": "Name all in capitals or in lower case",
+      "fr": "Nom tout en majuscules ou en minuscules"
+    },
+    "more_than_one_entity": {
+      "en": "Several rows where one is expected",
+      "fr": "Plusieurs lignes là où une seule est attendue"
+    },
+    "new_line_in_value": {
+      "en": "Line break inside a value",
+      "fr": "Saut de ligne dans une valeur"
+    },
+    "non_ascii_or_non_printable_char": {
+      "en": "Unusual character in an identifier",
+      "fr": "Caractère inhabituel dans un identifiant"
+    },
+    "number_out_of_range": {
+      "en": "Value out of range",
+      "fr": "Valeur hors des valeurs permises"
+    },
+    "overlapping_frequency": {
+      "en": "Frequencies of one trip overlapping",
+      "fr": "Fréquences d'une même course qui se chevauchent"
+    },
+    "overlapping_zone_and_pickup_drop_off_window": {
+      "en": "Overlapping windows on one zone",
+      "fr": "Fenêtres qui se chevauchent sur une même zone"
+    },
+    "pathway_dangling_generic_node": {
+      "en": "Pathway node leading nowhere",
+      "fr": "Nœud de cheminement en impasse"
+    },
+    "pathway_loop": {
+      "en": "Pathway back to where it starts",
+      "fr": "Cheminement qui revient à son point de départ"
+    },
+    "pathway_to_platform_with_boarding_areas": {
+      "en": "Pathway to a platform with boarding areas",
+      "fr": "Cheminement vers un quai qui a des zones d'embarquement"
+    },
+    "pathway_to_stop_with_access_outside_of_station_pathways": {
+      "en": "Pathway to a stop reached from the street",
+      "fr": "Cheminement vers un arrêt accessible depuis la rue"
+    },
+    "pathway_to_wrong_location_type": {
+      "en": "Pathway ending at a station",
+      "fr": "Cheminement qui aboutit à une station"
+    },
+    "pathway_unreachable_location": {
+      "en": "Place no pathway reaches",
+      "fr": "Lieu qu'aucun cheminement n'atteint"
+    },
+    "platform_without_parent_station": {
+      "en": "Platform without a station",
+      "fr": "Quai sans station"
+    },
+    "point_near_origin": {
+      "en": "Point at coordinates (0, 0)",
+      "fr": "Point aux coordonnées (0, 0)"
+    },
+    "point_near_pole": {
+      "en": "Point near a pole",
+      "fr": "Point près d'un pôle"
+    },
+    "prior_notice_last_day_after_start_day": {
+      "en": "Last booking day after the first",
+      "fr": "Dernier jour de réservation après le premier"
+    },
+    "route_both_short_and_long_name_missing": {
+      "en": "Route without a name",
+      "fr": "Ligne sans nom"
+    },
+    "route_color_contrast": {
+      "en": "Route colours hard to read",
+      "fr": "Couleurs de ligne peu lisibles"
+    },
+    "route_long_name_contains_short_name": {
+      "en": "Long name repeating the short name",
+      "fr": "Nom long qui répète le nom court"
+    },
+    "route_networks_specified_in_more_than_one_file": {
+      "en": "Route network given in two files",
+      "fr": "Réseau d'une ligne donné dans deux fichiers"
+    },
+    "route_short_name_too_long": {
+      "en": "Route short name too long",
+      "fr": "Nom court de ligne trop long"
+    },
+    "route_type_invalid": {
+      "en": "Unknown route type",
+      "fr": "Type de ligne inconnu"
+    },
+    "route_without_trips": {
+      "en": "Route without trips",
+      "fr": "Ligne sans course"
+    },
+    "runtime_exception_in_loader_error": {
+      "en": "Validator failure while reading",
+      "fr": "Panne du validateur à la lecture"
+    },
+    "runtime_exception_in_validator_error": {
+      "en": "Validator failure during a check",
+      "fr": "Panne du validateur pendant un contrôle"
+    },
+    "same_name_and_description_for_route": {
+      "en": "Route description repeating its name",
+      "fr": "Description de ligne qui répète son nom"
+    },
+    "same_name_and_description_for_stop": {
+      "en": "Stop description repeating its name",
+      "fr": "Description d'arrêt qui répète son nom"
+    },
+    "same_route_and_agency_url": {
+      "en": "Route address same as the agency's",
+      "fr": "Adresse de ligne identique à celle de l'exploitant"
+    },
+    "same_stop_and_agency_url": {
+      "en": "Stop address same as the agency's",
+      "fr": "Adresse d'arrêt identique à celle de l'exploitant"
+    },
+    "same_stop_and_route_url": {
+      "en": "Stop address same as a route's",
+      "fr": "Adresse d'arrêt identique à celle d'une ligne"
+    },
+    "service_extends_far_in_the_future": {
+      "en": "Service ending more than 2 years ahead",
+      "fr": "Service qui finit dans plus de 2 ans"
+    },
+    "service_has_no_active_day_of_the_week": {
+      "en": "Service with no day of the week",
+      "fr": "Service sans aucun jour de la semaine"
+    },
+    "service_window_outside_feed_period": {
+      "en": "Service outside the GTFS validity",
+      "fr": "Service hors de la validité du GTFS"
+    },
+    "service_without_service_days": {
+      "en": "Service that never runs",
+      "fr": "Service qui ne circule jamais"
+    },
+    "single_shape_point": {
+      "en": "Shape with a single point",
+      "fr": "Tracé d'un seul point"
+    },
+    "start_and_end_date_out_of_order": {
+      "en": "Start date after end date",
+      "fr": "Date de début après la date de fin"
+    },
+    "start_and_end_range_equal": {
+      "en": "Start and end equal",
+      "fr": "Début et fin identiques"
+    },
+    "start_and_end_range_out_of_order": {
+      "en": "End before start",
+      "fr": "Fin avant le début"
+    },
+    "station_with_parent_station": {
+      "en": "Station inside another station",
+      "fr": "Station rattachée à une autre station"
+    },
+    "stop_access_specified_for_incorrect_location": {
+      "en": "stop_access on a place that is not a stop",
+      "fr": "stop_access sur un lieu qui n'est pas un arrêt"
+    },
+    "stop_access_specified_for_stop_with_no_parent_station": {
+      "en": "stop_access on a stop without a station",
+      "fr": "stop_access sur un arrêt sans station"
+    },
+    "stop_has_too_many_matches_for_shape": {
+      "en": "Stop matching its shape at many places",
+      "fr": "Arrêt qui correspond à plusieurs endroits du tracé"
+    },
+    "stop_lat_out_of_range": {
+      "en": "Stop latitude out of range",
+      "fr": "Latitude d'arrêt impossible"
+    },
+    "stop_lon_out_of_range": {
+      "en": "Stop longitude out of range",
+      "fr": "Longitude d'arrêt impossible"
+    },
+    "stop_time_timepoint_without_times": {
+      "en": "Exact time without times",
+      "fr": "Horaire exact sans heure"
+    },
+    "stop_time_travel_distance_too_long": {
+      "en": "Very long distance between two stops",
+      "fr": "Distance démesurée entre deux arrêts"
+    },
+    "stop_time_travel_speed_too_fast": {
+      "en": "Speed too high between two stops",
+      "fr": "Vitesse trop élevée entre deux arrêts"
+    },
+    "stop_time_with_arrival_before_previous_departure_time": {
+      "en": "Arrival before the previous departure",
+      "fr": "Arrivée avant le départ précédent"
+    },
+    "stop_time_with_departure_before_arrival_time": {
+      "en": "Departure before arrival",
+      "fr": "Départ avant l'arrivée"
+    },
+    "stop_time_with_only_arrival_or_departure_time": {
+      "en": "Arrival or departure time alone",
+      "fr": "Heure d'arrivée ou de départ seule"
+    },
+    "stop_too_far_from_shape": {
+      "en": "Stop far from its shape",
+      "fr": "Arrêt loin de son tracé"
+    },
+    "stop_too_far_from_shape_using_user_distance": {
+      "en": "Stop far from its place on the shape",
+      "fr": "Arrêt loin de sa place sur le tracé"
+    },
+    "stop_without_location": {
+      "en": "Stop without coordinates",
+      "fr": "Arrêt sans coordonnées"
+    },
+    "stop_without_stop_time": {
+      "en": "Stop no trip serves",
+      "fr": "Arrêt desservi par aucune course"
+    },
+    "stop_without_zone_id": {
+      "en": "Stop without a fare zone",
+      "fr": "Arrêt sans zone tarifaire"
+    },
+    "stops_match_shape_out_of_order": {
+      "en": "Stops out of order along the shape",
+      "fr": "Arrêts dans le désordre le long du tracé"
+    },
+    "thread_execution_error": {
+      "en": "Validator failure during a parallel check",
+      "fr": "Panne du validateur pendant un contrôle parallèle"
+    },
+    "timeframe_only_start_or_end_time_specified": {
+      "en": "Timeframe with only a start or an end",
+      "fr": "Plage horaire avec un début ou une fin seulement"
+    },
+    "timeframe_overlap": {
+      "en": "Timeframes overlapping",
+      "fr": "Plages horaires qui se chevauchent"
+    },
+    "timeframe_start_or_end_time_greater_than_twenty_four_hours": {
+      "en": "Timeframe past 24:00:00",
+      "fr": "Plage horaire au-delà de 24:00:00"
+    },
+    "too_many_rows": {
+      "en": "File with too many rows",
+      "fr": "Fichier aux lignes trop nombreuses"
+    },
+    "transfer_distance_above_2_km": {
+      "en": "Transfer over 2 km",
+      "fr": "Correspondance de plus de 2 km"
+    },
+    "transfer_distance_too_large": {
+      "en": "Transfer over 10 km",
+      "fr": "Correspondance de plus de 10 km"
+    },
+    "transfer_with_invalid_stop_location_type": {
+      "en": "Transfer at a place that is no stop or station",
+      "fr": "Correspondance sur un lieu qui n'est ni arrêt ni station"
+    },
+    "transfer_with_invalid_trip_and_route": {
+      "en": "Transfer trip off its route",
+      "fr": "Course de correspondance hors de sa ligne"
+    },
+    "transfer_with_invalid_trip_and_stop": {
+      "en": "Transfer stop its trip does not serve",
+      "fr": "Arrêt de correspondance que sa course ne dessert pas"
+    },
+    "transfer_with_suspicious_mid_trip_in_seat": {
+      "en": "Stay-on-board transfer mid-trip",
+      "fr": "Correspondance sans descendre en milieu de course"
+    },
+    "translation_foreign_key_violation": {
+      "en": "Translation of a missing record",
+      "fr": "Traduction d'un enregistrement absent"
+    },
+    "translation_unexpected_value": {
+      "en": "Translation field that should be empty",
+      "fr": "Champ de traduction qui devrait être vide"
+    },
+    "translation_unknown_table_name": {
+      "en": "Translation of an unknown table",
+      "fr": "Traduction d'une table inconnue"
+    },
+    "trip_coverage_not_active_for_next7_days": {
+      "en": "Trips not covering the next 7 days",
+      "fr": "Courses qui ne couvrent pas les 7 prochains jours"
+    },
+    "trip_distance_exceeds_shape_distance": {
+      "en": "Trip running past the end of its shape",
+      "fr": "Course qui dépasse la fin de son tracé"
+    },
+    "trip_distance_exceeds_shape_distance_below_threshold": {
+      "en": "Trip just past the end of its shape",
+      "fr": "Course qui dépasse à peine la fin de son tracé"
+    },
+    "trip_headsign_matches_intermediate_stop": {
+      "en": "Headsign naming an intermediate stop",
+      "fr": "Girouette qui nomme un arrêt intermédiaire"
+    },
+    "trip_with_shape_dist_traveled_but_no_shape_distances": {
+      "en": "Trip distances on a shape without distances",
+      "fr": "Distances de course sur un tracé sans distances"
+    },
+    "trip_without_stop_times": {
+      "en": "Trip without stop times",
+      "fr": "Course sans horaire"
+    },
+    "u_r_i_syntax_error": {
+      "en": "Malformed address",
+      "fr": "Adresse mal formée"
+    },
+    "unexpected_enum_value": {
+      "en": "Unexpected value for a list field",
+      "fr": "Valeur inattendue pour un champ à choix"
+    },
+    "unknown_column": {
+      "en": "Column outside the standard",
+      "fr": "Colonne hors du standard"
+    },
+    "unknown_file": {
+      "en": "File outside the standard",
+      "fr": "Fichier hors du standard"
+    },
+    "unsorted_stop_times": {
+      "en": "Stop times not in order",
+      "fr": "Horaires non triés"
+    },
+    "unsupported_feature_type": {
+      "en": "Unsupported feature type in locations.geojson",
+      "fr": "Type d'objet non pris en charge dans locations.geojson"
+    },
+    "unsupported_geo_json_type": {
+      "en": "Unsupported GeoJSON type",
+      "fr": "Type GeoJSON non pris en charge"
+    },
+    "unsupported_geometry_type": {
+      "en": "Unsupported geometry type",
+      "fr": "Type de géométrie non pris en charge"
+    },
+    "unusable_trip": {
+      "en": "Trip with fewer than two stops",
+      "fr": "Course de moins de deux arrêts"
+    },
+    "unused_parent_station": {
+      "en": "Parent station without stops",
+      "fr": "Station parente sans arrêt"
+    },
+    "unused_shape": {
+      "en": "Shape no trip follows",
+      "fr": "Tracé suivi par aucune course"
+    },
+    "unused_station": {
+      "en": "Station without stops",
+      "fr": "Station sans arrêt"
+    },
+    "unused_trip": {
+      "en": "Trip without stop times",
+      "fr": "Course sans horaire"
+    },
+    "wrong_parent_location_type": {
+      "en": "Parent place of the wrong type",
+      "fr": "Lieu parent du mauvais type"
+    }
+  }
+}

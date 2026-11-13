@@ -1,0 +1,35 @@
+pathway_id,from_stop_id,to_stop_id,pathway_mode,is_bidirectional,length,traversal_time,stair_count,max_slope,min_width,signposted_as,reversed_signposted_as
+PW_HUB_INW_INW_S,HUB_INW_N,INW_S,1,1,60,90,,,2.5,Inwood-207 St,Inwood-207 St
+PW_HUB_HAR_HAR_S,HUB_HAR_N,HAR_S,1,1,60,90,,,2.5,Harlem-125 St,Harlem-125 St
+PW_HUB_UWS_UWS_S,HUB_UWS_N,UWS_S,1,1,60,90,,,2.5,72 St,72 St / Upper West Side
+PW_HUB_TSQ_TSQ_S,HUB_TSQ_N,TSQ_S,1,1,60,90,,,2.5,Times Sq-42 St,Times Sq-42 St
+PW_HUB_GCT_GCT_S,HUB_GCT_N,GCT_S,1,1,60,90,,,2.5,Grand Central,Grand Central
+PW_HUB_WTC_WTC_S,HUB_WTC_N,WTC_S,1,1,60,90,,,2.5,World Trade Center,World Trade Center
+PW_HUB_AST_AST_S,HUB_AST_N,AST_S,1,1,60,90,,,2.5,Astoria-Ditmars,Astoria-Ditmars
+PW_HUB_LIC_LIC_S,HUB_LIC_N,LIC_S,1,1,60,90,,,2.5,Long Island City,Long Island City
+PW_HUB_DBK_DBK_S,HUB_DBK_N,DBK_S,1,1,60,90,,,2.5,Downtown Brooklyn,Downtown Brooklyn
+PW_HUB_WBG_WBG_S,HUB_WBG_N,WBG_S,1,1,60,90,,,2.5,Williamsburg,Williamsburg
+PW_HUB_PPK_PPK_S,HUB_PPK_N,PPK_S,1,1,60,90,,,2.5,Prospect Park,Prospect Park
+PW_HUB_CNY_CNY_S,HUB_CNY_N,CNY_S,1,1,60,90,,,2.5,Coney Island-Stillwell Av,Coney Island-Stillwell Av
+PW_HUB_LGA_LGA_B,HUB_LGA_N,LGA_B,1,1,60,90,,,2.5,LaGuardia Terminal B,LaGuardia Terminal B
+PW_HUB_JFK_JFK_B,HUB_JFK_N,JFK_B,1,1,60,90,,,2.5,JFK Terminal 8,JFK Terminal 8
+PW_HUB_WSP_WSL_F,HUB_WSP_N,WSL_F,1,1,60,90,,,2.5,Wall St / Pier 11,Wall St / Pier 11
+PW_HUB_DUM_DUM_F,HUB_DUM_N,DUM_F,1,1,60,90,,,2.5,DUMBO / Fulton Ferry,DUMBO / Fulton Ferry
+PW_HUB_34F_34F,HUB_34F_N,34F,1,1,60,90,,,2.5,East 34 St Ferry,East 34 St Ferry
+PW_HUB_INW_E_HUB_INW_N,HUB_INW_E,HUB_INW_N,2,1,5,10,12,,1.5,Inwood-207 St entrance,Exit
+PW_HUB_HAR_E_HUB_HAR_N,HUB_HAR_E,HUB_HAR_N,2,1,5,10,12,,1.5,Harlem-125 St entrance,Exit
+PW_HUB_UWS_E_HUB_UWS_N,HUB_UWS_E,HUB_UWS_N,2,1,5,10,12,,1.5,72 St / Upper West Side entrance,Exit
+PW_HUB_TSQ_E_HUB_TSQ_N,HUB_TSQ_E,HUB_TSQ_N,2,1,5,10,12,,1.5,Times Sq-42 St entrance,Exit
+PW_HUB_GCT_E_HUB_GCT_N,HUB_GCT_E,HUB_GCT_N,2,1,5,10,12,,1.5,Grand Central entrance,Exit
+PW_HUB_WTC_E_HUB_WTC_N,HUB_WTC_E,HUB_WTC_N,2,1,5,10,12,,1.5,World Trade Center entrance,Exit
+PW_HUB_AST_E_HUB_AST_N,HUB_AST_E,HUB_AST_N,2,1,5,10,12,,1.5,Astoria-Ditmars entrance,Exit
+PW_HUB_LIC_E_HUB_LIC_N,HUB_LIC_E,HUB_LIC_N,2,1,5,10,12,,1.5,Long Island City entrance,Exit
+PW_HUB_DBK_E_HUB_DBK_N,HUB_DBK_E,HUB_DBK_N,2,1,5,10,12,,1.5,Downtown Brooklyn entrance,Exit
+PW_HUB_WBG_E_HUB_WBG_N,HUB_WBG_E,HUB_WBG_N,2,1,5,10,12,,1.5,Williamsburg entrance,Exit
+PW_HUB_PPK_E_HUB_PPK_N,HUB_PPK_E,HUB_PPK_N,2,1,5,10,12,,1.5,Prospect Park entrance,Exit
+PW_HUB_CNY_E_HUB_CNY_N,HUB_CNY_E,HUB_CNY_N,2,1,5,10,12,,1.5,Coney Island-Stillwell Av entrance,Exit
+PW_HUB_LGA_E_HUB_LGA_N,HUB_LGA_E,HUB_LGA_N,2,1,5,10,12,,1.5,LaGuardia Terminal B entrance,Exit
+PW_HUB_JFK_E_HUB_JFK_N,HUB_JFK_E,HUB_JFK_N,2,1,5,10,12,,1.5,JFK Terminal 8 entrance,Exit
+PW_HUB_WSP_E_HUB_WSP_N,HUB_WSP_E,HUB_WSP_N,2,1,5,10,12,,1.5,Wall St / Pier 11 entrance,Exit
+PW_HUB_DUM_E_HUB_DUM_N,HUB_DUM_E,HUB_DUM_N,2,1,5,10,12,,1.5,DUMBO / Fulton Ferry entrance,Exit
+PW_HUB_34F_E_HUB_34F_N,HUB_34F_E,HUB_34F_N,2,1,5,10,12,,1.5,East 34 St Ferry entrance,Exit

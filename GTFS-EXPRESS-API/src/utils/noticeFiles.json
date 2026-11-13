@@ -1,0 +1,309 @@
+{
+  "validator": "8.0.0",
+  "notices": {
+    "attribution_without_role": [
+      "attributions.txt"
+    ],
+    "bidirectional_exit_gate": [
+      "pathways.txt"
+    ],
+    "decreasing_or_equal_stop_time_distance": [
+      "stop_times.txt"
+    ],
+    "decreasing_shape_distance": [
+      "shapes.txt"
+    ],
+    "equal_shape_distance_diff_coordinates": [
+      "shapes.txt",
+      "stops.txt"
+    ],
+    "equal_shape_distance_diff_coordinates_distance_below_threshold": [
+      "shapes.txt",
+      "stops.txt"
+    ],
+    "equal_shape_distance_same_coordinates": [
+      "shapes.txt",
+      "stops.txt"
+    ],
+    "expired_calendar": [
+      "calendar.txt",
+      "calendar_dates.txt"
+    ],
+    "fare_transfer_rule_duration_limit_type_without_duration_limit": [
+      "fare_transfer_rules.txt"
+    ],
+    "fare_transfer_rule_duration_limit_without_type": [
+      "fare_transfer_rules.txt"
+    ],
+    "fare_transfer_rule_invalid_transfer_count": [
+      "fare_transfer_rules.txt"
+    ],
+    "fare_transfer_rule_missing_transfer_count": [
+      "fare_transfer_rules.txt"
+    ],
+    "fare_transfer_rule_with_forbidden_transfer_count": [
+      "fare_transfer_rules.txt"
+    ],
+    "fare_transfer_rule_without_transfer_count": [
+      "fare_transfer_rules.txt"
+    ],
+    "feed_expiration_date30_days": [
+      "feed_info.txt"
+    ],
+    "feed_expiration_date7_days": [
+      "feed_info.txt"
+    ],
+    "feed_info_lang_and_agency_lang_mismatch": [
+      "agency.txt",
+      "feed_info.txt"
+    ],
+    "forbidden_arrival_or_departure_time": [
+      "stop_times.txt"
+    ],
+    "forbidden_drop_off_type": [
+      "stop_times.txt"
+    ],
+    "forbidden_geography_id": [
+      "stop_times.txt"
+    ],
+    "forbidden_pickup_type": [
+      "stop_times.txt"
+    ],
+    "forbidden_prior_day_booking_field_value": [
+      "booking_rules.txt"
+    ],
+    "forbidden_prior_notice_start_day": [
+      "booking_rules.txt"
+    ],
+    "forbidden_prior_notice_start_time": [
+      "booking_rules.txt"
+    ],
+    "forbidden_real_time_booking_field_value": [
+      "booking_rules.txt"
+    ],
+    "forbidden_same_day_booking_field_value": [
+      "booking_rules.txt"
+    ],
+    "forbidden_shape_dist_traveled": [
+      "stop_times.txt"
+    ],
+    "inconsistent_agency_lang": [
+      "agency.txt"
+    ],
+    "inconsistent_agency_timezone": [
+      "agency.txt"
+    ],
+    "inconsistent_route_type_for_in_seat_transfer": [
+      "routes.txt",
+      "transfers.txt"
+    ],
+    "invalid_pickup_drop_off_window": [
+      "stop_times.txt"
+    ],
+    "invalid_prior_notice_duration_min": [
+      "booking_rules.txt"
+    ],
+    "location_with_unexpected_stop_time": [
+      "stop_times.txt",
+      "stops.txt"
+    ],
+    "location_without_parent_station": [
+      "stops.txt"
+    ],
+    "missing_bike_allowance": [
+      "routes.txt",
+      "trips.txt"
+    ],
+    "missing_feed_contact_email_and_url": [
+      "feed_info.txt"
+    ],
+    "missing_feed_info_date": [
+      "feed_info.txt"
+    ],
+    "missing_level_id": [
+      "levels.txt",
+      "stops.txt"
+    ],
+    "missing_pickup_drop_off_booking_rule_id": [
+      "stop_times.txt"
+    ],
+    "missing_pickup_or_drop_off_window": [
+      "stop_times.txt"
+    ],
+    "missing_prior_day_booking_field_value": [
+      "booking_rules.txt"
+    ],
+    "missing_prior_notice_duration_min": [
+      "booking_rules.txt"
+    ],
+    "missing_prior_notice_last_day": [
+      "booking_rules.txt"
+    ],
+    "missing_prior_notice_last_time": [
+      "booking_rules.txt"
+    ],
+    "missing_prior_notice_start_time": [
+      "booking_rules.txt"
+    ],
+    "missing_stop_name": [
+      "stops.txt"
+    ],
+    "missing_stop_times_record": [
+      "stop_times.txt"
+    ],
+    "missing_timepoint_value": [
+      "stop_times.txt"
+    ],
+    "missing_trip_edge": [
+      "stop_times.txt"
+    ],
+    "pathway_dangling_generic_node": [
+      "pathways.txt",
+      "stops.txt"
+    ],
+    "pathway_loop": [
+      "pathways.txt"
+    ],
+    "pathway_to_platform_with_boarding_areas": [
+      "pathways.txt"
+    ],
+    "pathway_to_stop_with_access_outside_of_station_pathways": [
+      "pathways.txt",
+      "stops.txt"
+    ],
+    "pathway_to_wrong_location_type": [
+      "pathways.txt"
+    ],
+    "pathway_unreachable_location": [
+      "pathways.txt",
+      "stops.txt"
+    ],
+    "platform_without_parent_station": [
+      "stops.txt"
+    ],
+    "prior_notice_last_day_after_start_day": [
+      "booking_rules.txt"
+    ],
+    "route_both_short_and_long_name_missing": [
+      "routes.txt"
+    ],
+    "route_color_contrast": [
+      "routes.txt"
+    ],
+    "route_long_name_contains_short_name": [
+      "routes.txt"
+    ],
+    "route_short_name_too_long": [
+      "routes.txt"
+    ],
+    "same_name_and_description_for_route": [
+      "routes.txt"
+    ],
+    "same_name_and_description_for_stop": [
+      "stops.txt"
+    ],
+    "service_has_no_active_day_of_the_week": [
+      "calendar.txt"
+    ],
+    "single_shape_point": [
+      "shapes.txt"
+    ],
+    "station_with_parent_station": [
+      "stops.txt"
+    ],
+    "stop_access_specified_for_incorrect_location": [
+      "stops.txt"
+    ],
+    "stop_access_specified_for_stop_with_no_parent_station": [
+      "stops.txt"
+    ],
+    "stop_time_timepoint_without_times": [
+      "stop_times.txt"
+    ],
+    "stop_time_with_arrival_before_previous_departure_time": [
+      "stop_times.txt"
+    ],
+    "stop_time_with_only_arrival_or_departure_time": [
+      "stop_times.txt"
+    ],
+    "stop_without_location": [
+      "stops.txt"
+    ],
+    "stop_without_stop_time": [
+      "stop_times.txt",
+      "stops.txt"
+    ],
+    "stop_without_zone_id": [
+      "fare_rules.txt",
+      "routes.txt",
+      "stop_times.txt",
+      "stops.txt",
+      "trips.txt"
+    ],
+    "timeframe_only_start_or_end_time_specified": [
+      "timeframes.txt"
+    ],
+    "timeframe_start_or_end_time_greater_than_twenty_four_hours": [
+      "timeframes.txt"
+    ],
+    "transfer_distance_above_2_km": [
+      "stops.txt",
+      "transfers.txt"
+    ],
+    "transfer_distance_too_large": [
+      "stops.txt",
+      "transfers.txt"
+    ],
+    "transfer_with_invalid_stop_location_type": [
+      "transfers.txt"
+    ],
+    "transfer_with_invalid_trip_and_route": [
+      "transfers.txt",
+      "trips.txt"
+    ],
+    "transfer_with_invalid_trip_and_stop": [
+      "transfers.txt"
+    ],
+    "transfer_with_suspicious_mid_trip_in_seat": [
+      "stop_times.txt",
+      "stops.txt",
+      "transfers.txt"
+    ],
+    "translation_foreign_key_violation": [
+      "translations.txt"
+    ],
+    "translation_unexpected_value": [
+      "translations.txt"
+    ],
+    "translation_unknown_table_name": [
+      "translations.txt"
+    ],
+    "trip_headsign_matches_intermediate_stop": [
+      "stop_times.txt",
+      "stops.txt",
+      "trips.txt"
+    ],
+    "unusable_trip": [
+      "stop_times.txt",
+      "trips.txt"
+    ],
+    "unused_parent_station": [
+      "stops.txt"
+    ],
+    "unused_shape": [
+      "shapes.txt",
+      "trips.txt"
+    ],
+    "unused_station": [
+      "stops.txt"
+    ],
+    "unused_trip": [
+      "stop_times.txt",
+      "trips.txt"
+    ],
+    "wrong_parent_location_type": [
+      "stop_times.txt",
+      "stops.txt"
+    ]
+  }
+}
