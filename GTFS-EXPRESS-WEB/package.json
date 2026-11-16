@@ -37,7 +37,7 @@
     "leaflet": "^1.9.4",
     "leaflet-polylinedecorator": "^1.6.0",
     "maplibre-gl": "^6.14.0",
-    "pbf": "^4.0.2",
+    "pbf": "^5.1.2",
     "primereact": "^10.9.9",
     "qrcode-generator": "^2.0.4",
     "react": "^18.2.0",
