@@ -1,0 +1,13 @@
+node_modules/
+.env
+.env.local
+.env.production
+build/
+dist/
+npm-debug.log*
+*.log
+
+# Yarn (unused)
+yarn.lock
+.pnp.*
+.yarn/

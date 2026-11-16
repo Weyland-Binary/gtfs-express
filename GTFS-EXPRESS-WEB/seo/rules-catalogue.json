@@ -1,0 +1,1272 @@
+{
+  "updated": "2026-11-13",
+  "rules": {
+    "attribution_without_role": {
+      "severity": "warning",
+      "section": "attributions",
+      "mobilitydata": "attribution_without_role",
+      "fr": "Une ligne de attributions.txt ne met à 1 aucun des champs is_producer, is_operator et is_authority : l'organisation est créditée sans rôle.",
+      "en": "A row of attributions.txt sets none of is_producer, is_operator and is_authority to 1: the organisation is credited without a role."
+    },
+    "bidirectional_exit_gate": {
+      "severity": "error",
+      "section": "pathways",
+      "mobilitydata": "bidirectional_exit_gate",
+      "fr": "Un cheminement de pathways.txt est un portillon de sortie (pathway_mode=7) déclaré dans les deux sens (is_bidirectional=1). Un portillon de sortie ne se franchit que dans un sens.",
+      "en": "A pathway of pathways.txt is an exit gate (pathway_mode=7) declared in both directions (is_bidirectional=1). An exit gate is crossed one way only."
+    },
+    "big_gap_in_service": {
+      "severity": "info",
+      "section": "calendar",
+      "mobilitydata": "big_gap_in_service",
+      "fr": "Un service de calendar.txt ne circule aucun jour pendant plus de 13 jours de suite entre deux de ses dates actives, exceptions de calendar_dates.txt comprises. La notice donne le premier et le dernier jour de l'interruption.",
+      "en": "A service of calendar.txt runs on no day for more than 13 days in a row between two of its active dates, the exceptions of calendar_dates.txt counted. The notice gives the first and the last day of the gap."
+    },
+    "block_trips_with_overlapping_stop_times": {
+      "severity": "error",
+      "section": "cross_file",
+      "mobilitydata": "block_trips_with_overlapping_stop_times",
+      "fr": "Deux courses de trips.txt de même block_id circulent à des heures qui se chevauchent dans stop_times.txt, à une date au moins commune à leurs services : un même véhicule ne peut pas assurer les deux.",
+      "en": "Two trips of trips.txt with the same block_id run at overlapping times in stop_times.txt on at least one date their services share: one vehicle cannot run both."
+    },
+    "csv_parsing_failed": {
+      "severity": "error",
+      "section": "structure",
+      "mobilitydata": "csv_parsing_failed",
+      "fr": "Un fichier n'a pas pu être lu comme CSV. Une cause fréquente est une cellule de plus de 4 096 caractères.",
+      "en": "A file could not be read as CSV. A frequent cause is a cell of more than 4 096 characters."
+    },
+    "decreasing_or_equal_stop_time_distance": {
+      "severity": "error",
+      "section": "stop_times",
+      "mobilitydata": "decreasing_or_equal_stop_time_distance",
+      "fr": "Dans stop_times.txt, shape_dist_traveled n'augmente pas entre deux arrêts consécutifs d'une course, lus dans l'ordre de stop_sequence : la seconde valeur est inférieure ou égale à la première.",
+      "en": "In stop_times.txt, shape_dist_traveled does not increase between two consecutive stops of a trip, read in the order of stop_sequence: the second value is lower than or equal to the first."
+    },
+    "decreasing_shape_distance": {
+      "severity": "error",
+      "section": "shapes",
+      "mobilitydata": "decreasing_shape_distance",
+      "fr": "Dans shapes.txt, shape_dist_traveled diminue entre deux points consécutifs d'un tracé, lus dans l'ordre de shape_pt_sequence.",
+      "en": "In shapes.txt, shape_dist_traveled decreases between two consecutive points of a shape, read in the order of shape_pt_sequence."
+    },
+    "duplicate_fare_media": {
+      "severity": "warning",
+      "section": "fare",
+      "mobilitydata": "duplicate_fare_media",
+      "fr": "Deux lignes de fare_media.txt ont le même fare_media_name et le même fare_media_type : rien ne distingue les deux supports tarifaires.",
+      "en": "Two rows of fare_media.txt have the same fare_media_name and the same fare_media_type: nothing tells the two fare media apart."
+    },
+    "duplicate_geo_json_key": {
+      "severity": "error",
+      "section": "structure",
+      "mobilitydata": "duplicate_geo_json_key",
+      "fr": "Deux objets (features) de locations.geojson ont le même id. Chaque objet a son propre id.",
+      "en": "Two features of locations.geojson have the same id. Each feature has an id of its own."
+    },
+    "duplicate_geography_id": {
+      "severity": "error",
+      "section": "cross_file",
+      "mobilitydata": "duplicate_geography_id",
+      "fr": "Le même identifiant sert dans plusieurs des fichiers stops.txt (stop_id), location_groups.txt (location_group_id) et locations.geojson (id). Ces identifiants doivent être uniques d'un fichier à l'autre.",
+      "en": "The same identifier is used in more than one of stops.txt (stop_id), location_groups.txt (location_group_id) and locations.geojson (id). These identifiers must be unique across the three files."
+    },
+    "duplicate_key": {
+      "severity": "error",
+      "section": "structure",
+      "mobilitydata": "duplicate_key",
+      "fr": "Deux lignes d'un fichier ont la même clé primaire, par exemple le même stop_id dans stops.txt, ou le même trip_id et le même stop_sequence dans stop_times.txt.",
+      "en": "Two rows of a file have the same primary key, for example the same stop_id in stops.txt, or the same trip_id and stop_sequence in stop_times.txt."
+    },
+    "duplicate_route_name": {
+      "severity": "warning",
+      "section": "routes",
+      "mobilitydata": "duplicate_route_name",
+      "fr": "Deux lignes de routes.txt ont le même route_short_name, le même route_long_name, le même route_type et le même agency_id. Les deux sens d'une ligne forment une seule ligne ; deux lignes distinctes devraient se distinguer par un nom.",
+      "en": "Two routes of routes.txt have the same route_short_name, the same route_long_name, the same route_type and the same agency_id. The two directions of a line are one route; two distinct routes should differ by a name."
+    },
+    "duplicated_column": {
+      "severity": "error",
+      "section": "structure",
+      "mobilitydata": "duplicated_column",
+      "fr": "L'en-tête d'un fichier nomme deux fois la même colonne.",
+      "en": "The header of a file names the same column twice."
+    },
+    "empty_column_name": {
+      "severity": "error",
+      "section": "structure",
+      "mobilitydata": "empty_column_name",
+      "fr": "L'en-tête d'un fichier contient une colonne sans nom. Le validateur ignore cette colonne.",
+      "en": "The header of a file holds a column without a name. The validator skips such a column."
+    },
+    "empty_file": {
+      "severity": "error",
+      "section": "structure",
+      "mobilitydata": "empty_file",
+      "fr": "Un fichier de l'archive est vide : il n'a pas de ligne d'en-tête, ou c'est un fichier obligatoire sans aucune ligne de données.",
+      "en": "A file of the archive is empty: it has no header line, or it is a required file without any row of data."
+    },
+    "empty_row": {
+      "severity": "warning",
+      "section": "structure",
+      "mobilitydata": "empty_row",
+      "fr": "Une ligne d'un fichier ne contient que des espaces. Certains lecteurs CSV la prennent pour une ligne à une seule valeur vide.",
+      "en": "A row of a file holds only spaces. Some CSV readers take it for a row with a single empty value."
+    },
+    "equal_shape_distance_diff_coordinates": {
+      "severity": "error",
+      "section": "shapes",
+      "mobilitydata": "equal_shape_distance_diff_coordinates",
+      "fr": "Dans shapes.txt, deux points consécutifs d'un tracé ont le même shape_dist_traveled alors qu'ils sont distants de 1,11 m ou plus. La distance doit augmenter le long du tracé.",
+      "en": "In shapes.txt, two consecutive points of a shape have the same shape_dist_traveled while they stand 1.11 m or more apart. The distance must increase along the shape."
+    },
+    "equal_shape_distance_diff_coordinates_distance_below_threshold": {
+      "severity": "warning",
+      "section": "shapes",
+      "mobilitydata": "equal_shape_distance_diff_coordinates_distance_below_threshold",
+      "fr": "Dans shapes.txt, deux points consécutifs d'un tracé ont le même shape_dist_traveled et des coordonnées différentes, à moins de 1,11 m l'un de l'autre.",
+      "en": "In shapes.txt, two consecutive points of a shape have the same shape_dist_traveled and different coordinates less than 1.11 m apart."
+    },
+    "equal_shape_distance_same_coordinates": {
+      "severity": "warning",
+      "section": "shapes",
+      "mobilitydata": "equal_shape_distance_same_coordinates",
+      "fr": "Dans shapes.txt, deux points consécutifs d'un tracé ont le même shape_dist_traveled et les mêmes coordonnées : le point est écrit deux fois.",
+      "en": "In shapes.txt, two consecutive points of a shape have the same shape_dist_traveled and the same coordinates: the point is written twice."
+    },
+    "expired_calendar": {
+      "severity": "warning",
+      "section": "calendar",
+      "mobilitydata": "expired_calendar",
+      "fr": "La dernière date active d'un service, lue dans calendar.txt avec les exceptions de calendar_dates.txt, est passée. Dans un GTFS daté par calendar_dates.txt seul, les services ne sont signalés que lorsque tous sont terminés.",
+      "en": "The last active date of a service, read from calendar.txt with the exceptions of calendar_dates.txt, is in the past. In a GTFS dated by calendar_dates.txt alone, the services are reported only when every one of them has ended."
+    },
+    "fare_product_with_multiple_default_rider_categories": {
+      "severity": "error",
+      "section": "fare",
+      "mobilitydata": "fare_product_with_multiple_default_rider_categories",
+      "fr": "Un produit tarifaire de fare_products.txt est rattaché à plus d'une catégorie de voyageurs marquée par défaut (is_default_fare_category=1 dans rider_categories.txt). Un produit a au plus une catégorie par défaut.",
+      "en": "A fare product of fare_products.txt is tied to more than one rider category marked as default (is_default_fare_category=1 in rider_categories.txt). A product has one default category at most."
+    },
+    "fare_transfer_rule_duration_limit_type_without_duration_limit": {
+      "severity": "error",
+      "section": "fare",
+      "mobilitydata": "fare_transfer_rule_duration_limit_type_without_duration_limit",
+      "fr": "Une ligne de fare_transfer_rules.txt donne un duration_limit_type sans duration_limit.",
+      "en": "A row of fare_transfer_rules.txt gives a duration_limit_type and no duration_limit."
+    },
+    "fare_transfer_rule_duration_limit_without_type": {
+      "severity": "error",
+      "section": "fare",
+      "mobilitydata": "fare_transfer_rule_duration_limit_without_type",
+      "fr": "Une ligne de fare_transfer_rules.txt donne un duration_limit sans duration_limit_type.",
+      "en": "A row of fare_transfer_rules.txt gives a duration_limit and no duration_limit_type."
+    },
+    "fare_transfer_rule_invalid_transfer_count": {
+      "severity": "error",
+      "section": "fare",
+      "mobilitydata": "fare_transfer_rule_invalid_transfer_count",
+      "fr": "Une ligne de fare_transfer_rules.txt dont from_leg_group_id égale to_leg_group_id a un transfer_count qui n'est ni -1 (sans limite) ni supérieur ou égal à 1.",
+      "en": "A row of fare_transfer_rules.txt whose from_leg_group_id equals its to_leg_group_id has a transfer_count that is neither -1 (no limit) nor 1 or more."
+    },
+    "fare_transfer_rule_missing_transfer_count": {
+      "severity": "error",
+      "section": "fare",
+      "mobilitydata": "fare_transfer_rule_missing_transfer_count",
+      "fr": "Ancien nom de fare_transfer_rule_without_transfer_count. Le validateur l'a renommé en version 8.0 et ne l'émet plus sous ce code.",
+      "en": "Former name of fare_transfer_rule_without_transfer_count. The validator renamed it in version 8.0 and no longer raises it under this code."
+    },
+    "fare_transfer_rule_with_forbidden_transfer_count": {
+      "severity": "error",
+      "section": "fare",
+      "mobilitydata": "fare_transfer_rule_with_forbidden_transfer_count",
+      "fr": "Une ligne de fare_transfer_rules.txt donne un transfer_count alors que son from_leg_group_id diffère de son to_leg_group_id. Ce nombre n'est permis que lorsque les deux sont identiques.",
+      "en": "A row of fare_transfer_rules.txt gives a transfer_count while its from_leg_group_id differs from its to_leg_group_id. The count is allowed only when the two are the same."
+    },
+    "fare_transfer_rule_without_transfer_count": {
+      "severity": "error",
+      "section": "fare",
+      "mobilitydata": "fare_transfer_rule_without_transfer_count",
+      "fr": "Une ligne de fare_transfer_rules.txt a le même from_leg_group_id et to_leg_group_id, sans transfer_count. Ce nombre est obligatoire lorsque les deux sont identiques.",
+      "en": "A row of fare_transfer_rules.txt has the same from_leg_group_id and to_leg_group_id and no transfer_count. The count is required when the two are the same."
+    },
+    "fast_travel_between_consecutive_stops": {
+      "severity": "warning",
+      "section": "stop_times",
+      "mobilitydata": "fast_travel_between_consecutive_stops",
+      "fr": "Entre deux arrêts consécutifs d'une course, la distance entre les arrêts de stops.txt et les heures de stop_times.txt donnent une vitesse supérieure à ce que permet le route_type de routes.txt : 100 km/h pour un tramway, 150 pour un métro, un bus, un trolleybus ou un monorail, 500 pour un train, 80 pour un ferry, 30 pour un tramway à câble, 50 pour un téléphérique ou un funiculaire, 200 pour tout autre type. Des heures écrites à la minute reçoivent une minute de plus.",
+      "en": "Between two consecutive stops of a trip, the distance between the stops of stops.txt and the times of stop_times.txt give a speed above what the route_type of routes.txt allows: 100 km/h for a tram, 150 for a metro, a bus, a trolleybus or a monorail, 500 for a train, 80 for a ferry, 30 for a cable tram, 50 for an aerial lift or a funicular, 200 for any other type. Times written to the minute are given one more minute."
+    },
+    "fast_travel_between_far_stops": {
+      "severity": "warning",
+      "section": "stop_times",
+      "mobilitydata": "fast_travel_between_far_stops",
+      "fr": "Entre deux arrêts d'une course distants de plus de 10 km, la distance et les heures de stop_times.txt donnent une vitesse supérieure à ce que permet le route_type, avec les limites de fast_travel_between_consecutive_stops. Le défaut est en général plus grave qu'un tronçon trop rapide entre deux arrêts voisins.",
+      "en": "Between two stops of a trip more than 10 km apart, the distance and the times of stop_times.txt give a speed above what the route_type allows, with the limits of fast_travel_between_consecutive_stops. It usually points to a more serious error than a fast leg between two neighbouring stops."
+    },
+    "feed_expiration_date30_days": {
+      "severity": "warning",
+      "section": "feed_info",
+      "mobilitydata": "feed_expiration_date30_days",
+      "fr": "Le feed_end_date de feed_info.txt tombe dans moins de 30 jours, et dans 7 jours ou plus (en dessous, le validateur émet feed_expiration_date7_days). Un GTFS publié devrait couvrir au moins les 30 prochains jours de service.",
+      "en": "The feed_end_date of feed_info.txt is less than 30 days away, and 7 days or more (under 7 days the validator raises feed_expiration_date7_days). A published GTFS should cover at least the next 30 days of service."
+    },
+    "feed_expiration_date7_days": {
+      "severity": "warning",
+      "section": "feed_info",
+      "mobilitydata": "feed_expiration_date7_days",
+      "fr": "Le feed_end_date de feed_info.txt tombe dans moins de 7 jours, ou est déjà passé. Un GTFS publié devrait rester valable au moins les 7 prochains jours.",
+      "en": "The feed_end_date of feed_info.txt is less than 7 days away, or already past. A published GTFS should stay valid for at least the next 7 days."
+    },
+    "feed_info_lang_and_agency_lang_mismatch": {
+      "severity": "warning",
+      "section": "feed_info",
+      "mobilitydata": "feed_info_lang_and_agency_lang_mismatch",
+      "fr": "Le agency_lang d'un exploitant de agency.txt diffère du feed_lang de feed_info.txt. Un GTFS dont les textes sont en plusieurs langues déclare feed_lang=mul, que le validateur accepte avec tout agency_lang.",
+      "en": "The agency_lang of an agency in agency.txt differs from the feed_lang of feed_info.txt. A GTFS whose texts are in several languages declares feed_lang=mul, which the validator accepts with any agency_lang."
+    },
+    "feed_valid_beyond_total_service_window": {
+      "severity": "info",
+      "section": "feed_info",
+      "mobilitydata": "feed_valid_beyond_total_service_window",
+      "fr": "La validité déclarée dans feed_info.txt commence plus de 14 jours avant le premier jour de service des courses, ou finit plus de 14 jours après leur dernier jour, tels que calendar.txt et calendar_dates.txt les datent.",
+      "en": "The validity declared in feed_info.txt starts more than 14 days before the first day of service of the trips, or ends more than 14 days after their last day, as calendar.txt and calendar_dates.txt date them."
+    },
+    "forbidden_arrival_or_departure_time": {
+      "severity": "error",
+      "section": "stop_times",
+      "mobilitydata": "forbidden_arrival_or_departure_time",
+      "fr": "Une ligne de stop_times.txt donne un arrival_time ou un departure_time en même temps qu'un start_pickup_drop_off_window ou un end_pickup_drop_off_window. Un horaire a soit des heures, soit une fenêtre.",
+      "en": "A row of stop_times.txt gives an arrival_time or a departure_time together with a start_pickup_drop_off_window or an end_pickup_drop_off_window. A stop time has either times or a window."
+    },
+    "forbidden_continuous_pickup_drop_off": {
+      "severity": "error",
+      "section": "stop_times",
+      "mobilitydata": "forbidden_continuous_pickup_drop_off",
+      "fr": "Une ligne de routes.txt déclare continuous_pickup ou continuous_drop_off à 0, 2 ou 3 alors qu'un horaire de stop_times.txt d'une de ses courses donne un start_pickup_drop_off_window ou un end_pickup_drop_off_window. La montée ou la descente en continu ne se combine pas avec une fenêtre.",
+      "en": "A route of routes.txt declares continuous_pickup or continuous_drop_off at 0, 2 or 3 while a row of stop_times.txt of one of its trips gives a start_pickup_drop_off_window or an end_pickup_drop_off_window. Continuous pickup or drop-off cannot be combined with a window."
+    },
+    "forbidden_drop_off_type": {
+      "severity": "error",
+      "section": "stop_times",
+      "mobilitydata": "forbidden_drop_off_type",
+      "fr": "Une ligne de stop_times.txt donne une fenêtre de prise en charge ou de dépose avec drop_off_type=0 (descente régulière). Les champs de fenêtre sont interdits avec une descente régulière.",
+      "en": "A row of stop_times.txt gives a pickup or drop-off window with drop_off_type=0 (regular drop-off). The window fields are forbidden with a regular drop-off."
+    },
+    "forbidden_geography_id": {
+      "severity": "error",
+      "section": "stop_times",
+      "mobilitydata": "forbidden_geography_id",
+      "fr": "Une ligne de stop_times.txt renseigne plus d'un des champs stop_id, location_group_id et location_id. Un horaire ne désigne qu'un seul lieu.",
+      "en": "A row of stop_times.txt fills more than one of stop_id, location_group_id and location_id. A stop time names one place only."
+    },
+    "forbidden_pickup_type": {
+      "severity": "error",
+      "section": "stop_times",
+      "mobilitydata": "forbidden_pickup_type",
+      "fr": "Une ligne de stop_times.txt donne une fenêtre de prise en charge ou de dépose avec pickup_type=0 (montée régulière) ou 3 (à convenir avec le conducteur). Les champs de fenêtre sont interdits avec ces deux valeurs.",
+      "en": "A row of stop_times.txt gives a pickup or drop-off window with pickup_type=0 (regular pickup) or 3 (to arrange with the driver). The window fields are forbidden with these two values."
+    },
+    "forbidden_prior_day_booking_field_value": {
+      "severity": "error",
+      "section": "fare",
+      "mobilitydata": "forbidden_prior_day_booking_field_value",
+      "fr": "Une ligne de booking_rules.txt de booking_type=2 (réservation jusqu'à un jour précédent) renseigne prior_notice_duration_min ou prior_notice_duration_max, propres à la réservation le jour même.",
+      "en": "A row of booking_rules.txt with booking_type=2 (booking up to a prior day) fills prior_notice_duration_min or prior_notice_duration_max, which belong to same-day booking."
+    },
+    "forbidden_prior_notice_start_day": {
+      "severity": "error",
+      "section": "fare",
+      "mobilitydata": "forbidden_prior_notice_start_day",
+      "fr": "Une ligne de booking_rules.txt renseigne prior_notice_start_day en même temps que prior_notice_duration_max. Les deux ne se combinent pas.",
+      "en": "A row of booking_rules.txt fills prior_notice_start_day together with prior_notice_duration_max. The two cannot be combined."
+    },
+    "forbidden_prior_notice_start_time": {
+      "severity": "error",
+      "section": "fare",
+      "mobilitydata": "forbidden_prior_notice_start_time",
+      "fr": "Une ligne de booking_rules.txt renseigne prior_notice_start_time sans prior_notice_start_day.",
+      "en": "A row of booking_rules.txt fills prior_notice_start_time without prior_notice_start_day."
+    },
+    "forbidden_real_time_booking_field_value": {
+      "severity": "error",
+      "section": "fare",
+      "mobilitydata": "forbidden_real_time_booking_field_value",
+      "fr": "Une ligne de booking_rules.txt de booking_type=0 (réservation en temps réel) renseigne un champ de préavis : prior_notice_duration_min, prior_notice_duration_max, prior_notice_last_day, prior_notice_last_time, prior_notice_start_day, prior_notice_start_time ou prior_notice_service_id.",
+      "en": "A row of booking_rules.txt with booking_type=0 (real-time booking) fills a field of advance notice: prior_notice_duration_min, prior_notice_duration_max, prior_notice_last_day, prior_notice_last_time, prior_notice_start_day, prior_notice_start_time or prior_notice_service_id."
+    },
+    "forbidden_same_day_booking_field_value": {
+      "severity": "error",
+      "section": "fare",
+      "mobilitydata": "forbidden_same_day_booking_field_value",
+      "fr": "Une ligne de booking_rules.txt de booking_type=1 (réservation le jour même) renseigne prior_notice_last_day, prior_notice_last_time ou prior_notice_service_id, propres à la réservation un jour précédent.",
+      "en": "A row of booking_rules.txt with booking_type=1 (same-day booking) fills prior_notice_last_day, prior_notice_last_time or prior_notice_service_id, which belong to booking on a prior day."
+    },
+    "forbidden_shape_dist_traveled": {
+      "severity": "error",
+      "section": "stop_times",
+      "mobilitydata": "forbidden_shape_dist_traveled",
+      "fr": "Une ligne de stop_times.txt qui désigne un location_group_id ou un location_id, sans stop_id, donne un shape_dist_traveled. La distance le long du tracé ne vaut que pour un arrêt.",
+      "en": "A row of stop_times.txt that names a location_group_id or a location_id, and no stop_id, gives a shape_dist_traveled. The distance along the shape is meant for stops only."
+    },
+    "foreign_key_violation": {
+      "severity": "error",
+      "section": "cross_file",
+      "mobilitydata": "foreign_key_violation",
+      "fr": "Une valeur renvoie à un enregistrement que son fichier parent ne contient pas, par exemple un route_id de trips.txt absent de routes.txt, ou un service_id de trips.txt qui n'est ni dans calendar.txt ni dans calendar_dates.txt.",
+      "en": "A value refers to a record that its parent file does not hold, for example a route_id of trips.txt absent from routes.txt, or a service_id of trips.txt found neither in calendar.txt nor in calendar_dates.txt."
+    },
+    "future_calendar": {
+      "severity": "info",
+      "section": "calendar",
+      "mobilitydata": "future_calendar",
+      "fr": "Tous les services utilisés par les courses commencent après aujourd'hui, tels que calendar.txt et calendar_dates.txt les datent : aucun service ne couvre la date du jour.",
+      "en": "Every service the trips use starts after today, as calendar.txt and calendar_dates.txt date them: no service covers today's date."
+    },
+    "future_feed": {
+      "severity": "info",
+      "section": "feed_info",
+      "mobilitydata": "future_feed",
+      "fr": "Le feed_start_date de feed_info.txt est postérieur à aujourd'hui : le GTFS ne couvre que l'avenir.",
+      "en": "The feed_start_date of feed_info.txt is after today: the GTFS covers the future only."
+    },
+    "geo_json_duplicated_element": {
+      "severity": "error",
+      "section": "structure",
+      "mobilitydata": "geo_json_duplicated_element",
+      "fr": "Un élément de locations.geojson, comme type ou features, est écrit plusieurs fois dans un même objet.",
+      "en": "An element of locations.geojson, such as type or features, is written more than once in the same object."
+    },
+    "geo_json_unknown_element": {
+      "severity": "info",
+      "section": "structure",
+      "mobilitydata": "geo_json_unknown_element",
+      "fr": "locations.geojson contient un élément que la spécification GTFS n'y définit pas.",
+      "en": "locations.geojson holds an element the GTFS specification does not define there."
+    },
+    "i_o_error": {
+      "severity": "error",
+      "section": "structure",
+      "mobilitydata": "i_o_error",
+      "fr": "Le validateur a rencontré une erreur d'entrée ou de sortie en lisant le GTFS. C'est une panne de la validation, pas un défaut des données.",
+      "en": "The validator met an input or output error while it read the GTFS. It is a failure of the validation, not a defect of the data."
+    },
+    "inconsistent_agency_lang": {
+      "severity": "warning",
+      "section": "agency",
+      "mobilitydata": "inconsistent_agency_lang",
+      "fr": "Les exploitants de agency.txt déclarent des agency_lang différents.",
+      "en": "The agencies of agency.txt declare different values of agency_lang."
+    },
+    "inconsistent_agency_timezone": {
+      "severity": "error",
+      "section": "agency",
+      "mobilitydata": "inconsistent_agency_timezone",
+      "fr": "Les exploitants de agency.txt déclarent des agency_timezone différents. Tous les exploitants d'un GTFS doivent être sur le même fuseau horaire.",
+      "en": "The agencies of agency.txt declare different values of agency_timezone. Every agency of a GTFS must be in the same time zone."
+    },
+    "inconsistent_route_type_for_block_id": {
+      "severity": "warning",
+      "section": "trips",
+      "mobilitydata": "inconsistent_route_type_for_block_id",
+      "fr": "Les courses de trips.txt qui partagent un block_id appartiennent à des lignes de route_type différents dans routes.txt. Un même véhicule assure un bloc : ses courses devraient être d'un seul mode.",
+      "en": "The trips of trips.txt sharing a block_id belong to routes of different route_type in routes.txt. One vehicle runs a block, so its trips should be of one mode."
+    },
+    "inconsistent_route_type_for_in_seat_transfer": {
+      "severity": "warning",
+      "section": "transfers",
+      "mobilitydata": "inconsistent_route_type_for_in_seat_transfer",
+      "fr": "Une ligne de transfers.txt de transfer_type=4 (le voyageur reste à bord) relie un from_route_id et un to_route_id de route_type différents dans routes.txt. Une telle correspondance devrait rester dans un même mode.",
+      "en": "A row of transfers.txt with transfer_type=4 (the rider stays on board) links a from_route_id and a to_route_id of different route_type in routes.txt. Such a transfer should stay within one mode."
+    },
+    "invalid_character": {
+      "severity": "error",
+      "section": "structure",
+      "mobilitydata": "invalid_character",
+      "fr": "Une valeur contient un caractère qui n'est pas du texte, comme le caractère de remplacement U+FFFD : le fichier n'a sans doute pas été enregistré en UTF-8, l'encodage que GTFS impose.",
+      "en": "A value holds a character that is no text, such as the replacement character U+FFFD: the file was probably not saved in UTF-8, the encoding GTFS requires."
+    },
+    "invalid_color": {
+      "severity": "error",
+      "section": "routes",
+      "mobilitydata": "invalid_color",
+      "fr": "Un champ de couleur n'est pas écrit en six chiffres hexadécimaux sans le # initial, comme FFFFFF pour le blanc ou 0039A6.",
+      "en": "A colour field is not six hexadecimal digits without the leading #, such as FFFFFF for white or 0039A6."
+    },
+    "invalid_currency": {
+      "severity": "error",
+      "section": "fare",
+      "mobilitydata": "invalid_currency",
+      "fr": "Un champ de devise ne contient pas un code ISO 4217, comme EUR, CAD ou JPY.",
+      "en": "A currency field does not hold an ISO 4217 code, such as EUR, CAD or JPY."
+    },
+    "invalid_currency_amount": {
+      "severity": "error",
+      "section": "fare",
+      "mobilitydata": "invalid_currency_amount",
+      "fr": "Un montant n'a pas le nombre de décimales de sa devise (ISO 4217) : deux pour EUR, aucune pour JPY.",
+      "en": "An amount does not have the number of decimal places its currency takes (ISO 4217): two for EUR, none for JPY."
+    },
+    "invalid_date": {
+      "severity": "error",
+      "section": "calendar",
+      "mobilitydata": "invalid_date",
+      "fr": "Une date n'est pas écrite sous la forme AAAAMMJJ, comme 20180913 pour le 13 septembre 2018.",
+      "en": "A date is not written as YYYYMMDD, such as 20180913 for 13 September 2018."
+    },
+    "invalid_email": {
+      "severity": "error",
+      "section": "structure",
+      "mobilitydata": "invalid_email",
+      "fr": "Un champ contient une adresse e-mail mal formée. Le validateur la contrôle avec l'EmailValidator d'Apache Commons.",
+      "en": "A field holds an e-mail address that is not well formed. The validator checks it with the Apache Commons EmailValidator."
+    },
+    "invalid_float": {
+      "severity": "error",
+      "section": "structure",
+      "mobilitydata": "invalid_float",
+      "fr": "Un champ qui attend un nombre décimal contient une valeur qui ne se lit pas comme tel.",
+      "en": "A field that takes a decimal number holds a value that cannot be read as one."
+    },
+    "invalid_geometry": {
+      "severity": "error",
+      "section": "structure",
+      "mobilitydata": "invalid_geometry",
+      "fr": "Un polygone de locations.geojson est illisible ou invalide, au sens où la spécification OpenGIS Simple Features définit un polygone valide.",
+      "en": "A polygon of locations.geojson cannot be read or is not valid, as the OpenGIS Simple Features specification defines a valid polygon."
+    },
+    "invalid_input_files_in_subfolder": {
+      "severity": "error",
+      "section": "structure",
+      "mobilitydata": "invalid_input_files_in_subfolder",
+      "fr": "Au moins un fichier GTFS se trouve dans un sous-dossier de l'archive. Les fichiers doivent être à sa racine : compressez les fichiers eux-mêmes, pas le dossier qui les contient.",
+      "en": "At least one GTFS file sits in a subfolder of the archive. The files must be at its root: zip the files themselves, not the folder that holds them."
+    },
+    "invalid_integer": {
+      "severity": "error",
+      "section": "structure",
+      "mobilitydata": "invalid_integer",
+      "fr": "Un champ qui attend un nombre entier contient une valeur qui ne se lit pas comme tel.",
+      "en": "A field that takes a whole number holds a value that cannot be read as one."
+    },
+    "invalid_language_code": {
+      "severity": "error",
+      "section": "agency",
+      "mobilitydata": "invalid_language_code",
+      "fr": "Un champ de langue ne contient pas un code IETF BCP 47, comme fr, en-US ou de.",
+      "en": "A language field does not hold an IETF BCP 47 code, such as en, en-US or de."
+    },
+    "invalid_phone_number": {
+      "severity": "error",
+      "section": "agency",
+      "mobilitydata": "invalid_phone_number",
+      "fr": "Un numéro de téléphone est mal formé pour le pays du GTFS. Le validateur ne le contrôle que lorsqu'un code de pays lui est donné.",
+      "en": "A phone number is not well formed for the country of the GTFS. The validator checks it only when it is given a country code."
+    },
+    "invalid_pickup_drop_off_window": {
+      "severity": "error",
+      "section": "stop_times",
+      "mobilitydata": "invalid_pickup_drop_off_window",
+      "fr": "Dans une ligne de stop_times.txt, end_pickup_drop_off_window n'est pas postérieur à start_pickup_drop_off_window.",
+      "en": "In a row of stop_times.txt, end_pickup_drop_off_window is not after start_pickup_drop_off_window."
+    },
+    "invalid_prior_notice_duration_min": {
+      "severity": "error",
+      "section": "fare",
+      "mobilitydata": "invalid_prior_notice_duration_min",
+      "fr": "Dans une ligne de booking_rules.txt, prior_notice_duration_max est inférieur à prior_notice_duration_min.",
+      "en": "In a row of booking_rules.txt, prior_notice_duration_max is lower than prior_notice_duration_min."
+    },
+    "invalid_row_length": {
+      "severity": "error",
+      "section": "structure",
+      "mobilitydata": "invalid_row_length",
+      "fr": "Une ligne d'un fichier n'a pas autant de valeurs que l'en-tête a de colonnes.",
+      "en": "A row of a file does not have as many values as the header has columns."
+    },
+    "invalid_time": {
+      "severity": "error",
+      "section": "stop_times",
+      "mobilitydata": "invalid_time",
+      "fr": "Une heure n'est pas écrite sous la forme H:MM:SS, HH:MM:SS ou HHH:MM:SS, comme 14:30:00, ou 25:35:00 pour 1 h 35 le lendemain matin.",
+      "en": "A time is not written as H:MM:SS, HH:MM:SS or HHH:MM:SS, such as 14:30:00, or 25:35:00 for 1:35 the next morning."
+    },
+    "invalid_timezone": {
+      "severity": "error",
+      "section": "agency",
+      "mobilitydata": "invalid_timezone",
+      "fr": "Un fuseau horaire n'est pas un nom de la base IANA, comme Europe/Paris ou America/Los_Angeles. Un nom de fuseau ne contient pas d'espace.",
+      "en": "A time zone is not a name of the IANA database, such as Europe/Paris or America/Los_Angeles. A zone name holds no space."
+    },
+    "invalid_url": {
+      "severity": "error",
+      "section": "agency",
+      "mobilitydata": "invalid_url",
+      "fr": "Un champ contient une adresse web mal formée. Le validateur la contrôle avec l'UrlValidator d'Apache Commons.",
+      "en": "A field holds a web address that is not well formed. The validator checks it with the Apache Commons UrlValidator."
+    },
+    "leading_or_trailing_whitespaces": {
+      "severity": "warning",
+      "section": "structure",
+      "mobilitydata": "leading_or_trailing_whitespaces",
+      "fr": "Une valeur écrite entre guillemets doubles commence ou finit par une espace. Le validateur lit la valeur sans elle, mais un identifiant écrit avec l'espace dans un fichier et sans elle dans un autre peut ne pas se correspondre pour d'autres outils.",
+      "en": "A value written between double quotes starts or ends with a space. The validator reads the value without it, but an identifier written with the space in one file and without it in another may not match for other tools."
+    },
+    "location_with_unexpected_stop_time": {
+      "severity": "error",
+      "section": "stop_times",
+      "mobilitydata": "location_with_unexpected_stop_time",
+      "fr": "Une ligne de stop_times.txt désigne par son stop_id un lieu de stops.txt qui n'est pas un arrêt ou un quai : son location_type n'est ni 0 ni vide. Une course dessert des arrêts, pas des stations, des entrées ou des nœuds.",
+      "en": "A row of stop_times.txt names by its stop_id a location of stops.txt that is not a stop or platform: its location_type is not 0 or empty. Trips call at stops, not at stations, entrances or nodes."
+    },
+    "location_without_parent_station": {
+      "severity": "error",
+      "section": "stops",
+      "mobilitydata": "location_without_parent_station",
+      "fr": "Une entrée (location_type=2), un nœud générique (3) ou une zone d'embarquement (4) de stops.txt n'a pas de parent_station.",
+      "en": "An entrance (location_type=2), a generic node (3) or a boarding area (4) of stops.txt has no parent_station."
+    },
+    "malformed_json": {
+      "severity": "error",
+      "section": "structure",
+      "mobilitydata": "malformed_json",
+      "fr": "locations.geojson ne se lit pas comme du JSON : le fichier est mal formé.",
+      "en": "locations.geojson cannot be read as JSON: the file is not well formed."
+    },
+    "missing_bike_allowance": {
+      "severity": "warning",
+      "section": "trips",
+      "mobilitydata": "missing_bike_allowance",
+      "fr": "Une course d'une ligne de ferry (route_type=4 dans routes.txt) ne dit pas dans trips.txt si les vélos sont admis : son bikes_allowed est vide ou vaut 0.",
+      "en": "A trip of a ferry route (route_type=4 in routes.txt) does not say in trips.txt whether bikes are allowed: its bikes_allowed is empty or 0."
+    },
+    "missing_calendar_and_calendar_date_files": {
+      "severity": "error",
+      "section": "calendar",
+      "mobilitydata": "missing_calendar_and_calendar_date_files",
+      "fr": "calendar.txt et calendar_dates.txt sont tous deux absents. L'un des deux au moins doit dater les services.",
+      "en": "Both calendar.txt and calendar_dates.txt are missing. At least one of them must date the services."
+    },
+    "missing_feed_contact_email_and_url": {
+      "severity": "warning",
+      "section": "feed_info",
+      "mobilitydata": "missing_feed_contact_email_and_url",
+      "fr": "feed_info.txt ne donne ni feed_contact_email ni feed_contact_url : personne ne peut signaler un problème de données à son éditeur.",
+      "en": "feed_info.txt gives neither feed_contact_email nor feed_contact_url: nobody can report a problem with the data to its publisher."
+    },
+    "missing_feed_info_date": {
+      "severity": "warning",
+      "section": "feed_info",
+      "mobilitydata": "missing_feed_info_date",
+      "fr": "feed_info.txt ne donne qu'une des deux dates feed_start_date et feed_end_date. Les deux sont facultatives, mais l'une ne devrait pas aller sans l'autre.",
+      "en": "feed_info.txt gives only one of feed_start_date and feed_end_date. Both are optional, but one should not go without the other."
+    },
+    "missing_level_id": {
+      "severity": "error",
+      "section": "levels",
+      "mobilitydata": "missing_level_id",
+      "fr": "Un lieu de stops.txt à une extrémité d'un cheminement par ascenseur (pathway_mode=5 dans pathways.txt) n'a pas de level_id. Un ascenseur demande le niveau de chacune de ses extrémités.",
+      "en": "A location of stops.txt at one end of an elevator pathway (pathway_mode=5 in pathways.txt) has no level_id. An elevator needs the level of each of its ends."
+    },
+    "missing_pickup_drop_off_booking_rule_id": {
+      "severity": "warning",
+      "section": "stop_times",
+      "mobilitydata": "missing_pickup_drop_off_booking_rule_id",
+      "fr": "Une ligne de stop_times.txt avec une fenêtre de prise en charge ou de dépose demande de téléphoner à l'exploitant (pickup_type=2 ou drop_off_type=2) sans le pickup_booking_rule_id ou le drop_off_booking_rule_id correspondant, alors que le GTFS a un booking_rules.txt.",
+      "en": "A row of stop_times.txt with a pickup or drop-off window asks riders to phone the agency (pickup_type=2 or drop_off_type=2) without the matching pickup_booking_rule_id or drop_off_booking_rule_id, while the GTFS has a booking_rules.txt."
+    },
+    "missing_pickup_or_drop_off_window": {
+      "severity": "error",
+      "section": "stop_times",
+      "mobilitydata": "missing_pickup_or_drop_off_window",
+      "fr": "Une ligne de stop_times.txt ne donne qu'un des deux champs start_pickup_drop_off_window et end_pickup_drop_off_window. Une fenêtre a son début et sa fin.",
+      "en": "A row of stop_times.txt gives only one of start_pickup_drop_off_window and end_pickup_drop_off_window. A window has both its start and its end."
+    },
+    "missing_prior_day_booking_field_value": {
+      "severity": "error",
+      "section": "fare",
+      "mobilitydata": "missing_prior_day_booking_field_value",
+      "fr": "Ancienne notice pour une règle de réservation un jour précédent sans son dernier jour ou sa dernière heure. Depuis la version 7.0.0, le validateur émet à sa place missing_prior_notice_last_day et missing_prior_notice_last_time.",
+      "en": "Former notice for a prior-day booking rule without its last day or its last time. Since version 7.0.0 the validator raises missing_prior_notice_last_day and missing_prior_notice_last_time in its place."
+    },
+    "missing_prior_notice_duration_min": {
+      "severity": "error",
+      "section": "fare",
+      "mobilitydata": "missing_prior_notice_duration_min",
+      "fr": "Une ligne de booking_rules.txt de booking_type=1 (réservation le jour même) n'a pas de prior_notice_duration_min.",
+      "en": "A row of booking_rules.txt with booking_type=1 (same-day booking) has no prior_notice_duration_min."
+    },
+    "missing_prior_notice_last_day": {
+      "severity": "error",
+      "section": "fare",
+      "mobilitydata": "missing_prior_notice_last_day",
+      "fr": "Une ligne de booking_rules.txt de booking_type=2 (réservation jusqu'à un jour précédent) n'a pas de prior_notice_last_day.",
+      "en": "A row of booking_rules.txt with booking_type=2 (booking up to a prior day) has no prior_notice_last_day."
+    },
+    "missing_prior_notice_last_time": {
+      "severity": "error",
+      "section": "fare",
+      "mobilitydata": "missing_prior_notice_last_time",
+      "fr": "Une ligne de booking_rules.txt de booking_type=2 (réservation jusqu'à un jour précédent) n'a pas de prior_notice_last_time.",
+      "en": "A row of booking_rules.txt with booking_type=2 (booking up to a prior day) has no prior_notice_last_time."
+    },
+    "missing_prior_notice_start_time": {
+      "severity": "error",
+      "section": "fare",
+      "mobilitydata": "missing_prior_notice_start_time",
+      "fr": "Une ligne de booking_rules.txt renseigne prior_notice_start_day sans prior_notice_start_time.",
+      "en": "A row of booking_rules.txt fills prior_notice_start_day without prior_notice_start_time."
+    },
+    "missing_recommended_column": {
+      "severity": "warning",
+      "section": "structure",
+      "mobilitydata": "missing_recommended_column",
+      "fr": "Une colonne recommandée est absente d'un fichier. Le validateur garde cette notice dans sa liste depuis la version 7.0.0 sans plus l'émettre.",
+      "en": "A recommended column is missing from a file. The validator has kept this notice in its list since version 7.0.0 without raising it any more."
+    },
+    "missing_recommended_field": {
+      "severity": "warning",
+      "section": "data_quality",
+      "mobilitydata": "missing_recommended_field",
+      "fr": "Un champ que la spécification recommande est vide dans une ligne, par exemple le agency_id d'une ligne de routes.txt quand le GTFS n'a qu'un exploitant.",
+      "en": "A field the specification recommends is empty in a row, for example the agency_id of a route in routes.txt when the GTFS has a single agency."
+    },
+    "missing_recommended_file": {
+      "severity": "warning",
+      "section": "structure",
+      "mobilitydata": "missing_recommended_file",
+      "fr": "Un fichier que la spécification recommande est absent de l'archive, comme feed_info.txt.",
+      "en": "A file the specification recommends is missing from the archive, such as feed_info.txt."
+    },
+    "missing_required_agency_id": {
+      "severity": "error",
+      "section": "agency",
+      "mobilitydata": "missing_required_agency_id",
+      "fr": "Le GTFS a plusieurs exploitants et un agency_id est vide dans agency.txt, routes.txt ou fare_attributes.txt. L'identifiant est obligatoire dès qu'il y a plusieurs exploitants.",
+      "en": "The GTFS has more than one agency and an agency_id is empty in agency.txt, routes.txt or fare_attributes.txt. The identifier is required as soon as there are several agencies."
+    },
+    "missing_required_column": {
+      "severity": "error",
+      "section": "structure",
+      "mobilitydata": "missing_required_column",
+      "fr": "Une colonne que la spécification impose est absente de l'en-tête d'un fichier.",
+      "en": "A column the specification requires is missing from the header of a file."
+    },
+    "missing_required_element": {
+      "severity": "error",
+      "section": "structure",
+      "mobilitydata": "missing_required_element",
+      "fr": "Il manque à locations.geojson un élément que la spécification impose, comme le type de la collection, l'id d'un objet ou sa géométrie.",
+      "en": "locations.geojson lacks an element the specification requires, such as the type of the collection, the id of a feature or its geometry."
+    },
+    "missing_required_field": {
+      "severity": "error",
+      "section": "structure",
+      "mobilitydata": "missing_required_field",
+      "fr": "Un champ requis est vide dans une ligne où la spécification impose une valeur, comme stop_id, trip_id ou route_id.",
+      "en": "A required field is empty in a row where the specification asks for a value, such as stop_id, trip_id or route_id."
+    },
+    "missing_required_file": {
+      "severity": "error",
+      "section": "structure",
+      "mobilitydata": "missing_required_file",
+      "fr": "Un fichier que la spécification impose est absent de l'archive, comme agency.txt, routes.txt, trips.txt ou stop_times.txt. Quand tous les fichiers obligatoires sont signalés, c'est sans doute le dossier qui a été compressé à la place de ses fichiers.",
+      "en": "A file the specification requires is missing from the archive, such as agency.txt, routes.txt, trips.txt or stop_times.txt. When every required file is reported, the folder was probably zipped in place of its files."
+    },
+    "missing_stop_name": {
+      "severity": "error",
+      "section": "stops",
+      "mobilitydata": "missing_stop_name",
+      "fr": "Un arrêt ou un quai (location_type=0), une station (1) ou une entrée (2) de stops.txt n'a pas de stop_name.",
+      "en": "A stop or platform (location_type=0), a station (1) or an entrance (2) of stops.txt has no stop_name."
+    },
+    "missing_stop_times_record": {
+      "severity": "error",
+      "section": "stop_times",
+      "mobilitydata": "missing_stop_times_record",
+      "fr": "Une course n'a qu'une ligne dans stop_times.txt pour un service à la demande dans un groupe de lieux ou une zone : une fenêtre de prise en charge et de dépose, avec pickup_type=2 et drop_off_type=2. Un déplacement à l'intérieur d'un tel lieu demande deux lignes de même location_group_id ou location_id.",
+      "en": "A trip has a single row in stop_times.txt for an on-demand service within a location group or a zone: a pickup and drop-off window, with pickup_type=2 and drop_off_type=2. Travel inside one such place takes two rows with the same location_group_id or location_id."
+    },
+    "missing_timepoint_value": {
+      "severity": "warning",
+      "section": "stop_times",
+      "mobilitydata": "missing_timepoint_value",
+      "fr": "Une ligne de stop_times.txt donne un arrival_time ou un departure_time et laisse timepoint vide, dans un fichier qui a la colonne timepoint. Ce champ dit si les heures sont exactes (1) ou approximatives (0).",
+      "en": "A row of stop_times.txt gives an arrival_time or a departure_time and leaves timepoint empty, in a file that has the timepoint column. The field says whether the times are exact (1) or approximate (0)."
+    },
+    "missing_trip_edge": {
+      "severity": "error",
+      "section": "stop_times",
+      "mobilitydata": "missing_trip_edge",
+      "fr": "Le premier ou le dernier arrêt d'une course n'a pas de arrival_time ou pas de departure_time dans stop_times.txt. Les deux extrémités d'une course donnent les deux heures, la même valeur deux fois quand le véhicule n'attend pas.",
+      "en": "The first or the last stop of a trip has no arrival_time or no departure_time in stop_times.txt. Both ends of a trip give both times, the same value twice when the vehicle does not wait."
+    },
+    "mixed_case_recommended_field": {
+      "severity": "warning",
+      "section": "data_quality",
+      "mobilitydata": "mixed_case_recommended_field",
+      "fr": "Un nom montré aux voyageurs, comme stop_name, route_long_name ou trip_headsign, compte au moins deux mots de plus d'une lettre dont aucun ne mêle majuscules et minuscules (GARE ROUTIERE, gare routière), ou un seul mot tout en minuscules. Un mot seul en majuscules n'est pas signalé : ce peut être un sigle. Un nom en majuscules et minuscules se lit mieux à l'écran et par un lecteur d'écran.",
+      "en": "A name shown to riders, such as stop_name, route_long_name or trip_headsign, has two words or more of more than a letter and none of them mixes capitals and small letters (GARE ROUTIERE, gare routière), or is a single word all in lower case. A single word in capitals is not reported: it may be an acronym. Mixed case reads better on a screen and for a screen reader."
+    },
+    "more_than_one_entity": {
+      "severity": "warning",
+      "section": "feed_info",
+      "mobilitydata": "more_than_one_entity",
+      "fr": "feed_info.txt a plus d'une ligne de données. Ce fichier décrit le GTFS dans son ensemble et ne contient qu'une ligne.",
+      "en": "feed_info.txt has more than one row of data. The file describes the GTFS as a whole and holds a single row."
+    },
+    "new_line_in_value": {
+      "severity": "error",
+      "section": "structure",
+      "mobilitydata": "new_line_in_value",
+      "fr": "Une valeur contient un saut de ligne. Il vient en général d'un guillemet double jamais refermé, qui fait de la ligne suivante la suite de la valeur.",
+      "en": "A value holds a line break. It usually comes from a double quote that is never closed, which makes the next line part of the value."
+    },
+    "non_ascii_or_non_printable_char": {
+      "severity": "warning",
+      "section": "data_quality",
+      "mobilitydata": "non_ascii_or_non_printable_char",
+      "fr": "Un identifiant (un champ de type ID, comme stop_id ou trip_id) contient un caractère hors de l'ASCII imprimable, par exemple une lettre accentuée ou une tabulation. De tels identifiants sont permis mais déconseillés.",
+      "en": "An identifier (a field of type ID, such as stop_id or trip_id) holds a character outside printable ASCII, for example an accented letter or a tab. Such identifiers are allowed but not recommended."
+    },
+    "number_out_of_range": {
+      "severity": "error",
+      "section": "structure",
+      "mobilitydata": "number_out_of_range",
+      "fr": "Un nombre est hors des valeurs que son champ admet, par exemple une latitude hors de -90 à 90, une longitude hors de -180 à 180, ou une valeur négative là où le champ n'en admet pas.",
+      "en": "A number is outside the values its field allows, for example a latitude beyond -90 to 90, a longitude beyond -180 to 180, or a negative value where the field takes none."
+    },
+    "overlapping_frequency": {
+      "severity": "error",
+      "section": "frequencies",
+      "mobilitydata": "overlapping_frequency",
+      "fr": "Deux lignes de frequencies.txt du même trip_id couvrent des périodes qui se chevauchent : la seconde commence avant la fin de la première.",
+      "en": "Two rows of frequencies.txt for the same trip_id cover overlapping periods: the second starts before the first ends."
+    },
+    "overlapping_zone_and_pickup_drop_off_window": {
+      "severity": "error",
+      "section": "stop_times",
+      "mobilitydata": "overlapping_zone_and_pickup_drop_off_window",
+      "fr": "Deux lignes de stop_times.txt d'une même course, de même pickup_type ou drop_off_type, ont des fenêtres de prise en charge et de dépose qui se chevauchent dans le temps et des zones de locations.geojson qui se chevauchent sur la carte.",
+      "en": "Two rows of stop_times.txt of one trip, with the same pickup_type or drop_off_type, have pickup and drop-off windows that overlap in time and zones of locations.geojson that overlap on the map."
+    },
+    "pathway_dangling_generic_node": {
+      "severity": "warning",
+      "section": "pathways",
+      "mobilitydata": "pathway_dangling_generic_node",
+      "fr": "Un nœud générique (location_type=3 dans stops.txt) n'est relié par pathways.txt qu'à un seul autre lieu. Un nœud est un passage : atteint depuis un seul lieu, il ne mène nulle part.",
+      "en": "A generic node (location_type=3 in stops.txt) is linked by pathways.txt to a single other location. A node is a passage: reached from one place only, it leads nowhere."
+    },
+    "pathway_loop": {
+      "severity": "warning",
+      "section": "pathways",
+      "mobilitydata": "pathway_loop",
+      "fr": "Un cheminement de pathways.txt a le même from_stop_id et to_stop_id : il part d'un lieu et y revient.",
+      "en": "A pathway of pathways.txt has the same from_stop_id and to_stop_id: it starts and ends at the same location."
+    },
+    "pathway_to_platform_with_boarding_areas": {
+      "severity": "error",
+      "section": "pathways",
+      "mobilitydata": "pathway_to_platform_with_boarding_areas",
+      "fr": "Un cheminement de pathways.txt aboutit à un quai qui a des zones d'embarquement. Un tel quai est un parent, pas un point : ses cheminements vont à ses zones d'embarquement.",
+      "en": "A pathway of pathways.txt ends at a platform that has boarding areas. Such a platform is a parent, not a point: its pathways go to its boarding areas."
+    },
+    "pathway_to_stop_with_access_outside_of_station_pathways": {
+      "severity": "error",
+      "section": "pathways",
+      "mobilitydata": "pathway_to_stop_with_access_outside_of_station_pathways",
+      "fr": "Un cheminement de pathways.txt aboutit à un arrêt déclaré avec stop_access=1 dans stops.txt, c'est-à-dire accessible depuis la rue sans les cheminements de sa station. Un tel arrêt ne reçoit aucun cheminement.",
+      "en": "A pathway of pathways.txt ends at a stop declared with stop_access=1 in stops.txt, that is, reached from the street without the pathways of its station. Such a stop takes no pathway."
+    },
+    "pathway_to_wrong_location_type": {
+      "severity": "error",
+      "section": "pathways",
+      "mobilitydata": "pathway_to_wrong_location_type",
+      "fr": "Un cheminement de pathways.txt aboutit à une station (location_type=1). Un cheminement relie des quais, des entrées, des nœuds génériques ou des zones d'embarquement.",
+      "en": "A pathway of pathways.txt ends at a station (location_type=1). A pathway links platforms, entrances, generic nodes or boarding areas."
+    },
+    "pathway_unreachable_location": {
+      "severity": "error",
+      "section": "pathways",
+      "mobilitydata": "pathway_unreachable_location",
+      "fr": "Dans une station décrite par pathways.txt, un quai, une zone d'embarquement ou un nœud générique ne peut être atteint depuis aucune entrée, ou ne permet d'atteindre aucune sortie. Un quai qui a des zones d'embarquement n'est pas signalé : ses zones d'embarquement le sont.",
+      "en": "In a station described by pathways.txt, a platform, a boarding area or a generic node cannot be reached from any entrance, or no exit can be reached from it. A platform that has boarding areas is not reported: its boarding areas are."
+    },
+    "platform_without_parent_station": {
+      "severity": "info",
+      "section": "stops",
+      "mobilitydata": "platform_without_parent_station",
+      "fr": "Un arrêt de stops.txt qui porte un platform_code n'a pas de parent_station. Un quai est censé appartenir à une station.",
+      "en": "A stop of stops.txt that has a platform_code has no parent_station. A platform is expected to belong to a station."
+    },
+    "point_near_origin": {
+      "severity": "error",
+      "section": "data_quality",
+      "mobilitydata": "point_near_origin",
+      "fr": "Un arrêt de stops.txt, un point de shapes.txt ou de locations.geojson se trouve à moins d'un degré de latitude et de longitude du point (0, 0), dans le golfe de Guinée : ses coordonnées sont sans doute absentes ou fausses.",
+      "en": "A stop of stops.txt, a point of shapes.txt or of locations.geojson lies within one degree of latitude and of longitude of the point (0, 0), in the Gulf of Guinea: its coordinates are probably missing or wrong."
+    },
+    "point_near_pole": {
+      "severity": "error",
+      "section": "data_quality",
+      "mobilitydata": "point_near_pole",
+      "fr": "Un arrêt de stops.txt, un point de shapes.txt ou de locations.geojson a une latitude de 89 degrés ou plus, au nord ou au sud : ses coordonnées sont sans doute fausses.",
+      "en": "A stop of stops.txt, a point of shapes.txt or of locations.geojson has a latitude of 89 degrees or more, north or south: its coordinates are probably wrong."
+    },
+    "prior_notice_last_day_after_start_day": {
+      "severity": "error",
+      "section": "fare",
+      "mobilitydata": "prior_notice_last_day_after_start_day",
+      "fr": "Dans une ligne de booking_rules.txt, prior_notice_last_day est supérieur à prior_notice_start_day : la réservation fermerait avant d'ouvrir.",
+      "en": "In a row of booking_rules.txt, prior_notice_last_day is greater than prior_notice_start_day: booking would close before it opens."
+    },
+    "route_both_short_and_long_name_missing": {
+      "severity": "error",
+      "section": "routes",
+      "mobilitydata": "route_both_short_and_long_name_missing",
+      "fr": "Une ligne de routes.txt n'a ni route_short_name ni route_long_name. L'un des deux au moins est obligatoire.",
+      "en": "A route of routes.txt has neither a route_short_name nor a route_long_name. At least one of the two is required."
+    },
+    "route_color_contrast": {
+      "severity": "warning",
+      "section": "routes",
+      "mobilitydata": "route_color_contrast",
+      "fr": "Le route_color et le route_text_color d'une ligne de routes.txt ont des luminosités trop proches : leur luma (Rec. 601) diffère de moins de 72 sur 255, et le texte se lit mal sur son fond.",
+      "en": "The route_color and the route_text_color of a route in routes.txt are too close in brightness: their luma (Rec. 601) differs by less than 72 out of 255, so the text hardly reads on its background."
+    },
+    "route_long_name_contains_short_name": {
+      "severity": "warning",
+      "section": "routes",
+      "mobilitydata": "route_long_name_contains_short_name",
+      "fr": "Le route_long_name d'une ligne de routes.txt commence par son route_short_name suivi d'une espace, d'un tiret ou d'une parenthèse, ou le répète tel quel. Les applications affichent les deux noms ensemble : le nom long ne devrait pas contenir le nom court.",
+      "en": "The route_long_name of a route in routes.txt starts with its route_short_name followed by a space, a hyphen or a parenthesis, or repeats it exactly. Apps show the two names together, so the long name should not hold the short one."
+    },
+    "route_networks_specified_in_more_than_one_file": {
+      "severity": "error",
+      "section": "routes",
+      "mobilitydata": "route_networks_specified_in_more_than_one_file",
+      "fr": "routes.txt a une colonne network_id alors que le GTFS a aussi un route_networks.txt ou un networks.txt. Le réseau d'une ligne se donne à un seul endroit.",
+      "en": "routes.txt has a network_id column while the GTFS also has a route_networks.txt or a networks.txt. The network of a route is given in one place only."
+    },
+    "route_short_name_too_long": {
+      "severity": "warning",
+      "section": "routes",
+      "mobilitydata": "route_short_name_too_long",
+      "fr": "Le route_short_name d'une ligne de routes.txt a plus de 12 caractères.",
+      "en": "The route_short_name of a route in routes.txt has more than 12 characters."
+    },
+    "runtime_exception_in_loader_error": {
+      "severity": "error",
+      "section": "structure",
+      "mobilitydata": "runtime_exception_in_loader_error",
+      "fr": "Le validateur a échoué en chargeant un fichier en mémoire. Il s'agit en général d'un défaut du validateur lui-même, pas du GTFS.",
+      "en": "The validator failed while it loaded a file into memory. It usually is a defect of the validator itself, not of the GTFS."
+    },
+    "runtime_exception_in_validator_error": {
+      "severity": "error",
+      "section": "structure",
+      "mobilitydata": "runtime_exception_in_validator_error",
+      "fr": "Un des contrôles du validateur a échoué pendant son exécution : ses constats manquent au rapport. Il s'agit en général d'un défaut du validateur lui-même, pas du GTFS.",
+      "en": "One of the validator's checks failed while it ran, so its findings are missing from the report. It usually is a defect of the validator itself, not of the GTFS."
+    },
+    "same_name_and_description_for_route": {
+      "severity": "warning",
+      "section": "routes",
+      "mobilitydata": "same_name_and_description_for_route",
+      "fr": "Le route_desc d'une ligne de routes.txt répète son route_short_name ou son route_long_name. Une description ajoute une information au nom.",
+      "en": "The route_desc of a route in routes.txt repeats its route_short_name or its route_long_name. A description adds information to the name."
+    },
+    "same_name_and_description_for_stop": {
+      "severity": "warning",
+      "section": "stops",
+      "mobilitydata": "same_name_and_description_for_stop",
+      "fr": "Le stop_desc d'un arrêt de stops.txt répète son stop_name. Une description ajoute une information au nom.",
+      "en": "The stop_desc of a stop in stops.txt repeats its stop_name. A description adds information to the name."
+    },
+    "same_route_and_agency_url": {
+      "severity": "warning",
+      "section": "routes",
+      "mobilitydata": "same_route_and_agency_url",
+      "fr": "Le route_url d'une ligne de routes.txt est le agency_url d'un exploitant de agency.txt. L'adresse d'une ligne mène à la page de cette ligne.",
+      "en": "The route_url of a route in routes.txt is the agency_url of an agency in agency.txt. A route's address leads to the page of that route."
+    },
+    "same_stop_and_agency_url": {
+      "severity": "warning",
+      "section": "stops",
+      "mobilitydata": "same_stop_and_agency_url",
+      "fr": "Le stop_url d'un arrêt de stops.txt est le agency_url d'un exploitant de agency.txt. L'adresse d'un arrêt mène à la page de cet arrêt.",
+      "en": "The stop_url of a stop in stops.txt is the agency_url of an agency in agency.txt. A stop's address leads to the page of that stop."
+    },
+    "same_stop_and_route_url": {
+      "severity": "warning",
+      "section": "stops",
+      "mobilitydata": "same_stop_and_route_url",
+      "fr": "Le stop_url d'un arrêt de stops.txt est le route_url d'une ligne de routes.txt. L'adresse d'un arrêt mène à la page de cet arrêt.",
+      "en": "The stop_url of a stop in stops.txt is the route_url of a route in routes.txt. A stop's address leads to the page of that stop."
+    },
+    "service_extends_far_in_the_future": {
+      "severity": "info",
+      "section": "calendar",
+      "mobilitydata": "service_extends_far_in_the_future",
+      "fr": "Un service de calendar.txt circule jusqu'à une date postérieure de plus de deux ans (730 jours) à aujourd'hui, exceptions de calendar_dates.txt comprises.",
+      "en": "A service of calendar.txt runs until a date more than two years (730 days) after today, the exceptions of calendar_dates.txt counted."
+    },
+    "service_has_no_active_day_of_the_week": {
+      "severity": "warning",
+      "section": "calendar",
+      "mobilitydata": "service_has_no_active_day_of_the_week",
+      "fr": "Un service de calendar.txt a ses sept jours de la semaine à 0. Il ne peut circuler qu'aux dates que calendar_dates.txt lui ajoute.",
+      "en": "A service of calendar.txt has its seven days of the week at 0. It can run only on the dates calendar_dates.txt adds to it."
+    },
+    "service_window_outside_feed_period": {
+      "severity": "info",
+      "section": "calendar",
+      "mobilitydata": "service_window_outside_feed_period",
+      "fr": "Un service utilisé par les courses circule avant le feed_start_date ou après le feed_end_date de feed_info.txt, tel que calendar.txt et calendar_dates.txt le datent. La notice donne le nombre de jours hors de la validité.",
+      "en": "A service the trips use runs before the feed_start_date or after the feed_end_date of feed_info.txt, as calendar.txt and calendar_dates.txt date it. The notice gives the number of days outside the validity."
+    },
+    "single_shape_point": {
+      "severity": "warning",
+      "section": "shapes",
+      "mobilitydata": "single_shape_point",
+      "fr": "Un tracé de shapes.txt n'a qu'un point. Il en faut au moins deux pour dessiner un parcours.",
+      "en": "A shape of shapes.txt has a single point. A shape takes two points at least to draw a path."
+    },
+    "start_and_end_range_equal": {
+      "severity": "error",
+      "section": "data_quality",
+      "mobilitydata": "start_and_end_range_equal",
+      "fr": "Une ligne de frequencies.txt ou de timeframes.txt a le même start_time et end_time : la période ne dure pas.",
+      "en": "A row of frequencies.txt or of timeframes.txt has the same start_time and end_time: the period lasts no time."
+    },
+    "start_and_end_range_out_of_order": {
+      "severity": "error",
+      "section": "data_quality",
+      "mobilitydata": "start_and_end_range_out_of_order",
+      "fr": "Un début est postérieur à sa fin : start_date et end_date dans calendar.txt, feed_start_date et feed_end_date dans feed_info.txt, start_time et end_time dans frequencies.txt ou timeframes.txt, ou arrival_time et departure_time dans une ligne de stop_times.txt.",
+      "en": "A start is after its end: the start_date and end_date of calendar.txt, the feed_start_date and feed_end_date of feed_info.txt, the start_time and end_time of frequencies.txt or timeframes.txt, or the arrival_time and departure_time of a row of stop_times.txt."
+    },
+    "station_with_parent_station": {
+      "severity": "error",
+      "section": "stops",
+      "mobilitydata": "station_with_parent_station",
+      "fr": "Une station (location_type=1) de stops.txt a un parent_station. Une station est le sommet de sa hiérarchie.",
+      "en": "A station (location_type=1) of stops.txt has a parent_station. A station is the top of its hierarchy."
+    },
+    "stop_access_specified_for_incorrect_location": {
+      "severity": "error",
+      "section": "stops",
+      "mobilitydata": "stop_access_specified_for_incorrect_location",
+      "fr": "Une station, une entrée, un nœud générique ou une zone d'embarquement de stops.txt renseigne stop_access. Ce champ ne vaut que pour un arrêt ou un quai (location_type=0) rattaché à une station.",
+      "en": "A station, an entrance, a generic node or a boarding area of stops.txt fills stop_access. The field is for a stop or platform (location_type=0) that belongs to a station."
+    },
+    "stop_access_specified_for_stop_with_no_parent_station": {
+      "severity": "error",
+      "section": "stops",
+      "mobilitydata": "stop_access_specified_for_stop_with_no_parent_station",
+      "fr": "Un arrêt de stops.txt renseigne stop_access sans avoir de parent_station. Ce champ dit comment un arrêt s'atteint dans sa station : il lui en faut une.",
+      "en": "A stop of stops.txt fills stop_access and has no parent_station. The field says how a stop is reached within its station, so it needs one."
+    },
+    "stop_has_too_many_matches_for_shape": {
+      "severity": "warning",
+      "section": "shapes",
+      "mobilitydata": "stop_has_too_many_matches_for_shape",
+      "fr": "Un arrêt d'une course pourrait se placer à plus de 20 endroits de son tracé de shapes.txt : le tracé repasse sans cesse près de l'arrêt, ou l'arrêt est mal placé dans stops.txt.",
+      "en": "A stop of a trip could match its shape of shapes.txt at more than 20 places: the shape passes near the stop again and again, or the stop is misplaced in stops.txt."
+    },
+    "stop_time_timepoint_without_times": {
+      "severity": "error",
+      "section": "stop_times",
+      "mobilitydata": "stop_time_timepoint_without_times",
+      "fr": "Une ligne de stop_times.txt de timepoint=1 n'a pas son arrival_time ou pas son departure_time. Un horaire déclaré exact donne les deux.",
+      "en": "A row of stop_times.txt with timepoint=1 lacks its arrival_time or its departure_time. A time declared exact gives both."
+    },
+    "stop_time_with_arrival_before_previous_departure_time": {
+      "severity": "error",
+      "section": "stop_times",
+      "mobilitydata": "stop_time_with_arrival_before_previous_departure_time",
+      "fr": "Dans stop_times.txt, une course arrive à un arrêt à un arrival_time antérieur au departure_time de son arrêt précédent : le véhicule remonterait le temps.",
+      "en": "In stop_times.txt, a trip reaches a stop at an arrival_time earlier than the departure_time of its previous stop: the vehicle would travel back in time."
+    },
+    "stop_time_with_only_arrival_or_departure_time": {
+      "severity": "error",
+      "section": "stop_times",
+      "mobilitydata": "stop_time_with_only_arrival_or_departure_time",
+      "fr": "Une ligne de stop_times.txt ne donne qu'une des deux heures arrival_time et departure_time. Un horaire donne les deux, ou aucune.",
+      "en": "A row of stop_times.txt gives only one of arrival_time and departure_time. A stop time gives both, or neither."
+    },
+    "stop_too_far_from_shape": {
+      "severity": "warning",
+      "section": "shapes",
+      "mobilitydata": "stop_too_far_from_shape",
+      "fr": "Un arrêt d'une course est à plus de 100 m du tracé de la course dans shapes.txt (400 m pour un arrêt d'une ligne ferroviaire). L'arrêt est mal placé dans stops.txt, ou le tracé ne suit pas la course.",
+      "en": "A stop of a trip stands more than 100 m from the shape of the trip in shapes.txt (400 m for a stop of a rail route). The stop is misplaced in stops.txt, or the shape does not follow the trip."
+    },
+    "stop_too_far_from_shape_using_user_distance": {
+      "severity": "warning",
+      "section": "shapes",
+      "mobilitydata": "stop_too_far_from_shape_using_user_distance",
+      "fr": "Un arrêt d'une course est loin du point de son tracé que désigne son shape_dist_traveled dans stop_times.txt. La distance écrite, la position de l'arrêt ou le tracé est faux.",
+      "en": "A stop of a trip stands far from the point of its shape that its shape_dist_traveled in stop_times.txt names. The distance written, the position of the stop or the shape is wrong."
+    },
+    "stop_without_location": {
+      "severity": "error",
+      "section": "stops",
+      "mobilitydata": "stop_without_location",
+      "fr": "Un arrêt ou un quai (location_type=0), une station (1) ou une entrée (2) de stops.txt n'a pas son stop_lat ou son stop_lon.",
+      "en": "A stop or platform (location_type=0), a station (1) or an entrance (2) of stops.txt lacks its stop_lat or its stop_lon."
+    },
+    "stop_without_stop_time": {
+      "severity": "warning",
+      "section": "cross_file",
+      "mobilitydata": "stop_without_stop_time",
+      "fr": "Un arrêt de stops.txt (location_type=0) n'est désigné par aucun stop_id de stop_times.txt, ni par un groupe de lieux qu'une course dessert : aucune course ne le dessert.",
+      "en": "A stop of stops.txt (location_type=0) is named by no stop_id of stop_times.txt, nor by a location group a trip calls at: no trip serves it."
+    },
+    "stop_without_zone_id": {
+      "severity": "info",
+      "section": "stops",
+      "mobilitydata": "stop_without_zone_id",
+      "fr": "Un arrêt de stops.txt n'a pas de zone_id alors qu'il est desservi par une ligne dont les tarifs de fare_rules.txt dépendent de zones (origin_id, destination_id ou contains_id).",
+      "en": "A stop of stops.txt has no zone_id while it is served by a route whose fares in fare_rules.txt depend on zones (origin_id, destination_id or contains_id)."
+    },
+    "stops_match_shape_out_of_order": {
+      "severity": "warning",
+      "section": "shapes",
+      "mobilitydata": "stops_match_shape_out_of_order",
+      "fr": "Deux arrêts d'une course se placent sur son tracé de shapes.txt dans l'ordre inverse de celui de stop_times.txt. La position d'un arrêt, le tracé ou l'ordre des arrêts est faux.",
+      "en": "Two stops of a trip match its shape of shapes.txt in the reverse of their order in stop_times.txt. The position of a stop, the shape or the order of the stops is wrong."
+    },
+    "thread_execution_error": {
+      "severity": "error",
+      "section": "structure",
+      "mobilitydata": "thread_execution_error",
+      "fr": "Un contrôle que le validateur exécutait en parallèle a échoué : ses constats manquent au rapport. C'est une panne de la validation, pas un défaut du GTFS.",
+      "en": "A check the validator ran in parallel failed, so its findings are missing from the report. It is a failure of the validation, not a defect of the GTFS."
+    },
+    "timeframe_only_start_or_end_time_specified": {
+      "severity": "error",
+      "section": "timeframes",
+      "mobilitydata": "timeframe_only_start_or_end_time_specified",
+      "fr": "Une ligne de timeframes.txt ne donne qu'un des deux champs start_time et end_time. Une plage horaire donne les deux, ou aucun.",
+      "en": "A row of timeframes.txt gives only one of start_time and end_time. A timeframe gives both, or neither."
+    },
+    "timeframe_overlap": {
+      "severity": "error",
+      "section": "timeframes",
+      "mobilitydata": "timeframe_overlap",
+      "fr": "Deux lignes de timeframes.txt de même timeframe_group_id et service_id couvrent des périodes qui se chevauchent : la seconde commence avant la fin de la première.",
+      "en": "Two rows of timeframes.txt with the same timeframe_group_id and service_id cover overlapping periods: the second starts before the first ends."
+    },
+    "timeframe_start_or_end_time_greater_than_twenty_four_hours": {
+      "severity": "error",
+      "section": "timeframes",
+      "mobilitydata": "timeframe_start_or_end_time_greater_than_twenty_four_hours",
+      "fr": "Un start_time ou un end_time de timeframes.txt dépasse 24:00:00. Une plage horaire tient dans une journée.",
+      "en": "A start_time or an end_time of timeframes.txt is later than 24:00:00. A timeframe stays within one day."
+    },
+    "too_many_rows": {
+      "severity": "error",
+      "section": "structure",
+      "mobilitydata": "too_many_rows",
+      "fr": "Un fichier a plus de 1 000 000 000 de lignes. Un fichier aussi volumineux ne se traite pas en un temps raisonnable par les outils qui lisent un GTFS.",
+      "en": "A file has more than 1 000 000 000 rows. A file that large cannot be processed in a reasonable time by the tools that read a GTFS."
+    },
+    "transfer_distance_above_2_km": {
+      "severity": "info",
+      "section": "transfers",
+      "mobilitydata": "transfer_distance_above_2_km",
+      "fr": "Une ligne de transfers.txt relie deux arrêts distants de plus de 2 km, et de 10 km au plus (au-delà, le validateur émet transfer_distance_too_large).",
+      "en": "A row of transfers.txt links two stops more than 2 km apart, and 10 km at most (beyond, the validator raises transfer_distance_too_large)."
+    },
+    "transfer_distance_too_large": {
+      "severity": "warning",
+      "section": "transfers",
+      "mobilitydata": "transfer_distance_too_large",
+      "fr": "Une ligne de transfers.txt relie deux arrêts distants de plus de 10 km.",
+      "en": "A row of transfers.txt links two stops more than 10 km apart."
+    },
+    "transfer_with_invalid_stop_location_type": {
+      "severity": "error",
+      "section": "transfers",
+      "mobilitydata": "transfer_with_invalid_stop_location_type",
+      "fr": "Un from_stop_id ou un to_stop_id de transfers.txt désigne un lieu qui n'est ni un arrêt ou un quai (location_type=0) ni une station (1).",
+      "en": "A from_stop_id or a to_stop_id of transfers.txt names a location that is neither a stop or platform (location_type=0) nor a station (1)."
+    },
+    "transfer_with_invalid_trip_and_route": {
+      "severity": "error",
+      "section": "transfers",
+      "mobilitydata": "transfer_with_invalid_trip_and_route",
+      "fr": "Une ligne de transfers.txt désigne une course et une ligne qui ne vont pas ensemble : le from_trip_id ou le to_trip_id appartient dans trips.txt à une autre ligne que le from_route_id ou le to_route_id donné avec lui.",
+      "en": "A row of transfers.txt names a trip and a route that do not go together: the from_trip_id or the to_trip_id belongs in trips.txt to another route than the from_route_id or the to_route_id beside it."
+    },
+    "transfer_with_invalid_trip_and_stop": {
+      "severity": "error",
+      "section": "transfers",
+      "mobilitydata": "transfer_with_invalid_trip_and_stop",
+      "fr": "Une ligne de transfers.txt désigne une course et un arrêt qui ne vont pas ensemble : le from_stop_id ou le to_stop_id n'est pas parmi les arrêts du from_trip_id ou du to_trip_id dans stop_times.txt.",
+      "en": "A row of transfers.txt names a trip and a stop that do not go together: the from_stop_id or the to_stop_id is not among the stops of the from_trip_id or the to_trip_id in stop_times.txt."
+    },
+    "transfer_with_suspicious_mid_trip_in_seat": {
+      "severity": "warning",
+      "section": "transfers",
+      "mobilitydata": "transfer_with_suspicious_mid_trip_in_seat",
+      "fr": "Une ligne de transfers.txt où les voyageurs restent à bord (transfer_type=4 ou 5) désigne un arrêt au milieu d'une course. Le from_stop_id est attendu au dernier arrêt du from_trip_id, et le to_stop_id au premier arrêt du to_trip_id.",
+      "en": "A row of transfers.txt where riders stay on board (transfer_type=4 or 5) names a stop in the middle of a trip. The from_stop_id is expected to be the last stop of the from_trip_id, and the to_stop_id the first stop of the to_trip_id."
+    },
+    "translation_foreign_key_violation": {
+      "severity": "error",
+      "section": "translations",
+      "mobilitydata": "translation_foreign_key_violation",
+      "fr": "Une ligne de translations.txt désigne par record_id, et record_sub_id quand la table en demande un, un enregistrement que sa table_name ne contient pas.",
+      "en": "A row of translations.txt names by record_id, and record_sub_id where the table takes one, a record its table_name does not hold."
+    },
+    "translation_unexpected_value": {
+      "severity": "error",
+      "section": "translations",
+      "mobilitydata": "translation_unexpected_value",
+      "fr": "Une ligne de translations.txt renseigne un champ qui doit rester vide : un record_id ou un record_sub_id à côté d'un field_value, ou un record_sub_id pour une table dont un seul identifiant désigne les enregistrements.",
+      "en": "A row of translations.txt fills a field that must stay empty: a record_id or a record_sub_id beside a field_value, or a record_sub_id for a table whose records a single identifier names."
+    },
+    "translation_unknown_table_name": {
+      "severity": "warning",
+      "section": "translations",
+      "mobilitydata": "translation_unknown_table_name",
+      "fr": "Une ligne de translations.txt désigne dans table_name une table qui n'est pas un fichier GTFS ou que l'archive ne contient pas.",
+      "en": "A row of translations.txt names in table_name a table that is not a GTFS file or that the archive does not hold."
+    },
+    "trip_coverage_not_active_for_next7_days": {
+      "severity": "warning",
+      "section": "trips",
+      "mobilitydata": "trip_coverage_not_active_for_next7_days",
+      "fr": "La période où circulent la plupart des courses ne couvre pas les sept prochains jours : elle commence après aujourd'hui ou finit dans la semaine, d'après le nombre de courses de trips.txt que calendar.txt, calendar_dates.txt et frequencies.txt donnent à chaque date.",
+      "en": "The period in which most of the trips run does not cover the next seven days: it starts after today or ends within a week, as calendar.txt, calendar_dates.txt and frequencies.txt count the trips of trips.txt on each date."
+    },
+    "trip_distance_exceeds_shape_distance": {
+      "severity": "error",
+      "section": "shapes",
+      "mobilitydata": "trip_distance_exceeds_shape_distance",
+      "fr": "Le dernier arrêt d'une course a dans stop_times.txt un shape_dist_traveled supérieur au plus grand de son tracé dans shapes.txt, et se trouve à plus de 11,1 m du dernier point du tracé : la course dépasse son tracé.",
+      "en": "The last stop of a trip has in stop_times.txt a shape_dist_traveled greater than the largest of its shape in shapes.txt, and stands more than 11.1 m from the last point of the shape: the trip runs beyond its shape."
+    },
+    "trip_distance_exceeds_shape_distance_below_threshold": {
+      "severity": "warning",
+      "section": "shapes",
+      "mobilitydata": "trip_distance_exceeds_shape_distance_below_threshold",
+      "fr": "Le dernier arrêt d'une course a dans stop_times.txt un shape_dist_traveled supérieur au plus grand de son tracé dans shapes.txt, mais se trouve à 11,1 m au plus du dernier point du tracé.",
+      "en": "The last stop of a trip has in stop_times.txt a shape_dist_traveled greater than the largest of its shape in shapes.txt, but stands within 11.1 m of the last point of the shape."
+    },
+    "trip_headsign_matches_intermediate_stop": {
+      "severity": "info",
+      "section": "trips",
+      "mobilitydata": "trip_headsign_matches_intermediate_stop",
+      "fr": "Le trip_headsign d'une course de trips.txt est le stop_name d'un arrêt qu'elle dessert avant son dernier. Les voyageurs qui montent après cet arrêt lisent une destination que le véhicule a déjà dépassée.",
+      "en": "The trip_headsign of a trip in trips.txt is the stop_name of a stop the trip calls at before its last. Riders boarding after that stop read a destination the vehicle has already passed."
+    },
+    "trip_with_shape_dist_traveled_but_no_shape_distances": {
+      "severity": "info",
+      "section": "shapes",
+      "mobilitydata": "trip_with_shape_dist_traveled_but_no_shape_distances",
+      "fr": "Une course donne des shape_dist_traveled dans stop_times.txt alors que son tracé de shapes.txt n'en donne pas à chaque point : les distances des arrêts ne peuvent pas être placées le long du tracé.",
+      "en": "A trip gives shape_dist_traveled values in stop_times.txt while its shape in shapes.txt does not give one on every point: the distances of the stops cannot be placed along the shape."
+    },
+    "u_r_i_syntax_error": {
+      "severity": "error",
+      "section": "structure",
+      "mobilitydata": "u_r_i_syntax_error",
+      "fr": "Le validateur n'a pas pu lire comme URI une adresse qui lui a été donnée. Cela concerne la façon dont la validation a été lancée, pas le GTFS.",
+      "en": "The validator could not read as a URI an address it was given. It concerns the way the validation was launched, not the GTFS."
+    },
+    "unexpected_enum_value": {
+      "severity": "warning",
+      "section": "structure",
+      "mobilitydata": "unexpected_enum_value",
+      "fr": "Un champ à choix contient un nombre hors de la liste que connaît le validateur, par exemple un route_type étendu comme 700 dans routes.txt. La valeur peut être valable pour les outils qui la lisent.",
+      "en": "A field that takes one of a list of values holds a number outside the list the validator knows, for example an extended route_type such as 700 in routes.txt. The value may be valid for the tools that read it."
+    },
+    "unknown_column": {
+      "severity": "info",
+      "section": "structure",
+      "mobilitydata": "unknown_column",
+      "fr": "Un fichier a une colonne que la spécification GTFS ne définit pas pour lui. Les outils qui suivent la spécification ignorent cette colonne.",
+      "en": "A file has a column the GTFS specification does not define for it. Tools that follow the specification ignore the column."
+    },
+    "unknown_file": {
+      "severity": "info",
+      "section": "structure",
+      "mobilitydata": "unknown_file",
+      "fr": "L'archive contient un fichier que la spécification GTFS ne définit pas. Les outils qui suivent la spécification ignorent ce fichier.",
+      "en": "The archive holds a file the GTFS specification does not define. Tools that follow the specification ignore the file."
+    },
+    "unsorted_stop_times": {
+      "severity": "info",
+      "section": "stop_times",
+      "mobilitydata": "unsorted_stop_times",
+      "fr": "Les lignes d'une course dans stop_times.txt ne sont pas dans l'ordre de stop_sequence, ou ne se suivent pas dans le fichier.",
+      "en": "The rows of a trip in stop_times.txt are not in the order of stop_sequence, or do not follow one another in the file."
+    },
+    "unsupported_feature_type": {
+      "severity": "error",
+      "section": "structure",
+      "mobilitydata": "unsupported_feature_type",
+      "fr": "Un objet des features de locations.geojson a un type autre que Feature.",
+      "en": "An object of the features of locations.geojson has a type other than Feature."
+    },
+    "unsupported_geo_json_type": {
+      "severity": "error",
+      "section": "structure",
+      "mobilitydata": "unsupported_geo_json_type",
+      "fr": "La racine de locations.geojson a un type autre que FeatureCollection.",
+      "en": "The root of locations.geojson has a type other than FeatureCollection."
+    },
+    "unsupported_geometry_type": {
+      "severity": "error",
+      "section": "structure",
+      "mobilitydata": "unsupported_geometry_type",
+      "fr": "Un objet de locations.geojson a une géométrie qui n'est ni un Polygon ni un MultiPolygon, les deux types que GTFS admet.",
+      "en": "A feature of locations.geojson has a geometry that is neither a Polygon nor a MultiPolygon, the two types GTFS supports."
+    },
+    "unusable_trip": {
+      "severity": "warning",
+      "section": "trips",
+      "mobilitydata": "unusable_trip",
+      "fr": "Une course de trips.txt a moins de deux lignes dans stop_times.txt. Les voyageurs ne peuvent monter et descendre que sur une course qui dessert au moins deux arrêts.",
+      "en": "A trip of trips.txt has fewer than two rows in stop_times.txt. Riders can board and alight only on a trip that calls at two stops at least."
+    },
+    "unused_parent_station": {
+      "severity": "info",
+      "section": "stops",
+      "mobilitydata": "unused_parent_station",
+      "fr": "Ancien nom de unused_station. Le validateur l'a renommé en version 7.0.0 et ne l'émet plus sous ce code.",
+      "en": "Former name of unused_station. The validator renamed it in version 7.0.0 and no longer raises it under this code."
+    },
+    "unused_shape": {
+      "severity": "warning",
+      "section": "shapes",
+      "mobilitydata": "unused_shape",
+      "fr": "Un tracé de shapes.txt n'est utilisé par aucune course de trips.txt.",
+      "en": "A shape of shapes.txt is used by no trip of trips.txt."
+    },
+    "unused_station": {
+      "severity": "info",
+      "section": "stops",
+      "mobilitydata": "unused_station",
+      "fr": "Une station (location_type=1) de stops.txt n'est le parent_station d'aucun arrêt.",
+      "en": "A station (location_type=1) of stops.txt is the parent_station of no stop."
+    },
+    "unused_trip": {
+      "severity": "warning",
+      "section": "trips",
+      "mobilitydata": "unused_trip",
+      "fr": "Une course de trips.txt n'a aucune ligne dans stop_times.txt.",
+      "en": "A trip of trips.txt has no row in stop_times.txt."
+    },
+    "wrong_parent_location_type": {
+      "severity": "error",
+      "section": "stops",
+      "mobilitydata": "wrong_parent_location_type",
+      "fr": "Le parent_station d'un lieu de stops.txt n'est pas du type que demande son enfant : un arrêt, une entrée ou un nœud générique a pour parent une station, une zone d'embarquement a pour parent un quai.",
+      "en": "The parent_station of a location of stops.txt is not of the type its child takes: a stop, an entrance or a generic node has a station for parent, a boarding area has a platform."
+    }
+  }
+}

@@ -1,0 +1,77 @@
+version: 2
+
+updates:
+  # ── Backend npm dependencies ──────────────────────────────────────────────────
+  - package-ecosystem: npm
+    directory: /GTFS-EXPRESS-API
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Europe/Paris
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+    commit-message:
+      prefix: "chore(deps)"
+    # Bundle minor + patch into a single PR — reduces CI runs dramatically
+    groups:
+      backend-minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  # ── Frontend npm dependencies ─────────────────────────────────────────────────
+  - package-ecosystem: npm
+    directory: /GTFS-EXPRESS-WEB
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:30"
+      timezone: Europe/Paris
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+    commit-message:
+      prefix: "chore(deps)"
+    # Bundle minor + patch into a single PR — reduces CI runs dramatically
+    groups:
+      frontend-minor-patch:
+        update-types:
+          - minor
+          - patch
+    # Major version bumps on these packages break the app and require human review
+    ignore:
+      - dependency-name: react
+        update-types: ["version-update:semver-major"]
+      - dependency-name: react-dom
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@mui/material"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@mui/icons-material"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: primereact
+        update-types: ["version-update:semver-major"]
+      - dependency-name: leaflet
+        update-types: ["version-update:semver-major"]
+      - dependency-name: react-leaflet
+        update-types: ["version-update:semver-major"]
+
+  # ── GitHub Actions versions ────────────────────────────────────────────────────
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "10:00"
+      timezone: Europe/Paris
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      actions-minor-patch:
+        update-types:
+          - minor
+          - patch
