@@ -1,0 +1,2501 @@
+{
+  "validator": "8.0.0",
+  "notices": {
+    "attribution_without_role": {
+      "severity": "warning",
+      "summary": "Attribution with no role.",
+      "description": "At least one of the fields `is_producer`, `is_operator`, or `is_authority` should be set to 1.",
+      "files": [
+        "attributions.txt"
+      ],
+      "fields": {
+        "attributionId": "string",
+        "csvRowNumber": "integer"
+      }
+    },
+    "bidirectional_exit_gate": {
+      "severity": "error",
+      "summary": "Pathway is bidirectional and has mode 7 (exit gate).",
+      "description": "Exit gates (pathway_mode=7) must not be bidirectional.",
+      "files": [
+        "pathways.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "isBidirectional": "integer",
+        "pathwayMode": "integer"
+      }
+    },
+    "big_gap_in_service": {
+      "severity": "info",
+      "summary": "A service has a gap of more than 13 days between active service dates.",
+      "description": "",
+      "files": [
+        "calendar.txt",
+        "calendar_dates.txt"
+      ],
+      "fields": {
+        "gapDurationDays": "integer",
+        "gapEndDate": "string",
+        "gapStartDate": "string",
+        "serviceId": "string"
+      }
+    },
+    "block_trips_with_overlapping_stop_times": {
+      "severity": "error",
+      "summary": "Trips with the same block id have overlapping stop times.",
+      "description": "",
+      "files": [
+        "trips.txt"
+      ],
+      "fields": {
+        "blockId": "string",
+        "csvRowNumberA": "integer",
+        "csvRowNumberB": "integer",
+        "intersection": "string",
+        "serviceIdA": "string",
+        "serviceIdB": "string",
+        "tripIdA": "string",
+        "tripIdB": "string"
+      }
+    },
+    "csv_parsing_failed": {
+      "severity": "error",
+      "summary": "Parsing of a CSV file failed.",
+      "description": "One common case of the problem is when a cell value contains more than 4096 characters.",
+      "files": [],
+      "fields": {
+        "charIndex": "integer",
+        "columnIndex": "integer",
+        "filename": "string",
+        "lineIndex": "integer",
+        "message": "string",
+        "parsedContent": "string"
+      }
+    },
+    "decreasing_or_equal_stop_time_distance": {
+      "severity": "error",
+      "summary": "Decreasing or equal `shape_dist_traveled` in `stop_times.txt`.",
+      "description": "When sorted by `stop_times.stop_sequence`, two consecutive entries in `stop_times.txt` should have increasing distance, based on the field `shape_dist_traveled`. If the values are equal, this is considered as an error.",
+      "files": [
+        "stop_times.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "prevCsvRowNumber": "integer",
+        "prevShapeDistTraveled": "number",
+        "prevStopSequence": "integer",
+        "shapeDistTraveled": "number",
+        "stopId": "string",
+        "stopSequence": "integer",
+        "tripId": "string"
+      }
+    },
+    "decreasing_shape_distance": {
+      "severity": "error",
+      "summary": "Decreasing `shape_dist_traveled` in `shapes.txt`.",
+      "description": "When sorted by `shape.shape_pt_sequence`, two consecutive shape points must not have decreasing values for `shape_dist_traveled`.",
+      "files": [
+        "shapes.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "prevCsvRowNumber": "integer",
+        "prevShapeDistTraveled": "number",
+        "prevShapePtSequence": "integer",
+        "shapeDistTraveled": "number",
+        "shapeId": "string",
+        "shapePtSequence": "integer"
+      }
+    },
+    "duplicate_fare_media": {
+      "severity": "warning",
+      "summary": "Two distinct fare media have the same fare media name and type.",
+      "description": "Fare media should have a unique combination of fare media name and type.",
+      "files": [
+        "fare_media.txt"
+      ],
+      "fields": {
+        "csvRowNumber1": "integer",
+        "csvRowNumber2": "integer",
+        "fareMediaId1": "string",
+        "fareMediaId2": "string"
+      }
+    },
+    "duplicate_geo_json_key": {
+      "severity": "error",
+      "summary": "A key in `locations.geojson` is duplicated.",
+      "description": "The key must be unique for each feature in the GeoJSON file.",
+      "files": [],
+      "fields": {
+        "featureId": "string",
+        "firstIndex": "integer",
+        "secondIndex": "integer"
+      }
+    },
+    "duplicate_geography_id": {
+      "severity": "error",
+      "summary": "Geography id is duplicated across multiple files.",
+      "description": "ID must be unique across all `stops.stop_id`, `locations.geojson` `id`, and `location_groups.location_group_id` values.",
+      "files": [
+        "location_groups.txt",
+        "stop_times.txt",
+        "location_groups.txt"
+      ],
+      "fields": {
+        "csvRowNumberA": "integer",
+        "csvRowNumberB": "integer",
+        "featureIndex": "integer",
+        "geographyId": "string"
+      }
+    },
+    "duplicate_key": {
+      "severity": "error",
+      "summary": "Duplicated entity.",
+      "description": "The values of the given key and rows are duplicates.",
+      "files": [],
+      "fields": {
+        "fieldName1": "string",
+        "fieldName2": "string",
+        "fieldValue1": "object",
+        "fieldValue2": "object",
+        "filename": "string",
+        "newCsvRowNumber": "integer",
+        "oldCsvRowNumber": "integer"
+      }
+    },
+    "duplicate_route_name": {
+      "severity": "warning",
+      "summary": "Two distinct routes have either the same `route_short_name`, the same `route_long_name`, or the same combination of `route_short_name` and `route_long_name`.",
+      "description": "All routes of the same `route_type` with the same `agency_id` should have unique combinations of `route_short_name` and `route_long_name`. Note that there may be valid cases where routes have the same short and long name, e.g., if they serve different areas. However, different directions must be modeled as the same route. Example of bad data: <table style=\"table-layout:auto; width:auto;\"> <tr> <th><code>route_id</code></th> <th><code>route_short_name</code></th> <th><code>route_long_name</code></th> </tr> <tr> <td>route1</td> <td>U1</td> <td>Southern</td> </tr> <tr> <td>route2</td> <td>U1</td> <td>Southern</td> </tr> </table>",
+      "files": [
+        "routes.txt"
+      ],
+      "fields": {
+        "agencyId": "string",
+        "csvRowNumber1": "integer",
+        "csvRowNumber2": "integer",
+        "routeId1": "string",
+        "routeId2": "string",
+        "routeLongName": "string",
+        "routeShortName": "string",
+        "routeTypeValue": "integer"
+      }
+    },
+    "duplicated_column": {
+      "severity": "error",
+      "summary": "Duplicated column in CSV.",
+      "description": "The input file CSV header has the same column name repeated.",
+      "files": [],
+      "fields": {
+        "fieldName": "string",
+        "filename": "string",
+        "firstIndex": "integer",
+        "secondIndex": "integer"
+      }
+    },
+    "empty_column_name": {
+      "severity": "error",
+      "summary": "A column name is empty.",
+      "description": "Such columns are skipped by the validator.",
+      "files": [],
+      "fields": {
+        "filename": "string",
+        "index": "integer"
+      }
+    },
+    "empty_file": {
+      "severity": "error",
+      "summary": "A CSV file is empty.",
+      "description": "Empty csv file found in the archive: file does not have any headers, or is a required file and does not have any data. The GTFS specification requires the first line of each file to contain field names and required files must have data.",
+      "files": [],
+      "fields": {
+        "filename": "string"
+      }
+    },
+    "empty_row": {
+      "severity": "warning",
+      "summary": "A row in the input file has only spaces.",
+      "description": "Some CSV parsers, such as Univocity, may misinterpret it as a non-empty row that has a single column which is empty, hence we show a warning.",
+      "files": [],
+      "fields": {
+        "csvRowNumber": "integer",
+        "filename": "string"
+      }
+    },
+    "equal_shape_distance_diff_coordinates": {
+      "severity": "error",
+      "summary": "Two consecutive points have equal `shape_dist_traveled` and different lat/lon coordinates in `shapes.txt` and the distance between the two points is greater than the 1.11m.",
+      "description": "When sorted by `shape.shape_pt_sequence`, the values for `shape_dist_traveled` must increase along a shape. Two consecutive points with equal values for `shape_dist_traveled` and different coordinates indicate an error.",
+      "files": [
+        "shapes.txt",
+        "stops.txt"
+      ],
+      "fields": {
+        "actualDistanceBetweenShapePoints": "number",
+        "csvRowNumber": "integer",
+        "prevCsvRowNumber": "integer",
+        "prevShapeDistTraveled": "number",
+        "prevShapePtSequence": "integer",
+        "shapeDistTraveled": "number",
+        "shapeId": "string",
+        "shapePtSequence": "integer"
+      }
+    },
+    "equal_shape_distance_diff_coordinates_distance_below_threshold": {
+      "severity": "warning",
+      "summary": "Two consecutive points have equal `shape_dist_traveled` and different lat/lon coordinates in `shapes.txt` and the distance between the two points is greater than 0 but less than 1.11m.",
+      "description": "When sorted by `shape.shape_pt_sequence`, the values for `shape_dist_traveled` must increase along a shape. Two consecutive points with equal values for `shape_dist_traveled` and small difference of coordinates (greater than 0 but less than 1.11 m distance) result in a warning.",
+      "files": [
+        "shapes.txt",
+        "stops.txt"
+      ],
+      "fields": {
+        "actualDistanceBetweenShapePoints": "number",
+        "csvRowNumber": "integer",
+        "prevCsvRowNumber": "integer",
+        "prevShapeDistTraveled": "number",
+        "prevShapePtSequence": "integer",
+        "shapeDistTraveled": "number",
+        "shapeId": "string",
+        "shapePtSequence": "integer"
+      }
+    },
+    "equal_shape_distance_same_coordinates": {
+      "severity": "warning",
+      "summary": "Two consecutive points have equal `shape_dist_traveled` and the same lat/lon coordinates in `shapes.txt`.",
+      "description": "When sorted by `shape.shape_pt_sequence`, the values for `shape_dist_traveled` must increase along a shape. Two consecutive points with equal values for `shape_dist_traveled` and the same coordinates indicate a duplicative shape point.",
+      "files": [
+        "shapes.txt",
+        "stops.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "prevCsvRowNumber": "integer",
+        "prevShapeDistTraveled": "number",
+        "prevShapePtSequence": "integer",
+        "shapeDistTraveled": "number",
+        "shapeId": "string",
+        "shapePtSequence": "integer"
+      }
+    },
+    "expired_calendar": {
+      "severity": "warning",
+      "summary": "Dataset should not contain date ranges for services that have already expired.",
+      "description": "This warning takes into account the `calendar_dates.txt` file as well as the `calendar.txt` file.",
+      "files": [
+        "calendar.txt",
+        "calendar_dates.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "serviceId": "string"
+      }
+    },
+    "fare_product_with_multiple_default_rider_categories": {
+      "severity": "error",
+      "summary": "This notice is generated when a fare product is associated with multiple rider categories that are marked as default.",
+      "description": "Each fare product should have at most one default rider category.",
+      "files": [
+        "fare_products.txt",
+        "rider_categories.txt"
+      ],
+      "fields": {
+        "csvRowNumber1": "integer",
+        "csvRowNumber2": "integer",
+        "fareProductId": "string",
+        "riderCategoryId1": "string",
+        "riderCategoryId2": "string"
+      }
+    },
+    "fare_transfer_rule_duration_limit_type_without_duration_limit": {
+      "severity": "error",
+      "summary": "A row from GTFS file `fare_transfer_rules.txt` has a defined `duration_limit_type` field but no `duration_limit` specified.",
+      "description": "",
+      "files": [
+        "fare_transfer_rules.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer"
+      }
+    },
+    "fare_transfer_rule_duration_limit_without_type": {
+      "severity": "error",
+      "summary": "A row from GTFS file `fare_transfer_rules.txt` has a defined `duration_limit` field but no `duration_limit_type` specified.",
+      "description": "",
+      "files": [
+        "fare_transfer_rules.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer"
+      }
+    },
+    "fare_transfer_rule_invalid_transfer_count": {
+      "severity": "error",
+      "summary": "A row from GTFS file `fare_transfer_rules.txt` has a defined `transfer_count` with an invalid value.",
+      "description": "",
+      "files": [
+        "fare_transfer_rules.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "transferCount": "integer"
+      }
+    },
+    "fare_transfer_rule_missing_transfer_count": {
+      "severity": "error",
+      "summary": "A row from `fare_transfer_rules.txt` has `from_leg_group_id` equal to `to_leg_group_id`, but has no `transfer_count` specified.",
+      "description": "Per the spec, `transfer_count` is required if the two leg group ids are equal.",
+      "files": [
+        "fare_transfer_rules.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer"
+      },
+      "deprecated": {
+        "since": "8.0",
+        "reason": "Renamed to `fare_transfer_rule_without_transfer_count`.",
+        "replaced_by": [
+          "fare_transfer_rule_without_transfer_count"
+        ]
+      }
+    },
+    "fare_transfer_rule_with_forbidden_transfer_count": {
+      "severity": "error",
+      "summary": "A row from `fare_transfer_rules.txt` has `from_leg_group_id` not equal to `to_leg_group_id`, but has `transfer_count` specified.",
+      "description": "Per the spec, `transfer_count` is forbidden if the two leg group ids are not equal.",
+      "files": [
+        "fare_transfer_rules.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer"
+      }
+    },
+    "fare_transfer_rule_without_transfer_count": {
+      "severity": "error",
+      "summary": "A row from `fare_transfer_rules.txt` has `from_leg_group_id` equal to `to_leg_group_id`, but has no `transfer_count` specified.",
+      "description": "Per the spec, `transfer_count` is required if the two leg group ids are equal.",
+      "files": [
+        "fare_transfer_rules.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer"
+      }
+    },
+    "fast_travel_between_consecutive_stops": {
+      "severity": "warning",
+      "summary": "A transit vehicle moves too fast between two consecutive stops.",
+      "description": "The speed threshold depends on route type: <table style=\"width: auto; table-layout: auto;\"> <tr> <th>Route type</th> <th>Description</th> <th>Threshold, km/h</th> </tr> <tr> <td>0</td> <td>Light rail</td> <td>100</td> </tr> <tr> <td>1</td> <td>Subway</td> <td>150</td> </tr> <tr> <td>2</td> <td>Rail</td> <td>500</td> </tr> <tr> <td>3</td> <td>Bus</td> <td>150</td> </tr> <tr> <td>4</td> <td>Ferry</td> <td>80</td> </tr> <tr> <td>5</td> <td>Cable tram</td> <td>30</td> </tr> <tr> <td>6</td> <td>Aerial lift</td> <td>50</td> </tr> <tr> <td>7</td> <td>Funicular</td> <td>50</td> </tr> <tr> <td>11</td> <td>Trolleybus</td> <td>150</td> </tr> <tr> <td>12</td> <td>Monorail</td> <td>150</td> </tr> <tr> <td>-</td> <td>Unknown</td> <td>200</td> </tr> </table>",
+      "files": [
+        "routes.txt",
+        "stops.txt",
+        "stop_times.txt",
+        "trips.txt"
+      ],
+      "fields": {
+        "arrivalTime2": "string",
+        "csvRowNumber1": "integer",
+        "csvRowNumber2": "integer",
+        "departureTime1": "string",
+        "distanceKm": "number",
+        "routeId": "string",
+        "speedKph": "number",
+        "stopId1": "string",
+        "stopId2": "string",
+        "stopName1": "string",
+        "stopName2": "string",
+        "stopSequence1": "integer",
+        "stopSequence2": "integer",
+        "tripCsvRowNumber": "integer",
+        "tripId": "string"
+      }
+    },
+    "fast_travel_between_far_stops": {
+      "severity": "warning",
+      "summary": "A transit vehicle moves too fast between two far stops.",
+      "description": "Two stops are considered \"far\" if they are more than 10 km apart. This normally indicates a more serious problem than too fast travel between consecutive stops. The speed threshold depends on route type and are the same as `fast_travel_between_consecutive_stops`.",
+      "files": [
+        "routes.txt",
+        "stops.txt",
+        "stop_times.txt",
+        "trips.txt"
+      ],
+      "fields": {
+        "arrivalTime2": "string",
+        "csvRowNumber1": "integer",
+        "csvRowNumber2": "integer",
+        "departureTime1": "string",
+        "distanceKm": "number",
+        "routeId": "string",
+        "speedKph": "number",
+        "stopId1": "string",
+        "stopId2": "string",
+        "stopName1": "string",
+        "stopName2": "string",
+        "stopSequence1": "integer",
+        "stopSequence2": "integer",
+        "tripCsvRowNumber": "integer",
+        "tripId": "string"
+      }
+    },
+    "feed_expiration_date30_days": {
+      "severity": "warning",
+      "summary": "Dataset should cover at least the next 30 days of service.",
+      "description": "At any time, the GTFS dataset should cover at least the next 30 days of service, and ideally for as long as the operator is confident that the schedule will continue to be operated.",
+      "files": [
+        "feed_info.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "currentDate": "string",
+        "feedEndDate": "string",
+        "suggestedExpirationDate": "string"
+      }
+    },
+    "feed_expiration_date7_days": {
+      "severity": "warning",
+      "summary": "Dataset should be valid for at least the next 7 days.",
+      "description": "The dataset expiration date defined in `feed_info.txt` is in seven days or less. At any time, the published GTFS dataset should be valid for at least the next 7 days.",
+      "files": [
+        "feed_info.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "currentDate": "string",
+        "feedEndDate": "string",
+        "suggestedExpirationDate": "string"
+      }
+    },
+    "feed_info_lang_and_agency_lang_mismatch": {
+      "severity": "warning",
+      "summary": "Mismatching feed and agency language fields.",
+      "description": "Files `agency.txt` and `feed_info.txt` should define matching `agency.agency_lang` and `feed_info.feed_lang`. The default language may be multilingual for datasets with the original text in multiple languages. In such cases, the `feed_lang` field should contain the language code `mul` defined by the norm ISO 639-2. - If `feed_lang` is not `mul` and does not match with `agency_lang`, that's an error. - If there is more than one `agency_lang` and `feed_lang` isn't `mul`, that's an error. - If `feed_lang` is `mul` and there isn't more than one `agency_lang`, that's an error.",
+      "files": [
+        "feed_info.txt",
+        "agency.txt"
+      ],
+      "fields": {
+        "agencyId": "string",
+        "agencyLang": "string",
+        "agencyName": "string",
+        "csvRowNumber": "integer",
+        "feedLang": "string"
+      }
+    },
+    "feed_valid_beyond_total_service_window": {
+      "severity": "info",
+      "summary": "The feed is valid 14 days beyond its total service window.",
+      "description": "",
+      "files": [
+        "calendar.txt",
+        "calendar_dates.txt",
+        "feed_info.txt"
+      ],
+      "fields": {
+        "feedEndDate": "string",
+        "feedStartDate": "string",
+        "serviceWindowEndDate": "string",
+        "serviceWindowStartDate": "string"
+      }
+    },
+    "forbidden_arrival_or_departure_time": {
+      "severity": "error",
+      "summary": "The arrival or departure times are provided alongside pickup or drop-off windows in `stop_times.txt`.",
+      "description": "This violates GTFS specification, as both cannot coexist for a single stop time record.",
+      "files": [
+        "stop_times.txt"
+      ],
+      "fields": {
+        "arrivalTime": "string",
+        "csvRowNumber": "integer",
+        "departureTime": "string",
+        "endPickupDropOffWindow": "string",
+        "startPickupDropOffWindow": "string"
+      }
+    },
+    "forbidden_continuous_pickup_drop_off": {
+      "severity": "error",
+      "summary": "Continuous pickup or drop-off are forbidden when routes.continuous_pickup or routes.continuous_drop_off are 0, 2 or 3 and stop_times.start_pickup_drop_off_window or stop_times.end_pickup_drop_off_window are defined for any trip of this route.",
+      "description": "",
+      "files": [
+        "routes.txt",
+        "stop_times.txt",
+        "trips.txt"
+      ],
+      "fields": {
+        "endPickupDropOffWindow": "string",
+        "routeCsvRowNumber": "integer",
+        "startPickupDropOffWindow": "string",
+        "stopTimeCsvRowNumber": "integer",
+        "tripId": "string"
+      }
+    },
+    "forbidden_drop_off_type": {
+      "severity": "error",
+      "summary": "pickup_drop_off_window fields are forbidden when the drop_off_type is regularly scheduled (0).",
+      "description": "",
+      "files": [
+        "stop_times.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "endPickupDropOffWindow": "string",
+        "startPickupDropOffWindow": "string"
+      }
+    },
+    "forbidden_geography_id": {
+      "severity": "error",
+      "summary": "A stop_time entry has more than one geographical id defined.",
+      "description": "In stop_times.txt, you can have only one of stop_id, location_group_id or location_id defined for given entry.",
+      "files": [
+        "stop_times.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "locationGroupId": "string",
+        "locationId": "string",
+        "stopId": "string"
+      }
+    },
+    "forbidden_pickup_type": {
+      "severity": "error",
+      "summary": "pickup_drop_off_window fields are forbidden when the pickup_type is regularly scheduled (0) or must be coordinated with the driver (3).",
+      "description": "",
+      "files": [
+        "stop_times.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "endPickupDropOffWindow": "string",
+        "startPickupDropOffWindow": "string"
+      }
+    },
+    "forbidden_prior_day_booking_field_value": {
+      "severity": "error",
+      "summary": "A forbidden field value is present for a prior-day booking rule in `booking_rules.txt`",
+      "description": "",
+      "files": [
+        "booking_rules.txt"
+      ],
+      "fields": {
+        "bookingRuleId": "string",
+        "csvRowNumber": "integer",
+        "fieldNames": "string"
+      }
+    },
+    "forbidden_prior_notice_start_day": {
+      "severity": "error",
+      "summary": "`prior_notice_start_day` value is forbidden when `prior_notice_duration_max` is set.",
+      "description": "",
+      "files": [
+        "booking_rules.txt"
+      ],
+      "fields": {
+        "bookingRuleId": "string",
+        "csvRowNumber": "integer",
+        "priorNoticeDurationMax": "integer",
+        "priorNoticeStartDay": "integer"
+      }
+    },
+    "forbidden_prior_notice_start_time": {
+      "severity": "error",
+      "summary": "`prior_notice_start_time` value is forbidden when `prior_notice_start_day` value is not set in booking_rules.txt.",
+      "description": "",
+      "files": [
+        "booking_rules.txt"
+      ],
+      "fields": {
+        "bookingRuleId": "string",
+        "csvRowNumber": "integer",
+        "priorNoticeStartTime": "string"
+      }
+    },
+    "forbidden_real_time_booking_field_value": {
+      "severity": "error",
+      "summary": "A forbidden field value is present for a real-time booking rule in `booking_rules.txt`.",
+      "description": "",
+      "files": [
+        "booking_rules.txt"
+      ],
+      "fields": {
+        "bookingRuleId": "string",
+        "csvRowNumber": "integer",
+        "fieldNames": "string"
+      }
+    },
+    "forbidden_same_day_booking_field_value": {
+      "severity": "error",
+      "summary": "A forbidden field value is present for a same-day booking rule in `booking_rules.txt`.",
+      "description": "",
+      "files": [
+        "booking_rules.txt"
+      ],
+      "fields": {
+        "bookingRuleId": "string",
+        "csvRowNumber": "integer",
+        "fieldNames": "string"
+      }
+    },
+    "forbidden_shape_dist_traveled": {
+      "severity": "error",
+      "summary": "A stop_time entry has a `shape_dist_traveled` without a `stop_id` value.",
+      "description": "A GeoJSON location or location group has an associated shape_dist_traveled field in stop_times.txt. shape_dist_traveled values should only be provided for stops.",
+      "files": [
+        "stop_times.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "locationGroupId": "string",
+        "locationId": "string",
+        "shapeDistTraveled": "number",
+        "tripId": "string"
+      }
+    },
+    "foreign_key_violation": {
+      "severity": "error",
+      "summary": "Wrong foreign key.",
+      "description": "A foreign key references the primary key of another file. A foreign key violation means that the foreign key referenced from a given row (the child file) cannot be found in the corresponding file (the parent file). The Foreign keys are defined in the specification under \"Type\" for each file.",
+      "files": [],
+      "fields": {
+        "childFieldName": "string",
+        "childFilename": "string",
+        "csvRowNumber": "integer",
+        "fieldValue": "string",
+        "parentFieldName": "string",
+        "parentFilename": "string"
+      }
+    },
+    "future_calendar": {
+      "severity": "info",
+      "summary": "All services in the feed start in the future; no service covers today's date.",
+      "description": "",
+      "files": [
+        "calendar.txt",
+        "calendar_dates.txt"
+      ],
+      "fields": {
+        "currentDate": "string",
+        "minServiceStartDate": "string"
+      }
+    },
+    "future_feed": {
+      "severity": "info",
+      "summary": "The feed covers the future only.",
+      "description": "The minimum `start_date` in `feed_info.txt` is greater than today's date, indicating the feed covers the future only.",
+      "files": [
+        "feed_info.txt"
+      ],
+      "fields": {
+        "currentDate": "string",
+        "feedStartDate": "string"
+      }
+    },
+    "geo_json_duplicated_element": {
+      "severity": "error",
+      "summary": "Duplicated elements in locations.geojson file.",
+      "description": "",
+      "files": [],
+      "fields": {
+        "duplicatedElement": "string",
+        "filename": "string"
+      }
+    },
+    "geo_json_unknown_element": {
+      "severity": "info",
+      "summary": "Unknown elements in locations.geojson file.",
+      "description": "",
+      "files": [],
+      "fields": {
+        "filename": "string",
+        "unknownElement": "string"
+      }
+    },
+    "i_o_error": {
+      "severity": "error",
+      "summary": "Error in IO operation.",
+      "description": "",
+      "files": [],
+      "fields": {
+        "exception": "string",
+        "message": "string"
+      }
+    },
+    "inconsistent_agency_lang": {
+      "severity": "warning",
+      "summary": "Inconsistent language among agencies.",
+      "description": "Agencies from GTFS `agency.txt` have been found to have different languages.",
+      "files": [
+        "agency.txt"
+      ],
+      "fields": {
+        "actual": "string",
+        "csvRowNumber": "integer",
+        "expected": "string"
+      }
+    },
+    "inconsistent_agency_timezone": {
+      "severity": "error",
+      "summary": "Inconsistent Timezone among agencies.",
+      "description": "Agencies from GTFS `agency.txt` have been found to have different timezones.",
+      "files": [
+        "agency.txt"
+      ],
+      "fields": {
+        "actual": "string",
+        "csvRowNumber": "integer",
+        "expected": "string"
+      }
+    },
+    "inconsistent_route_type_for_block_id": {
+      "severity": "warning",
+      "summary": "A block should have the same route mode.",
+      "description": "",
+      "files": [
+        "trips.txt",
+        "routes.txt"
+      ],
+      "fields": {
+        "blockId": "string",
+        "routeIds": "string",
+        "routeTypes": "string"
+      }
+    },
+    "inconsistent_route_type_for_in_seat_transfer": {
+      "severity": "warning",
+      "summary": "An in-seat transfer should occur in the same route mode.",
+      "description": "",
+      "files": [
+        "transfers.txt",
+        "routes.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "fromRouteId": "string",
+        "fromRouteType": "enum",
+        "toRouteId": "string",
+        "toRouteType": "enum"
+      }
+    },
+    "invalid_character": {
+      "severity": "error",
+      "summary": "This field contains invalid characters, such as the replacement character (\"�\").",
+      "description": "Check that text was properly encoded in UTF-8 as required by GTFS.",
+      "files": [],
+      "fields": {
+        "csvRowNumber": "integer",
+        "fieldName": "string",
+        "fieldValue": "string",
+        "filename": "string"
+      }
+    },
+    "invalid_color": {
+      "severity": "error",
+      "summary": "A field contains an invalid color value.",
+      "description": "A color must be encoded as a six-digit hexadecimal number. The leading \"#\" is not included. Example: `FFFFFF` for white, `000000` for black or `0039A6` for the A,C,E lines in NYC MTA.",
+      "files": [],
+      "fields": {
+        "csvRowNumber": "integer",
+        "fieldName": "string",
+        "fieldValue": "string",
+        "filename": "string"
+      }
+    },
+    "invalid_currency": {
+      "severity": "error",
+      "summary": "A field contains a wrong currency code.",
+      "description": "Currency code must follow <a href=\"https://en.wikipedia.org/wiki/ISO_4217#Active_codes\">ISO 4217</a> Example: `CAD` for Canadian dollars, `EUR` for euros or `JPY` for Japanese yen.",
+      "files": [],
+      "fields": {
+        "csvRowNumber": "integer",
+        "fieldName": "string",
+        "fieldValue": "string",
+        "filename": "string"
+      }
+    },
+    "invalid_currency_amount": {
+      "severity": "error",
+      "summary": "A currency amount field has a value that does not match the format of its corresponding currency code field.",
+      "description": "Typically, this means the amount did not have the expected number of decimal places. Check the formatting of your amount field so it matches the number of decimal places specified by the <a href=\"https://en.wikipedia.org/wiki/ISO_4217#Active_codes\">currency_code value</a>.",
+      "files": [],
+      "fields": {
+        "csvRowNumber": "integer",
+        "currencyCode": "string",
+        "fieldName": "string",
+        "fieldValue": "string",
+        "filename": "string"
+      }
+    },
+    "invalid_date": {
+      "severity": "error",
+      "summary": "A field cannot be parsed as date.",
+      "description": "Dates must have the YYYYMMDD format. Example: `20180913` for September 13th, 2018.",
+      "files": [],
+      "fields": {
+        "csvRowNumber": "integer",
+        "fieldName": "string",
+        "fieldValue": "string",
+        "filename": "string"
+      }
+    },
+    "invalid_email": {
+      "severity": "error",
+      "summary": "A field contains a malformed email address.",
+      "description": "Definitions for valid emails are quite vague. We perform strict validation using the Apache Commons EmailValidator.",
+      "files": [],
+      "fields": {
+        "csvRowNumber": "integer",
+        "fieldName": "string",
+        "fieldValue": "string",
+        "filename": "string"
+      }
+    },
+    "invalid_float": {
+      "severity": "error",
+      "summary": "A field cannot be parsed as a floating point number.",
+      "description": "",
+      "files": [],
+      "fields": {
+        "csvRowNumber": "integer",
+        "fieldName": "string",
+        "fieldValue": "string",
+        "filename": "string"
+      }
+    },
+    "invalid_geometry": {
+      "severity": "error",
+      "summary": "A polygon in `locations.geojson` is unparsable or invalid.",
+      "description": "Each polygon must be valid by the definition of the <a href=\"http://www.opengis.net/doc/is/sfa/1.2.1\" target=\"_blank\"> OpenGIS Simple Features Specification, section 6.1.11 </a>.",
+      "files": [],
+      "fields": {
+        "featureId": "string",
+        "featureIndex": "integer",
+        "geometryType": "string",
+        "message": "string"
+      }
+    },
+    "invalid_input_files_in_subfolder": {
+      "severity": "error",
+      "summary": "At least 1 GTFS file is in a subfolder.",
+      "description": "All GTFS files must reside at the root level directly. There are two common cases that trigger this error: 1. The root folder (e.g., a folder called \"GTFS 2020\") was zipped instead of the individual files within the folder (e.g., `calendar.txt`, `agency.txt`, etc.). This can be fixed by zipping the files directly instead. 2. A file <a href=\"https://gtfs.org/documentation/schedule/reference/#dataset-files\">associated with GTFS</a> is in a subfolder rather than the root folder of the dataset, and needs to be removed if not needed or moved to the root level.",
+      "files": [],
+      "fields": {}
+    },
+    "invalid_integer": {
+      "severity": "error",
+      "summary": "A field cannot be parsed as an integer.",
+      "description": "",
+      "files": [],
+      "fields": {
+        "csvRowNumber": "integer",
+        "fieldName": "string",
+        "fieldValue": "string",
+        "filename": "string"
+      }
+    },
+    "invalid_language_code": {
+      "severity": "error",
+      "summary": "A field contains a wrong language code.",
+      "description": "Language codes must follow <a href=\"http://www.rfc-editor.org/rfc/bcp/bcp47.txt\">IETF BCP 47</a>. Example: `en` for English, `en-US` for American English or `de` for German.",
+      "files": [],
+      "fields": {
+        "csvRowNumber": "integer",
+        "fieldName": "string",
+        "fieldValue": "string",
+        "filename": "string"
+      }
+    },
+    "invalid_phone_number": {
+      "severity": "error",
+      "summary": "A field contains a malformed phone number.",
+      "description": "This rule uses the [PhoneNumberUtil](https://www.javadoc.io/doc/com.googlecode.libphonenumber/libphonenumber/8.4.1/com/google/i18n/phonenumbers/PhoneNumberUtil.html) class to validate a phone number based on a country code. If no country code is provided in the parameters used to run the validator, this notice won't be emitted.",
+      "files": [],
+      "fields": {
+        "csvRowNumber": "integer",
+        "fieldName": "string",
+        "fieldValue": "string",
+        "filename": "string"
+      }
+    },
+    "invalid_pickup_drop_off_window": {
+      "severity": "error",
+      "summary": "The pickup/drop-off window in `stop_times.txt` is invalid.",
+      "description": "The `end_pickup_drop_off_window` must be strictly later than the `start_pickup_drop_off_window`.",
+      "files": [
+        "stop_times.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "endPickupDropOffWindow": "string",
+        "startPickupDropOffWindow": "string"
+      }
+    },
+    "invalid_prior_notice_duration_min": {
+      "severity": "error",
+      "summary": "An invalid `prior_notice_duration_min` value is present in a booking rule.",
+      "description": "The `prior_notice_duration_max` field value needs to be greater or equal to the `prior_notice_duration_min` field value.",
+      "files": [
+        "booking_rules.txt"
+      ],
+      "fields": {
+        "bookingRuleId": "string",
+        "csvRowNumber": "integer",
+        "priorNoticeDurationMax": "integer",
+        "priorNoticeDurationMin": "integer"
+      }
+    },
+    "invalid_row_length": {
+      "severity": "error",
+      "summary": "Invalid csv row length.",
+      "description": "A row in the input file has a different number of values than specified by the CSV header.",
+      "files": [],
+      "fields": {
+        "csvRowNumber": "integer",
+        "filename": "string",
+        "headerCount": "integer",
+        "rowLength": "integer"
+      }
+    },
+    "invalid_time": {
+      "severity": "error",
+      "summary": "A field cannot be parsed as time.",
+      "description": "Time must be in the `H:MM:SS`, `HH:MM:SS` or `HHH:MM:SS` format. Example: `14:30:00` for 2:30PM or `25:35:00` for 1:35AM on the next day.",
+      "files": [],
+      "fields": {
+        "csvRowNumber": "integer",
+        "fieldName": "string",
+        "fieldValue": "string",
+        "filename": "string"
+      }
+    },
+    "invalid_timezone": {
+      "severity": "error",
+      "summary": "A field cannot be parsed as a timezone.",
+      "description": "Timezones are defined at <a href=\"https://www.iana.org/time-zones\">www.iana.org</a>. Timezone names never contain the space character but may contain an underscore. Refer to <a href=\"http://en.wikipedia.org/wiki/List_of_tz_zones\">Wikipedia</a> for a list of valid values. Example: `Asia/Tokyo`, `America/Los_Angeles` or `Africa/Cairo`.",
+      "files": [],
+      "fields": {
+        "csvRowNumber": "integer",
+        "fieldName": "string",
+        "fieldValue": "string",
+        "filename": "string"
+      }
+    },
+    "invalid_url": {
+      "severity": "error",
+      "summary": "A field contains a malformed URL.",
+      "description": "Definitions for valid URLs are quite vague. We perform strict validation using the Apache Commons UrlValidator.",
+      "files": [],
+      "fields": {
+        "csvRowNumber": "integer",
+        "fieldName": "string",
+        "fieldValue": "string",
+        "filename": "string"
+      }
+    },
+    "leading_or_trailing_whitespaces": {
+      "severity": "warning",
+      "summary": "The value in CSV file has leading or trailing whitespaces.",
+      "description": "This notice is emitted for values protected with double quotes since whitespaces for non-protected values are trimmed automatically by CSV parser. The validator strips whitespaces from protected values. We do not see any use case when such a whitespace may be needed. On the other hand, some real-world feeds use trailing whitespaces for some values and omit them for the others. This is causing the largest problem when a primary key and a foreign key differ just by a whitespace: it is clear that they are intended to be the same, that is why we always strip whitespaces.",
+      "files": [],
+      "fields": {
+        "csvRowNumber": "integer",
+        "fieldName": "string",
+        "fieldValue": "string",
+        "filename": "string"
+      }
+    },
+    "location_with_unexpected_stop_time": {
+      "severity": "error",
+      "summary": "A location in `stops.txt` that is not a stop is referenced by some `stop_times.stop_id`.",
+      "description": "Referenced locations (using `stop_times.stop_id`) must be stops/platforms, i.e. their `stops.location_type` value must be 0 or empty.",
+      "files": [
+        "stop_times.txt",
+        "stops.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "stopId": "string",
+        "stopName": "string",
+        "stopTimeCsvRowNumber": "integer"
+      }
+    },
+    "location_without_parent_station": {
+      "severity": "error",
+      "summary": "A location that must have `parent_station` field does not have it.",
+      "description": "The following location types must have `parent_station`: entrance, generic node, boarding_area.",
+      "files": [
+        "stops.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "locationType": "integer",
+        "stopId": "string",
+        "stopName": "string"
+      }
+    },
+    "malformed_json": {
+      "severity": "error",
+      "summary": "A JSON file is malformed.",
+      "description": "",
+      "files": [],
+      "fields": {
+        "filename": "string",
+        "message": "string"
+      }
+    },
+    "missing_bike_allowance": {
+      "severity": "warning",
+      "summary": "Ferry trips should include bike allowance information.",
+      "description": "All ferry trips should have a valid value in the bikes_allowed field in trips.txt.",
+      "files": [
+        "routes.txt",
+        "trips.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "routeId": "string",
+        "tripId": "string"
+      }
+    },
+    "missing_calendar_and_calendar_date_files": {
+      "severity": "error",
+      "summary": "Missing GTFS files `calendar.txt` and `calendar_dates.txt`.",
+      "description": "At least one of the files must be provided.",
+      "files": [
+        "calendar.txt",
+        "calendar_dates.txt"
+      ],
+      "fields": {}
+    },
+    "missing_feed_contact_email_and_url": {
+      "severity": "warning",
+      "summary": "Best Practices for `feed_info.txt` suggest providing at least one of `feed_contact_email` and `feed_contact_url`.",
+      "description": "",
+      "files": [],
+      "fields": {
+        "csvRowNumber": "integer"
+      }
+    },
+    "missing_feed_info_date": {
+      "severity": "warning",
+      "summary": "One of `feed_start_date` or `feed_end_date` is specified, but not both.",
+      "description": "Even though `feed_info.start_date` and `feed_info.end_date` are optional, if one field is provided the second one should also be provided.",
+      "files": [
+        "feed_info.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "fieldName": "string"
+      }
+    },
+    "missing_level_id": {
+      "severity": "error",
+      "summary": "`stops.level_id` is conditionally required.",
+      "description": "GTFS file `levels.txt` is required for elevator (`pathway_mode=5`). A row from `stops.txt` linked to an elevator pathway has no value for `stops.level_id`.",
+      "files": [
+        "levels.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "stopId": "string",
+        "stopName": "string"
+      }
+    },
+    "missing_pickup_drop_off_booking_rule_id": {
+      "severity": "warning",
+      "summary": "pickup_booking_rule_id is recommended when pickup_type=2 and drop_off_booking_rule_id is recommended when drop_off_type=2.",
+      "description": "Currently, this notice is only triggered on feeds when either start_pickup_drop_off_window or end_pickup_drop_off_window is defined, since this recommendation was added to the specification for feeds with GTFS-Flex.",
+      "files": [
+        "stop_times.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "dropOffType": "enum",
+        "pickupType": "enum"
+      }
+    },
+    "missing_pickup_or_drop_off_window": {
+      "severity": "error",
+      "summary": "Either the start or end pickup/drop-off window is missing in `stop_times.txt`.",
+      "description": "GTFS specification requires both the start and end pickup/drop-off windows to be provided together, if used.",
+      "files": [
+        "stop_times.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "endPickupDropOffWindow": "string",
+        "startPickupDropOffWindow": "string"
+      }
+    },
+    "missing_prior_day_booking_field_value": {
+      "severity": "error",
+      "summary": "The `prior_notice_last_day` and the `prior_notice_last_time` values are required for prior day `booking_type` in booking_rules.txt.",
+      "description": "",
+      "files": [
+        "booking_rules.txt"
+      ],
+      "fields": {
+        "bookingRuleId": "string",
+        "csvRowNumber": "integer"
+      },
+      "deprecated": {
+        "since": "7.0.0",
+        "reason": "Separated into `missing_prior_notice_last_day` and `missing_prior_notice_last_time` notices",
+        "replaced_by": [
+          "missing_prior_notice_last_day",
+          "missing_prior_notice_last_time"
+        ]
+      }
+    },
+    "missing_prior_notice_duration_min": {
+      "severity": "error",
+      "summary": "`prior_notice_duration_min` value is required for same day `booking_type` in booking_rules.txt.",
+      "description": "",
+      "files": [
+        "booking_rules.txt"
+      ],
+      "fields": {
+        "bookingRuleId": "string",
+        "csvRowNumber": "integer"
+      }
+    },
+    "missing_prior_notice_last_day": {
+      "severity": "error",
+      "summary": "The `prior_notice_last_day` is required when booking_type=2 (prior day booking) is specified in booking_rules.txt.",
+      "description": "",
+      "files": [
+        "booking_rules.txt"
+      ],
+      "fields": {
+        "bookingRuleId": "string",
+        "csvRowNumber": "integer"
+      }
+    },
+    "missing_prior_notice_last_time": {
+      "severity": "error",
+      "summary": "The `prior_notice_last_time` is required when booking_type=2 (prior day booking) is specified in booking_rules.txt.",
+      "description": "",
+      "files": [
+        "booking_rules.txt"
+      ],
+      "fields": {
+        "bookingRuleId": "string",
+        "csvRowNumber": "integer"
+      }
+    },
+    "missing_prior_notice_start_time": {
+      "severity": "error",
+      "summary": "`prior_notice_start_time` value is required when `prior_notice_start_day` value is set in booking_rules.txt.",
+      "description": "",
+      "files": [
+        "booking_rules.txt"
+      ],
+      "fields": {
+        "bookingRuleId": "string",
+        "csvRowNumber": "integer",
+        "priorNoticeStartDay": "integer"
+      }
+    },
+    "missing_recommended_column": {
+      "severity": "warning",
+      "summary": "A recommended column is missing in the input file.",
+      "description": "",
+      "files": [],
+      "fields": {
+        "fieldName": "string",
+        "filename": "string"
+      },
+      "deprecated": {
+        "since": "7.0.0",
+        "reason": "Unused validation notice",
+        "replaced_by": []
+      }
+    },
+    "missing_recommended_field": {
+      "severity": "warning",
+      "summary": "A recommended field is missing.",
+      "description": "The given field has no value in some input row, even though values are recommended.",
+      "files": [],
+      "fields": {
+        "csvRowNumber": "integer",
+        "fieldName": "string",
+        "filename": "string"
+      }
+    },
+    "missing_recommended_file": {
+      "severity": "warning",
+      "summary": "A recommended file is missing.",
+      "description": "",
+      "files": [],
+      "fields": {
+        "filename": "string"
+      }
+    },
+    "missing_required_agency_id": {
+      "severity": "error",
+      "summary": "Agency id is required when there are multiple agencies.",
+      "description": "`agency.agency_id`, `routes.agency_id` or `fare_attributes.agency_id` is required when there are multiple agencies.",
+      "files": [
+        "agency.txt",
+        "routes.txt",
+        "fare_attributes.txt"
+      ],
+      "fields": {
+        "agencyName": "string",
+        "csvRowNumber": "integer",
+        "filename": "string"
+      }
+    },
+    "missing_required_column": {
+      "severity": "error",
+      "summary": "A required column is missing in the input file.",
+      "description": "",
+      "files": [],
+      "fields": {
+        "fieldName": "string",
+        "filename": "string"
+      }
+    },
+    "missing_required_element": {
+      "severity": "error",
+      "summary": "A required element is missing in `locations.geojson`.",
+      "description": "",
+      "files": [],
+      "fields": {
+        "featureId": "string",
+        "featureIndex": "integer",
+        "missingElement": "string"
+      }
+    },
+    "missing_required_field": {
+      "severity": "error",
+      "summary": "A required field is missing.",
+      "description": "The given field has no value in some input row, even though values are required.",
+      "files": [],
+      "fields": {
+        "csvRowNumber": "integer",
+        "fieldName": "string",
+        "filename": "string"
+      }
+    },
+    "missing_required_file": {
+      "severity": "error",
+      "summary": "A required file is missing.",
+      "description": "If this notice is triggered for every core file, it might be a problem with the input. To create a zip file from the GTFS `.txt` files: select all the `.txt` files, right-click, and compress. Do not compress the folder containing the files.",
+      "files": [],
+      "fields": {
+        "filename": "string"
+      }
+    },
+    "missing_stop_name": {
+      "severity": "error",
+      "summary": "`stops.stop_name` is required for `location_type` equal to `0`, `1`, or `2`.",
+      "description": "`stops.stop_name` is required for locations that are stops (`location_type=0`), stations (`location_type=1`) or entrances/exits (`location_type=2`).",
+      "files": [
+        "stops.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "locationType": "enum",
+        "stopId": "string"
+      }
+    },
+    "missing_stop_times_record": {
+      "severity": "error",
+      "summary": "Only one stop_times record is found where two are required.",
+      "description": "Travel within the same location group or GeoJSON location requires two records in stop_times.txt with the same location_group_id or location_id.",
+      "files": [
+        "stop_times.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "locationGroupId": "string",
+        "locationId": "string",
+        "tripId": "string"
+      }
+    },
+    "missing_timepoint_value": {
+      "severity": "warning",
+      "summary": "`stop_times.timepoint` value is missing for a record.",
+      "description": "When at least one of `stop_times.arrival_time` or `stop_times.departure_time` are provided, `stop_times.timepoint` should be defined",
+      "files": [
+        "stop_times.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "stopSequence": "integer",
+        "tripId": "string"
+      }
+    },
+    "missing_trip_edge": {
+      "severity": "error",
+      "summary": "Missing trip edge `arrival_time` or `departure_time`.",
+      "description": "First and last stop of a trip must define both `arrival_time` and `departure_time` fields. Per [stop_times.txt](http://gtfs.org/reference/static/#stop_timestxt), \"If there are not separate times for arrival and departure at a stop, enter the same value for arrival_time and departure_time.\"",
+      "files": [
+        "stop_times.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "specifiedField": "string",
+        "stopSequence": "integer",
+        "tripId": "string"
+      }
+    },
+    "mixed_case_recommended_field": {
+      "severity": "warning",
+      "summary": "This field has customer-facing text and should use Mixed Case (should contain upper and lower case letters).",
+      "description": "This field contains customer-facing text and should use Mixed Case (upper and lower case letters) to ensure good readability when displayed to riders. Avoid the use of abbreviations throughout the feed (e.g. St. for Street) unless a location is called by its abbreviated name (e.g. “JFK Airport”). Abbreviations may be problematic for accessibility by screen reader software and voice user interfaces. <table style=\"table-layout:auto; width:auto;\"> <caption>Good examples:</caption> <tr> <th><code>Field Text</code></th> <th><code>Dataset</code></th> </tr> <tr> <td>\"Schwerin, Hauptbahnhof\"</td> <td><a href=\"http://vbb.de/vbbgtfs\">Verkehrsverbund Berlin-Brandenburg</a></td> </tr> <tr> <td>\"Red Hook/Atlantic Basin\"</td> <td><a href=\"http://nycferry.connexionz.net/rtt/public/utility/gtfs.aspx\">NYC Ferry</a></td> </tr> <tr> <td>\"Campo Grande Norte\"</td> <td><a href=\"https://gateway.carris.pt/gateway/gtfs/api/v2.8/GTFS\">Carris</a></td> </tr> </table> <table style=\"table-layout:auto; width:auto;\"> <caption>Bad examples:</caption> <tr> <th><code>Field Text</code></th> </tr> <tr> <td>\"GALLERIA MALL\"</td> </tr> <tr> <td>\"3427 GG 17\"</td> </tr> <tr> <td>\"21 Clark Rd Est\"</td> </tr> </table>",
+      "files": [],
+      "fields": {
+        "csvRowNumber": "integer",
+        "fieldName": "string",
+        "fieldValue": "string",
+        "filename": "string"
+      }
+    },
+    "more_than_one_entity": {
+      "severity": "warning",
+      "summary": "More than one row in CSV.",
+      "description": "The file is expected to have a single entity but has more (e.g., \"feed_info.txt\").",
+      "files": [],
+      "fields": {
+        "entityCount": "integer",
+        "filename": "string"
+      }
+    },
+    "new_line_in_value": {
+      "severity": "error",
+      "summary": "New line or carriage return in a value in CSV file.",
+      "description": "This error is usually found when the CSV file does not close double quotes properly, so the next line is considered as a continuation of the previous line. Example: the following file was intended to have fields \"f11\", \"f12\", \"f21\", \"f22\", but it actually parses as two fields: \"f11\", \"f12\\nf21,\\\"f22\\\"\". ``` f11,\"f12 f21,\"f22\" ```",
+      "files": [],
+      "fields": {
+        "csvRowNumber": "integer",
+        "fieldName": "string",
+        "fieldValue": "string",
+        "filename": "string"
+      }
+    },
+    "non_ascii_or_non_printable_char": {
+      "severity": "warning",
+      "summary": "Non ascii or non printable char in ID field.",
+      "description": "A value of a field with type ID contains non ASCII or non printable characters. This is not recommended.",
+      "files": [],
+      "fields": {
+        "columnName": "string",
+        "csvRowNumber": "integer",
+        "fieldValue": "string",
+        "filename": "string"
+      }
+    },
+    "number_out_of_range": {
+      "severity": "error",
+      "summary": "Out of range value.",
+      "description": "The values in the given column of the input rows are out of range.",
+      "files": [],
+      "fields": {
+        "csvRowNumber": "integer",
+        "fieldName": "string",
+        "fieldType": "string",
+        "fieldValue": "object",
+        "filename": "string"
+      }
+    },
+    "overlapping_frequency": {
+      "severity": "error",
+      "summary": "Trip frequencies overlap.",
+      "description": "Trip frequencies must not overlap in time. Two entries X and Y are considered to directly overlap if X.start_time is less than or equal to Y.start_time and Y.start_time is less than X.end_time.",
+      "files": [
+        "frequencies.txt"
+      ],
+      "fields": {
+        "currCsvRowNumber": "integer",
+        "currStartTime": "string",
+        "prevCsvRowNumber": "integer",
+        "prevEndTime": "string",
+        "tripId": "string"
+      }
+    },
+    "overlapping_zone_and_pickup_drop_off_window": {
+      "severity": "error",
+      "summary": "Two entities have overlapping pickup/drop-off windows and zones.",
+      "description": "Two entities in `stop_times.txt` with the same `trip_id` have the same `pickup_type` or `drop_off_type`, overlapping pickup/drop-off windows and overlapping zones in `locations.geojson`.",
+      "files": [],
+      "fields": {
+        "endPickupDropOffWindow1": "string",
+        "endPickupDropOffWindow2": "string",
+        "locationId1": "string",
+        "locationId2": "string",
+        "startPickupDropOffWindow1": "string",
+        "startPickupDropOffWindow2": "string",
+        "stopSequence1": "integer",
+        "stopSequence2": "integer",
+        "tripId": "string"
+      }
+    },
+    "pathway_dangling_generic_node": {
+      "severity": "warning",
+      "summary": "A generic node has only one incident location in a pathway graph.",
+      "description": "Such generic node is useless because there is no benefit in visiting it.",
+      "files": [
+        "pathways.txt",
+        "stops.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "parentStation": "string",
+        "stopId": "string",
+        "stopName": "string"
+      }
+    },
+    "pathway_loop": {
+      "severity": "warning",
+      "summary": "A pathway starts and ends at the same location.",
+      "description": "A pathway should not have same values for `from_stop_id` and `to_stop_id`.",
+      "files": [
+        "pathways.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "pathwayId": "string",
+        "stopId": "string"
+      }
+    },
+    "pathway_to_platform_with_boarding_areas": {
+      "severity": "error",
+      "summary": "A pathway has an endpoint that is a platform which has boarding areas.",
+      "description": "A platform that has boarding areas is treated as a parent object, not a point. In such cases, the platform must not have pathways assigned - instead, pathways must be assigned to its boarding areas.",
+      "files": [
+        "pathways.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "fieldName": "string",
+        "pathwayId": "string",
+        "stopId": "string"
+      }
+    },
+    "pathway_to_stop_with_access_outside_of_station_pathways": {
+      "severity": "error",
+      "summary": "A pathway has an endpoint that is a stop with stop_access=1, which should be accessible outside of the station’s pathways.",
+      "description": "Stops with stop_access=1 should not have pathways that link to them since they can be accessed from the street and are independent of the pathways inside the station.",
+      "files": [
+        "pathways.txt",
+        "stops.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "pathwayId": "string",
+        "platformCode": "string",
+        "stopId": "string"
+      }
+    },
+    "pathway_to_wrong_location_type": {
+      "severity": "error",
+      "summary": "A pathway has an endpoint that is a station.",
+      "description": "Pathways endpoints must be platforms (stops), entrances/exits, generic nodes or boarding areas.",
+      "files": [
+        "pathways.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "fieldName": "string",
+        "pathwayId": "string",
+        "stopId": "string"
+      }
+    },
+    "pathway_unreachable_location": {
+      "severity": "error",
+      "summary": "A location is not reachable at least in one direction: from the entrances or to the exits.",
+      "description": "Notices are reported for platforms, boarding areas and generic nodes but not for entrances or stations. Notices are not reported for platforms that have boarding areas since such platforms may not have incident pathways. Instead, notices are reported for the boarding areas.",
+      "files": [
+        "pathways.txt",
+        "stops.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "hasEntrance": "boolean",
+        "hasExit": "boolean",
+        "locationType": "integer",
+        "parentStation": "string",
+        "stopId": "string",
+        "stopName": "string"
+      }
+    },
+    "platform_without_parent_station": {
+      "severity": "info",
+      "summary": "A platform has no `parent_station` field set.",
+      "description": "This is different from `location_without_parent_station` since it is less severe.",
+      "files": [
+        "stops.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "stopId": "string",
+        "stopName": "string"
+      }
+    },
+    "point_near_origin": {
+      "severity": "error",
+      "summary": "A point is too close to origin `(0, 0)`.",
+      "description": "",
+      "files": [],
+      "fields": {
+        "csvRowNumber": "integer",
+        "entityId": "string",
+        "featureIndex": "integer",
+        "filename": "string",
+        "latFieldName": "string",
+        "latFieldValue": "number",
+        "lonFieldName": "string",
+        "lonFieldValue": "number"
+      }
+    },
+    "point_near_pole": {
+      "severity": "error",
+      "summary": "A point is too close to the North or South Pole.",
+      "description": "",
+      "files": [],
+      "fields": {
+        "csvRowNumber": "integer",
+        "entityId": "string",
+        "featureIndex": "integer",
+        "filename": "string",
+        "latFieldName": "string",
+        "latFieldValue": "number",
+        "lonFieldName": "string",
+        "lonFieldValue": "number"
+      }
+    },
+    "prior_notice_last_day_after_start_day": {
+      "severity": "error",
+      "summary": "Prior notice last day should not be greater than the prior notice start day in booking_rules.txt.",
+      "description": "",
+      "files": [
+        "booking_rules.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "priorNoticeLastDay": "integer",
+        "priorNoticeStartDay": "integer"
+      }
+    },
+    "route_both_short_and_long_name_missing": {
+      "severity": "error",
+      "summary": "Both `route_short_name` and `route_long_name` are missing for a route.",
+      "description": "",
+      "files": [
+        "routes.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "routeId": "string"
+      }
+    },
+    "route_color_contrast": {
+      "severity": "warning",
+      "summary": "Insufficient route color contrast.",
+      "description": "A route's color and `route_text_color` should be contrasting.",
+      "files": [
+        "routes.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "routeColor": "string",
+        "routeId": "string",
+        "routeTextColor": "string"
+      }
+    },
+    "route_long_name_contains_short_name": {
+      "severity": "warning",
+      "summary": "Long name should not contain short name for a single route.",
+      "description": "In routes.txt, `route_long_name` should not contain the value for `route_short_name`, because when both are provided, they are often combined by transit applications. Note that only one of the two fields is required. If there is no short name used for a route, use `route_long_name` only. Good examples: <table> <tr> <th>route_short_name/route_long_name</th> <th>Dataset</th> </tr> <tr> <td>\"N\"/\"Judah\"</td> <td><a href=\"https://www.sfmta.com/getting-around/transit/routes-stops/n-judah\">Muni San Fransisco</a></td> </tr> <tr> <td>\"6\"/\"ML King Jr Blvd\"</td> <td><a href=\"https://trimet.org/schedules/r006.htm\">Trimet Portland Streetcar</a></td> </tr> <tr> <td>\"55\"/\"Boulevard Saint Laurent\"</td> <td><a href=\"https://www.stm.info/en/info/networks/bus/local/line-55-north\">STM Montreal</a></td> </tr> <tr> <td>\"1\"/\"Rangiora/Cashmere\"</td> <td><a href=\"https://www.metroinfo.co.nz/timetables/1-rangiora-cashmere/\">Metro Christchurch</a></td> </tr> </table> Bad examples: <table> <tr> <th>route_short_name/route_long_name</th> </tr> <tr> <td>\"604\"/\"604\"</td> </tr> <tr> <td>\"14\"/\"Route 14\"</td> </tr> <tr> <td>\"2\"/\"Route 2: Bellows Falls In-Town\"</td> </tr> </table>",
+      "files": [
+        "routes.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "routeId": "string",
+        "routeLongName": "string",
+        "routeShortName": "string"
+      }
+    },
+    "route_networks_specified_in_more_than_one_file": {
+      "severity": "error",
+      "summary": "Indicates that route network identifiers are specified across multiple files.",
+      "description": "This notice highlights a data integrity issue where route network specifications are redundantly defined in more than one file. According to specifications, a route network identifier should be uniquely defined in a single file. Any additional definitions of route network specifications in other files are considered conditionally forbidden.",
+      "files": [
+        "routes.txt",
+        "route_networks.txt",
+        "networks.txt"
+      ],
+      "fields": {
+        "fieldName": "string",
+        "fileNameA": "string",
+        "fileNameB": "string"
+      }
+    },
+    "route_short_name_too_long": {
+      "severity": "warning",
+      "summary": "Short name of a route is too long (more than 12 characters).",
+      "description": "",
+      "files": [
+        "routes.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "routeId": "string",
+        "routeShortName": "string"
+      }
+    },
+    "runtime_exception_in_loader_error": {
+      "severity": "error",
+      "summary": "RuntimeException while loading GTFS dataset in memory.",
+      "description": "A [RuntimeException](https://docs.oracle.com/javase/8/docs/api/java/lang/RuntimeException.html) occurred while loading a table. This normally indicates a bug in validator.",
+      "files": [],
+      "fields": {
+        "exception": "string",
+        "filename": "string",
+        "message": "string"
+      }
+    },
+    "runtime_exception_in_validator_error": {
+      "severity": "error",
+      "summary": "RuntimeException while validating GTFS archive.",
+      "description": "A [RuntimeException](https://docs.oracle.com/javase/8/docs/api/java/lang/RuntimeException.html) occurred during validation. This normally indicates a bug in validator code, e.g., in a custom validator class.",
+      "files": [],
+      "fields": {
+        "exception": "string",
+        "message": "string",
+        "validator": "string"
+      }
+    },
+    "same_name_and_description_for_route": {
+      "severity": "warning",
+      "summary": "Same name and description for route.",
+      "description": "The GTFS spec defines `routes.txt` [route_desc](https://gtfs.org/reference/static/#routestxt) as: Description of a route that provides useful, quality information. Do not simply duplicate the name of the route. See the GTFS and GTFS Best Practices links below for more examples of how to populate the `route_short_name`, `route_long_name`, and `route_desc` fields.",
+      "files": [
+        "routes.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "routeDesc": "string",
+        "routeId": "string",
+        "specifiedField": "string"
+      }
+    },
+    "same_name_and_description_for_stop": {
+      "severity": "warning",
+      "summary": "Same name and description for stop.",
+      "description": "The GTFS spec defines `stops.txt` [stop_description](https://gtfs.org/reference/static/#stopstxt) as: Description of the location that provides useful, quality information. Do not simply duplicate the name of the location.",
+      "files": [
+        "stops.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "stopDesc": "string",
+        "stopId": "string"
+      }
+    },
+    "same_route_and_agency_url": {
+      "severity": "warning",
+      "summary": "Same `routes.route_url` and `agency.agency_url`.",
+      "description": "A route should not have the same `routes.route_url` as a record from `agency.txt`.",
+      "files": [
+        "routes.txt",
+        "agency.txt"
+      ],
+      "fields": {
+        "agencyCsvRowNumber": "integer",
+        "agencyName": "string",
+        "routeCsvRowNumber": "integer",
+        "routeId": "string",
+        "routeUrl": "string"
+      }
+    },
+    "same_stop_and_agency_url": {
+      "severity": "warning",
+      "summary": "Same `stops.stop_url` and `agency.agency_url`.",
+      "description": "A stop should not have the same `stops.stop_url` as a record from `agency.txt`.",
+      "files": [
+        "stops.txt",
+        "agency.txt"
+      ],
+      "fields": {
+        "agencyCsvRowNumber": "integer",
+        "agencyName": "string",
+        "stopCsvRowNumber": "integer",
+        "stopId": "string",
+        "stopUrl": "string"
+      }
+    },
+    "same_stop_and_route_url": {
+      "severity": "warning",
+      "summary": "Same `stops.stop_url` and `routes.route_url`.",
+      "description": "A stop should not have the same `stop.stop_url` as a record from `routes.txt`.",
+      "files": [
+        "stops.txt",
+        "routes.txt"
+      ],
+      "fields": {
+        "routeCsvRowNumber": "integer",
+        "routeId": "string",
+        "stopCsvRowNumber": "integer",
+        "stopId": "string",
+        "stopUrl": "string"
+      }
+    },
+    "service_extends_far_in_the_future": {
+      "severity": "info",
+      "summary": "A service end date is more than 2 years in the future.",
+      "description": "",
+      "files": [
+        "calendar.txt",
+        "calendar_dates.txt"
+      ],
+      "fields": {
+        "serviceId": "string",
+        "serviceWindowEndDate": "string"
+      }
+    },
+    "service_has_no_active_day_of_the_week": {
+      "severity": "warning",
+      "summary": "A service is not valid for any day of the week.",
+      "description": "",
+      "files": [
+        "calendar.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "serviceId": "string"
+      }
+    },
+    "service_window_outside_feed_period": {
+      "severity": "info",
+      "summary": "A service window is not covered by the feed's validity period.",
+      "description": "",
+      "files": [
+        "calendar.txt",
+        "calendar_dates.txt",
+        "feed_info.txt"
+      ],
+      "fields": {
+        "daysAfterFeedEnd": "integer",
+        "daysBeforeFeedStart": "integer",
+        "serviceId": "string",
+        "serviceWindowEndDate": "string",
+        "serviceWindowStartDate": "string"
+      }
+    },
+    "single_shape_point": {
+      "severity": "warning",
+      "summary": "The shape within `shapes.txt` contains a single shape point.",
+      "description": "A shape should contain more than one shape point to visualize the route",
+      "files": [
+        "shapes.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "shapeId": "string"
+      }
+    },
+    "start_and_end_range_equal": {
+      "severity": "error",
+      "summary": "Two date or time fields are equal.",
+      "description": "The fields `frequencies.start_date` and `frequencies.end_date` have been found equal in `frequencies.txt`. The GTFS spec is currently unclear how this case should be handled (e.g., is it a trip that circulates once?). It is recommended to use a trip not defined via frequencies.txt for this case.",
+      "files": [],
+      "fields": {
+        "csvRowNumber": "integer",
+        "endFieldName": "string",
+        "entityId": "string",
+        "filename": "string",
+        "startFieldName": "string",
+        "value": "string"
+      }
+    },
+    "start_and_end_range_out_of_order": {
+      "severity": "error",
+      "summary": "Two date or time fields are out of order.",
+      "description": "Date or time fields have been found out of order in `calendar.txt`, `feed_info.txt` and `stop_times.txt`.",
+      "files": [],
+      "fields": {
+        "csvRowNumber": "integer",
+        "endFieldName": "string",
+        "endValue": "string",
+        "entityId": "string",
+        "filename": "string",
+        "startFieldName": "string",
+        "startValue": "string"
+      }
+    },
+    "station_with_parent_station": {
+      "severity": "error",
+      "summary": "A station has `parent_station` field set.",
+      "description": "Field `parent_station` must be empty when `location_type` is 1.",
+      "files": [
+        "stops.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "parentStation": "string",
+        "stopId": "string",
+        "stopName": "string"
+      }
+    },
+    "stop_access_specified_for_incorrect_location": {
+      "severity": "error",
+      "summary": "A location that is not a stop has stop_access specified.",
+      "description": "Stops.stop_access is forbidden for locations that are stations, entrances, generic nodes or boarding areas. It can only be specific when a stop is associated with a parent station.",
+      "files": [
+        "stops.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "locationType": "enum",
+        "stopAccess": "enum",
+        "stopId": "string",
+        "stopName": "string"
+      }
+    },
+    "stop_access_specified_for_stop_with_no_parent_station": {
+      "severity": "error",
+      "summary": "A stop without a value for parent station has stop_access specified.",
+      "description": "stops.stop_access is forbidden for stops that are not associated with a parent station.",
+      "files": [
+        "stops.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "locationType": "enum",
+        "stopAccess": "enum",
+        "stopId": "string",
+        "stopName": "string"
+      }
+    },
+    "stop_has_too_many_matches_for_shape": {
+      "severity": "warning",
+      "summary": "Stop entry that has many potential matches to the trip's path of travel, as defined by the shape entry in `shapes.txt`.",
+      "description": "This potentially indicates a problem with the location of the stop or the path of the shape.",
+      "files": [
+        "trips.txt",
+        "stop_times.txt",
+        "stops.txt"
+      ],
+      "fields": {
+        "match": "array",
+        "matchCount": "integer",
+        "shapeId": "string",
+        "stopId": "string",
+        "stopName": "string",
+        "stopTimeCsvRowNumber": "integer",
+        "tripCsvRowNumber": "integer",
+        "tripId": "string"
+      }
+    },
+    "stop_time_timepoint_without_times": {
+      "severity": "error",
+      "summary": "`arrival_time` or `departure_time` not specified for timepoint.",
+      "description": "Any records with `stop_times.timepoint` set to 1 must define a value for `stop_times.arrival_time` and `stop_times.departure_time` fields.",
+      "files": [
+        "stop_times.txt",
+        "stop_times.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "specifiedField": "string",
+        "stopSequence": "integer",
+        "tripId": "string"
+      }
+    },
+    "stop_time_with_arrival_before_previous_departure_time": {
+      "severity": "error",
+      "summary": "Backwards time travel between stops in `stop_times.txt`",
+      "description": "For a given `trip_id`, the `arrival_time` of (n+1)-th stoptime in sequence must not precede the `departure_time` of n-th stoptime in sequence in `stop_times.txt`.",
+      "files": [
+        "stop_times.txt"
+      ],
+      "fields": {
+        "arrivalTime": "string",
+        "csvRowNumber": "integer",
+        "departureTime": "string",
+        "prevCsvRowNumber": "integer",
+        "tripId": "string"
+      }
+    },
+    "stop_time_with_only_arrival_or_departure_time": {
+      "severity": "error",
+      "summary": "Missing `stop_times.arrival_time` or `stop_times.departure_time`.",
+      "description": "",
+      "files": [
+        "stop_times.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "specifiedField": "string",
+        "stopSequence": "integer",
+        "tripId": "string"
+      }
+    },
+    "stop_too_far_from_shape": {
+      "severity": "warning",
+      "summary": "Stop too far from trip shape.",
+      "description": "Per GTFS Best Practices, route alignments (in `shapes.txt`) should be within 100 meters of stop locations which a trip serves. This potentially indicates a problem with the location of the stop or the path of the shape.",
+      "files": [
+        "stop_times.txt",
+        "stops.txt",
+        "trips.txt"
+      ],
+      "fields": {
+        "geoDistanceToShape": "number",
+        "match": "array",
+        "shapeId": "string",
+        "stopId": "string",
+        "stopName": "string",
+        "stopTimeCsvRowNumber": "integer",
+        "tripCsvRowNumber": "integer",
+        "tripId": "string"
+      }
+    },
+    "stop_too_far_from_shape_using_user_distance": {
+      "severity": "warning",
+      "summary": "Stop time too far from shape.",
+      "description": "A stop time entry that is a large distance away from the location of the shape in `shapes.txt` as defined by `shape_dist_traveled` values.",
+      "files": [
+        "trips.txt",
+        "stop_times.txt",
+        "stops.txt",
+        "stop_times.txt"
+      ],
+      "fields": {
+        "geoDistanceToShape": "number",
+        "match": "array",
+        "shapeId": "string",
+        "stopId": "string",
+        "stopName": "string",
+        "stopTimeCsvRowNumber": "integer",
+        "tripCsvRowNumber": "integer",
+        "tripId": "string"
+      }
+    },
+    "stop_without_location": {
+      "severity": "error",
+      "summary": "`stop_lat` and/or `stop_lon` is missing for stop with `location_type` equal to`0`, `1`, or `2`",
+      "description": "`stop_lat` and/or `stop_lon` are required for locations that are stops (`location_type=0`), stations (`location_type=1`) or entrances/exits (`location_type=2`).",
+      "files": [
+        "stops.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "locationType": "enum",
+        "stopId": "string"
+      }
+    },
+    "stop_without_stop_time": {
+      "severity": "warning",
+      "summary": "A stop in `stops.txt` is not referenced by any `stop_times.stop_id`.",
+      "description": "Such stops are not used by any trip and normally do not provide user value. This notice may indicate a typo in `stop_times.txt`.",
+      "files": [
+        "stop_times.txt",
+        "stops.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "stopId": "string",
+        "stopName": "string"
+      }
+    },
+    "stop_without_zone_id": {
+      "severity": "info",
+      "summary": "Stop without value for `stops.zone_id` contained in a route with a zone-dependent fare rule.",
+      "description": "If `fare_rules.txt` is provided, and `fare_rules.txt` uses at least one column among `origin_id`, `destination_id`, and `contains_id`, then all stops and platforms (location_type = 0) must have `stops.zone_id` assigned if they are defined in a trip defined in a route defined in a fare rule which also defines at least one of `origin_id`, `destination_id`, or `contains_id`.",
+      "files": [
+        "stops.txt",
+        "stop_times.txt",
+        "trips.txt",
+        "routes.txt",
+        "fare_rules.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "stopId": "string",
+        "stopName": "string"
+      }
+    },
+    "stops_match_shape_out_of_order": {
+      "severity": "warning",
+      "summary": "Two stop entries are different than their arrival-departure order defined by `shapes.txt`.",
+      "description": "This could indicate a problem with the location of the stops, the path of the shape, or the sequence of the stops for their trip.",
+      "files": [
+        "trips.txt",
+        "stop_times.txt",
+        "stops.txt"
+      ],
+      "fields": {
+        "match1": "array",
+        "match2": "array",
+        "shapeId": "string",
+        "stopId1": "string",
+        "stopId2": "string",
+        "stopName1": "string",
+        "stopName2": "string",
+        "stopTimeCsvRowNumber1": "integer",
+        "stopTimeCsvRowNumber2": "integer",
+        "tripCsvRowNumber": "integer",
+        "tripId": "string"
+      }
+    },
+    "thread_execution_error": {
+      "severity": "error",
+      "summary": "ExecutionException during multithreaded validation",
+      "description": "An [ExecutionException](https://docs.oracle.com/javase/8/docs/api/java/util/concurrent/ExecutionException.html) occurred during multithreaded validation.",
+      "files": [],
+      "fields": {
+        "exception": "string",
+        "message": "string"
+      }
+    },
+    "timeframe_only_start_or_end_time_specified": {
+      "severity": "error",
+      "summary": "A row from `timeframes.txt` was found with only one of `start_time` and `end_time` specified.",
+      "description": "Either both must be specified or neither must be specified.",
+      "files": [
+        "timeframes.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer"
+      }
+    },
+    "timeframe_overlap": {
+      "severity": "error",
+      "summary": "Two entries in `timeframes.txt` with the same `timeframe_group_id` and `service_id` have overlapping time intervals.",
+      "description": "Timeframes with the same group and service dates must not overlap in time. Two entries X and Y are considered to directly overlap if X.start_time is less than or equal to Y.start_time and Y.start_time is less than X.end_time.",
+      "files": [
+        "frequencies.txt"
+      ],
+      "fields": {
+        "currCsvRowNumber": "integer",
+        "currStartTime": "string",
+        "prevCsvRowNumber": "integer",
+        "prevEndTime": "string",
+        "serviceId": "string",
+        "timeframeGroupId": "string"
+      }
+    },
+    "timeframe_start_or_end_time_greater_than_twenty_four_hours": {
+      "severity": "error",
+      "summary": "A time in `timeframes.txt` is greater than `24:00:00`.",
+      "description": "",
+      "files": [
+        "timeframes.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "fieldName": "string",
+        "time": "string"
+      }
+    },
+    "too_many_rows": {
+      "severity": "error",
+      "summary": "A CSV file has too many rows.",
+      "description": "Feeds with too large files cannot be processed in a reasonable time by GTFS consumers.",
+      "files": [],
+      "fields": {
+        "filename": "string",
+        "rowNumber": "integer"
+      }
+    },
+    "transfer_distance_above_2_km": {
+      "severity": "info",
+      "summary": "The transfer distance from stop to stop in `transfers.txt` is larger than 2 km.",
+      "description": "",
+      "files": [
+        "transfers.txt",
+        "stops.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "distanceKm": "number",
+        "fromStopId": "string",
+        "toStopId": "string"
+      }
+    },
+    "transfer_distance_too_large": {
+      "severity": "warning",
+      "summary": "The transfer distance from stop to stop in `transfers.txt` is larger than 10 km.",
+      "description": "",
+      "files": [
+        "transfers.txt",
+        "stops.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "distanceKm": "number",
+        "fromStopId": "string",
+        "toStopId": "string"
+      }
+    },
+    "transfer_with_invalid_stop_location_type": {
+      "severity": "error",
+      "summary": "A stop id field from GTFS file `transfers.txt` references a stop that has a `location_type` other than 0 or 1 (aka Stop/Platform or Station).",
+      "description": "",
+      "files": [
+        "transfers.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "locationTypeName": "string",
+        "locationTypeValue": "integer",
+        "stopId": "string",
+        "stopIdFieldName": "string"
+      }
+    },
+    "transfer_with_invalid_trip_and_route": {
+      "severity": "error",
+      "summary": "A trip id field from GTFS file `transfers.txt` references a route that does not match its `trips.txt` `route_id`.",
+      "description": "",
+      "files": [
+        "transfers.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "expectedRouteId": "string",
+        "routeFieldName": "string",
+        "routeId": "string",
+        "tripFieldName": "string",
+        "tripId": "string"
+      }
+    },
+    "transfer_with_invalid_trip_and_stop": {
+      "severity": "error",
+      "summary": "A trip id field from GTFS file `transfers.txt` references a stop that is not included in the referenced trip's stop-times.",
+      "description": "",
+      "files": [
+        "transfers.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "stopFieldName": "string",
+        "stopId": "string",
+        "tripFieldName": "string",
+        "tripId": "string"
+      }
+    },
+    "transfer_with_suspicious_mid_trip_in_seat": {
+      "severity": "warning",
+      "summary": "A trip id field from GTFS file `transfers.txt` with an in-seat transfer type references a stop that is not in the expected position in the trip's stop-times.",
+      "description": "For in-seat transfers, we expect the stop to be the last stop-time in the trip sequence for `from_stop_id` and the first stop-time for `to_stop_id`. If you are intentionally using this feature to model mid-trip transfers, you can ignore this warning, but be aware that this functionality is still considered to be partially experimental in some interpretations of the spec.",
+      "files": [
+        "transfers.txt",
+        "stops.txt",
+        "stop_times.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "stopId": "string",
+        "stopIdFieldName": "string",
+        "tripId": "string",
+        "tripIdFieldName": "string"
+      }
+    },
+    "translation_foreign_key_violation": {
+      "severity": "error",
+      "summary": "An entity with the given `record_id` and `record_sub_id` cannot be found in the referenced table.",
+      "description": "",
+      "files": [
+        "translations.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "recordId": "string",
+        "recordSubId": "string",
+        "tableName": "string"
+      }
+    },
+    "translation_unexpected_value": {
+      "severity": "error",
+      "summary": "A field in a translations row has value but must be empty.",
+      "description": "",
+      "files": [
+        "translations.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "fieldName": "string",
+        "fieldValue": "string"
+      }
+    },
+    "translation_unknown_table_name": {
+      "severity": "warning",
+      "summary": "A translation references an unknown or missing GTFS table.",
+      "description": "",
+      "files": [
+        "translations.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "tableName": "string"
+      }
+    },
+    "trip_coverage_not_active_for_next7_days": {
+      "severity": "warning",
+      "summary": "Trips data should be valid for at least the next seven days.",
+      "description": "This notice is triggered if the date range where a significant number of trips are running ends in less than 7 days.",
+      "files": [
+        "calendar.txt",
+        "calendar_dates.txt",
+        "frequencies.txt",
+        "trips.txt"
+      ],
+      "fields": {
+        "currentDate": "string",
+        "serviceWindowEndDate": "string",
+        "serviceWindowStartDate": "string"
+      }
+    },
+    "trip_distance_exceeds_shape_distance": {
+      "severity": "error",
+      "summary": "The distance between the last shape point and last stop point is greater than or equal to the 11.1m threshold.",
+      "description": "",
+      "files": [
+        "trips.txt",
+        "stop_times.txt",
+        "shapes.txt"
+      ],
+      "fields": {
+        "geoDistanceToShape": "number",
+        "maxShapeDistanceTraveled": "number",
+        "maxTripDistanceTraveled": "number",
+        "shapeId": "string",
+        "tripId": "string"
+      }
+    },
+    "trip_distance_exceeds_shape_distance_below_threshold": {
+      "severity": "warning",
+      "summary": "The distance between the last shape point and last stop point is greater than 0 but less than the 11.1m threshold.",
+      "description": "",
+      "files": [
+        "trips.txt",
+        "stop_times.txt",
+        "shapes.txt"
+      ],
+      "fields": {
+        "geoDistanceToShape": "number",
+        "maxShapeDistanceTraveled": "number",
+        "maxTripDistanceTraveled": "number",
+        "shapeId": "string",
+        "tripId": "string"
+      }
+    },
+    "trip_headsign_matches_intermediate_stop": {
+      "severity": "info",
+      "summary": "Trip headsign matches the name of an intermediate stop, not the last stop.",
+      "description": "The `trip_headsign` matches the `stop_name` of a stop that is not the last stop of the trip. This may confuse passengers boarding after that stop, since the headsign suggests the vehicle is heading to a stop it has already passed.",
+      "files": [
+        "trips.txt",
+        "stop_times.txt",
+        "stops.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "stopId1": "string",
+        "stopId2": "string",
+        "stopSequence": "integer",
+        "tripHeadsign": "string",
+        "tripId": "string"
+      }
+    },
+    "trip_with_shape_dist_traveled_but_no_shape_distances": {
+      "severity": "info",
+      "summary": "A trip has shape_dist_traveled values in stop_times.txt but the shape referenced by the trip's shape_id does not have shape_dist_traveled values on all of its points in shapes.txt.",
+      "description": "When stop times define distance values but the shape does not carry matching distances on every point, consumers cannot use those distances to align stops to the shape geometry reliably. This inconsistency may cause incorrect routing or display behaviour. <b>Note:</b> Only the first stop time carrying a shape_dist_traveled value is referenced in the notice; this is a representative row rather than an exhaustive list.",
+      "files": [
+        "trips.txt",
+        "stop_times.txt",
+        "shapes.txt"
+      ],
+      "fields": {
+        "shapeId": "string",
+        "stopTimeCsvRowNumber": "integer",
+        "tripCsvRowNumber": "integer",
+        "tripId": "string"
+      }
+    },
+    "u_r_i_syntax_error": {
+      "severity": "error",
+      "summary": "A string could not be parsed as a URI reference.",
+      "description": "",
+      "files": [],
+      "fields": {
+        "exception": "string",
+        "message": "string"
+      }
+    },
+    "unexpected_enum_value": {
+      "severity": "warning",
+      "summary": "An enum has an unexpected value.",
+      "description": "",
+      "files": [],
+      "fields": {
+        "csvRowNumber": "integer",
+        "fieldName": "string",
+        "fieldValue": "integer",
+        "filename": "string"
+      }
+    },
+    "unknown_column": {
+      "severity": "info",
+      "summary": "A column name is unknown.",
+      "description": "",
+      "files": [],
+      "fields": {
+        "fieldName": "string",
+        "filename": "string",
+        "index": "integer"
+      }
+    },
+    "unknown_file": {
+      "severity": "info",
+      "summary": "A file is unknown.",
+      "description": "",
+      "files": [],
+      "fields": {
+        "filename": "string"
+      }
+    },
+    "unsorted_stop_times": {
+      "severity": "info",
+      "summary": "Stop times are not sorted by trip_id and stop_sequence.",
+      "description": "'stop_times.txt' entries for a given trip are not sorted by stop_sequence, or are not contiguous in the file.",
+      "files": [
+        "stop_times.txt"
+      ],
+      "fields": {
+        "endCsvRowNumber": "integer",
+        "startCsvRowNumber": "integer",
+        "tripId": "string"
+      }
+    },
+    "unsupported_feature_type": {
+      "severity": "error",
+      "summary": "An unsupported feature type is used in the `locations.geojson` file.",
+      "description": "Use `Feature` instead to comply with the spec.",
+      "files": [],
+      "fields": {
+        "featureId": "string",
+        "featureIndex": "integer",
+        "featureType": "string"
+      }
+    },
+    "unsupported_geo_json_type": {
+      "severity": "error",
+      "summary": "An unsupported GeoJSON type is used in the `locations.geojson` file.",
+      "description": "Use `FeatureCollection` instead to comply with the spec.",
+      "files": [],
+      "fields": {
+        "geoJsonType": "string",
+        "message": "string"
+      }
+    },
+    "unsupported_geometry_type": {
+      "severity": "error",
+      "summary": "A GeoJSON feature has an unsupported geometry type in `locations.geojson`.",
+      "description": "Each feature must have a geometry type that is supported by the GTFS spec. The supported geometry types `Polygon` and `MultiPolygon`.",
+      "files": [],
+      "fields": {
+        "featureId": "string",
+        "featureIndex": "integer",
+        "geometryType": "string"
+      }
+    },
+    "unusable_trip": {
+      "severity": "warning",
+      "summary": "Trips must have more than one stop to be usable.",
+      "description": "A trip must visit more than one stop in stop_times.txt to be usable by passengers for boarding and alighting.",
+      "files": [
+        "stop_times.txt",
+        "trips.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "tripId": "string"
+      }
+    },
+    "unused_parent_station": {
+      "severity": "info",
+      "summary": "Unused parent station.",
+      "description": "A stop has `location_type` STATION (1) but does not appear in any stop's `parent_station`.",
+      "files": [
+        "stops.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "stopId": "string",
+        "stopName": "string"
+      },
+      "deprecated": {
+        "since": "7.0.0",
+        "reason": "Renamed to `unused_station`",
+        "replaced_by": [
+          "unused_station"
+        ]
+      }
+    },
+    "unused_shape": {
+      "severity": "warning",
+      "summary": "Shape is not used in GTFS file `trips.txt`.",
+      "description": "All records defined by GTFS `shapes.txt` should be used in `trips.txt`.",
+      "files": [
+        "shapes.txt",
+        "trips.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "shapeId": "string"
+      }
+    },
+    "unused_station": {
+      "severity": "info",
+      "summary": "Unused station.",
+      "description": "A stop has `location_type` STATION (1) but does not appear in any stop's `parent_station`.",
+      "files": [
+        "stops.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "stopId": "string",
+        "stopName": "string"
+      }
+    },
+    "unused_trip": {
+      "severity": "warning",
+      "summary": "Trip is not be used in `stop_times.txt`",
+      "description": "Trips should be referred to at least once in `stop_times.txt`.",
+      "files": [
+        "trips.txt",
+        "stop_times.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "tripId": "string"
+      }
+    },
+    "wrong_parent_location_type": {
+      "severity": "error",
+      "summary": "Incorrect type of the parent location.",
+      "description": "Value of field `location_type` of parent found in field `parent_station` is invalid. According to spec - _Stop/platform_ can only have _Station_ as parent - _Station_ can NOT have a parent - _Entrance/exit_ or _generic node_ can only have _Station_ as parent - _Boarding Area_ can only have _Platform_ as parent Any other combination raise this error.",
+      "files": [
+        "stops.txt",
+        "stop_times.txt"
+      ],
+      "fields": {
+        "csvRowNumber": "integer",
+        "expectedLocationType": "integer",
+        "locationType": "integer",
+        "parentCsvRowNumber": "integer",
+        "parentLocationType": "integer",
+        "parentStation": "string",
+        "parentStopName": "string",
+        "stopId": "string",
+        "stopName": "string"
+      }
+    }
+  }
+}

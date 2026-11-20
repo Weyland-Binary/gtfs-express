@@ -1,0 +1,51 @@
+<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Fond : dégradé diagonal bleu profond -> cyan, dans le ton du logo -->
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0040CC"/>
+      <stop offset="55%" stop-color="#0066FF"/>
+      <stop offset="100%" stop-color="#00B8FF"/>
+    </linearGradient>
+    
+    <!-- Léger glow pour donner de la profondeur -->
+    <radialGradient id="glow" cx="35%" cy="30%" r="60%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Fond avec coins arrondis (rendu correct si pas masqué + naturel si masqué en cercle) -->
+  <!-- Rayon 96 = ~19% du côté, standard iOS/Android -->
+  <rect x="0" y="0" width="512" height="512" rx="96" fill="url(#bg)"/>
+  
+  <!-- Reflet doux -->
+  <rect x="0" y="0" width="512" height="512" rx="96" fill="url(#glow)"/>
+
+  <!-- ============================================ 
+       Icône au centre — ZONE DE SÉCURITÉ : 
+       Le masque circulaire de Google rogne ~10% de chaque bord.
+       Donc tout doit tenir dans un cercle de rayon ~205 (centre 256,256).
+       Je dimensionne le mark dans une bbox d'environ 280x280 max.
+       ============================================ -->
+  
+  <!-- Double chevron blanc, italique, qui évoque la vitesse -->
+  <!-- Centré visuellement : décalage en x pour compenser le skew + la largeur du mark -->
+  <g transform="translate(196 256) skewX(-8)" fill="#FFFFFF">
+    <!-- Chevron arrière, plus pâle (effet de vitesse) -->
+    <path d="M -50 -85 
+             L 32 0 
+             L -50 85 
+             L 8 85 
+             L 90 0 
+             L 8 -85 Z" 
+          opacity="0.45"/>
+    
+    <!-- Chevron principal, opaque -->
+    <path d="M 50 -85 
+             L 132 0 
+             L 50 85 
+             L 108 85 
+             L 190 0 
+             L 108 -85 Z"/>
+  </g>
+</svg>

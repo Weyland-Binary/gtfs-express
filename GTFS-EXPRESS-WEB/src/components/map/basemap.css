@@ -1,0 +1,11 @@
+/* Raster fallback of the theme-following basemap in dark mode (no WebGL):
+   OpenStreetMap tiles turned into a night palette. */
+.gtfs-basemap-dark-filter {
+  filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9) saturate(0.6);
+}
+
+/* The MapLibre canvas lives in Leaflet's tile pane: Leaflet handles the
+   interaction, the canvas must not catch the pointer. */
+.leaflet-tile-pane .maplibregl-canvas {
+  pointer-events: none;
+}
