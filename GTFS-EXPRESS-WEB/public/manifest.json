@@ -1,0 +1,22 @@
+{
+  "name": "GTFS Express",
+  "short_name": "GTFS Express",
+  "description": "Visualize & Analyze Public Transport Data",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0D1B2E",
+  "theme_color": "#1565C0",
+  "icons": [
+    {
+      "src": "/img/android-chrome-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/img/android-chrome-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+.footer {
+  background: #ffffff;
+  text-align: center;
+  padding: 10px;
+  margin-top: 20px;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.04);
+  backdrop-filter: blur(10px);
+  z-index: 10;
+  transition:
+    background 0.3s ease,
+    border-color 0.3s ease;
+}
+
+body.dark-mode .footer {
+  background: #1e1e1e;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.2);
+}

@@ -1,0 +1,141 @@
+{
+  "validator": "8.0.0",
+  "files": {
+    "agency.txt": [
+      "agency_name",
+      "agency_url",
+      "agency_timezone"
+    ],
+    "areas.txt": [
+      "area_id"
+    ],
+    "attributions.txt": [
+      "organization_name"
+    ],
+    "booking_rules.txt": [
+      "booking_rule_id",
+      "booking_type"
+    ],
+    "calendar.txt": [
+      "service_id",
+      "monday",
+      "tuesday",
+      "wednesday",
+      "thursday",
+      "friday",
+      "saturday",
+      "sunday",
+      "start_date",
+      "end_date"
+    ],
+    "calendar_dates.txt": [
+      "service_id",
+      "date",
+      "exception_type"
+    ],
+    "fare_attributes.txt": [
+      "fare_id",
+      "price",
+      "currency_type",
+      "payment_method"
+    ],
+    "fare_leg_join_rules.txt": [
+      "from_network_id",
+      "to_network_id"
+    ],
+    "fare_leg_rules.txt": [
+      "fare_product_id"
+    ],
+    "fare_media.txt": [
+      "fare_media_id",
+      "fare_media_type"
+    ],
+    "fare_products.txt": [
+      "fare_product_id",
+      "amount",
+      "currency"
+    ],
+    "fare_rules.txt": [
+      "fare_id"
+    ],
+    "fare_transfer_rules.txt": [
+      "fare_transfer_type"
+    ],
+    "feed_info.txt": [
+      "feed_publisher_name",
+      "feed_publisher_url",
+      "feed_lang"
+    ],
+    "frequencies.txt": [
+      "trip_id",
+      "start_time",
+      "end_time",
+      "headway_secs"
+    ],
+    "levels.txt": [
+      "level_id",
+      "level_index"
+    ],
+    "location_group_stops.txt": [
+      "location_group_id",
+      "stop_id"
+    ],
+    "location_groups.txt": [
+      "location_group_id"
+    ],
+    "networks.txt": [
+      "network_id"
+    ],
+    "pathways.txt": [
+      "pathway_id",
+      "from_stop_id",
+      "to_stop_id",
+      "pathway_mode",
+      "is_bidirectional"
+    ],
+    "rider_categories.txt": [
+      "rider_category_id",
+      "rider_category_name"
+    ],
+    "route_networks.txt": [
+      "route_id",
+      "network_id"
+    ],
+    "routes.txt": [
+      "route_id",
+      "route_type"
+    ],
+    "shapes.txt": [
+      "shape_id",
+      "shape_pt_lat",
+      "shape_pt_lon",
+      "shape_pt_sequence"
+    ],
+    "stop_areas.txt": [
+      "area_id",
+      "stop_id"
+    ],
+    "stop_times.txt": [
+      "trip_id",
+      "stop_sequence"
+    ],
+    "stops.txt": [
+      "stop_id"
+    ],
+    "timeframes.txt": [
+      "service_id"
+    ],
+    "transfers.txt": [],
+    "translations.txt": [
+      "table_name",
+      "field_name",
+      "language",
+      "translation"
+    ],
+    "trips.txt": [
+      "trip_id",
+      "route_id",
+      "service_id"
+    ]
+  }
+}

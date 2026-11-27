@@ -1,0 +1,523 @@
+const express = require("express");
+const fileUpload = require("express-fileupload");
+const bodyParser = require("body-parser");
+const { rateLimit, ipKeyGenerator } = require("express-rate-limit");
+const helmet = require("helmet");
+const compression = require("compression");
+const gtfsRoutes = require("./routes/gtfsRoutes");
+const {
+  PORT,
+  RATE_LIMIT_WINDOW_MS,
+  RATE_LIMIT_MAX_REQUESTS,
+  RATE_LIMIT_MAX_UPLOADS,
+  RATE_LIMIT_SAMPLE_WINDOW_MS,
+  RATE_LIMIT_MAX_SAMPLES,
+  RATE_LIMIT_MAX_REVALIDATE,
+  RATE_LIMIT_MAX_DEMAND,
+  BETA_RATE_LIMIT_MAX_REQUESTS,
+  BETA_RATE_LIMIT_MAX_UPLOADS,
+  BETA_RATE_LIMIT_MAX_SQL,
+  BETA_RATE_LIMIT_MAX_REVALIDATE,
+  BETA_RATE_LIMIT_MAX_DEMAND,
+  ALLOWED_ORIGINS,
+  NODE_ENV,
+  ACCOUNTS_ENABLED,
+} = require("./config");
+const appConfig = require("./config");
+const { userContext } = require("./middleware/userContext");
+const { actorContext } = require("./services/edit/actorContext");
+const { personalDataContext } = require("./services/llm/personalData");
+const writeGate = require("./services/db/writeGate");
+const { betaAwareKey, betaAwareMax } = require("./middleware/betaLimit");
+const cors = require("cors");
+
+const app = express();
+
+// req.ip is the address TRUST_PROXY_HOPS hops back along X-Forwarded-For (by default the frontend's nginx).
+app.set("trust proxy", appConfig.TRUST_PROXY_HOPS);
+
+// Mounted first so that its timings include the whole middleware stack.
+const { perfLogger } = require("./middleware/perfLogger");
+app.use(perfLogger);
+
+// A 500 a handler answers itself hides its message in production; typed refusals and the SQL console's errors keep
+// theirs. Before every route.
+const { serverErrorMask } = require("./middleware/serverErrorMask");
+app.use(serverErrorMask({ production: NODE_ENV === "production" }));
+
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: "same-origin" },
+  }),
+);
+
+app.use(
+  compression({
+    filter: (req, res) => {
+      // gzip buffers whole chunks and would break the chat's token streaming (SSE). Matched by URL: the
+      // Content-Type is not set yet at filter time.
+      if (req.path && req.path.endsWith("/sql/nl2sql-chat")) return false;
+      return compression.filter(req, res);
+    },
+  }),
+);
+
+// What a tab sends by itself while it stays open (its session kept alive, the clicks counted): it never spends the
+// budget of what the person reads, and has bounds of its own below. Read as Express routes it (case, trailing slash).
+const { routedPath } = require("./services/paidAccess");
+const UPKEEP = new Set(["POST /gtfs/session/heartbeat", "GET /gtfs/session/status", "POST /gtfs/telemetry/ui"]);
+const isUpkeep = (req) => UPKEEP.has(`${req.method} ${routedPath(req.path)}`);
+
+// A licensed account gets a bucket of its own and a higher cap (middleware/betaLimit).
+const generalLimiter = rateLimit({
+  windowMs: RATE_LIMIT_WINDOW_MS,
+  max: betaAwareMax(RATE_LIMIT_MAX_REQUESTS, BETA_RATE_LIMIT_MAX_REQUESTS),
+  skip: isUpkeep,
+  keyGenerator: betaAwareKey((req) => ipKeyGenerator(req.ip) || "unknown"),
+  message: `Request limit of ${RATE_LIMIT_MAX_REQUESTS}/hour reached. Please try again in 1 hour.`,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const uploadLimiter = rateLimit({
+  windowMs: RATE_LIMIT_WINDOW_MS,
+  max: betaAwareMax(RATE_LIMIT_MAX_UPLOADS, BETA_RATE_LIMIT_MAX_UPLOADS),
+  keyGenerator: betaAwareKey((req) => ipKeyGenerator(req.ip) || "unknown"),
+  message: `Upload limit of ${RATE_LIMIT_MAX_UPLOADS}/hour reached. Please try again in 1 hour.`,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+app.use(
+  cors({
+    origin: ALLOWED_ORIGINS,
+    methods: "GET,HEAD,PUT,PATCH,POST,DELETE",
+    // Cookies only with accounts on (CSRF); the session cookie must then travel cross-origin in development, and the
+    // Origin check below keeps state-changing requests first-party.
+    credentials: ACCOUNTS_ENABLED,
+    // 600 s is the longest preflight cache Chrome honours.
+    maxAge: 600,
+    // Cross-origin, a header outside the CORS safelist is invisible unless exposed (the web reads the delivered
+    // file's name from Content-Disposition).
+    exposedHeaders: ["Content-Disposition", "ETag", "X-Manifest-Sha256", "X-Sheets-Dense", "X-GTFS-Report"],
+  }),
+);
+
+// CSRF: a state-changing request whose Origin is outside the allowlist is refused; one without Origin (scripts)
+// passes.
+app.use((req, res, next) => {
+  const method = req.method;
+  if (!["POST", "PUT", "PATCH", "DELETE"].includes(method)) return next();
+
+  const origin = req.headers["origin"];
+  if (!origin) return next();
+
+  if (!ALLOWED_ORIGINS.includes(origin)) {
+    return res
+      .status(403)
+      .json({ error: "Forbidden: origin not allowed." });
+  }
+  next();
+});
+
+// Before every rate limiter: it sets req.betaCode, the key of a licensed account's raised bucket. Never refuses.
+app.use(userContext);
+
+app.use(generalLimiter);
+
+// A tab asks twice a minute: this holds an office of a hundred tabs behind one address, and no loop beyond.
+const sessionUpkeepLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 2400,
+  keyGenerator: (req) => ipKeyGenerator(req.ip) || "unknown",
+  message: { error: "RATE_LIMITED", message: "Too many session checks from this address, slow down." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.post("/gtfs/session/heartbeat", sessionUpkeepLimiter);
+app.get("/gtfs/session/status", sessionUpkeepLimiter);
+
+// The payment provider's webhook is signed over its exact bytes: its body stays raw, and the JSON parser below then
+// leaves it alone.
+app.use("/gtfs/billing/webhook", bodyParser.raw({ type: () => true, limit: "1mb" }));
+// A body is held in memory or on disk while it arrives: the bodies open at one moment are bounded before its parser.
+const { inFlightCap } = require("./middleware/inFlightCap");
+// A body above the 1 MB default is read only for a caller its route lets through: the access guards and what the
+// handler asks first answer before a byte of it is read, the paid offer off too, and the sessions it names are held to
+// their owner once it is. Matched as Express routes it (case, trailing slash).
+const { largeJson, bodyRefusalOf } = require("./middleware/jsonBody");
+const { paidAccessGuard } = require("./services/paidAccess");
+const { sessionOwnerGuard } = require("./services/sessionOwner");
+const { requireSession, requireEditMode } = require("./services/sessionAccess");
+const networkLoaded = (req, res, next) => {
+  if (requireSession(req, res)) next();
+};
+const networkInEditMode = (req, res, next) => {
+  if (requireEditMode(req, res)) next();
+};
+const LARGE_BODIES = [
+  // A shape is saved whole: up to 50 000 points (shapeEditService MAX_POINTS) is about 3 MB of JSON, its trips' ids too.
+  { route: /^(POST \/edit\/shapes|PUT \/edit\/shapes\/[^/]+|POST \/edit\/shapes\/[^/]+\/(fork|link))$/, admit: networkInEditMode, parse: largeJson(6), receiving: inFlightCap({ total: 4, perAddress: 2 }) },
+  // A sheets PDF carries every page it prints, a logo included.
+  { route: /^POST \/documents\/sheets\/pdf$/, admit: networkLoaded, parse: largeJson(16), receiving: inFlightCap({ total: 4, perAddress: 2 }) },
+];
+const DEFAULT_BODY_BYTES = 1024 * 1024;
+app.use("/gtfs", (req, res, next) => {
+  const large = LARGE_BODIES.find((b) => b.route.test(`${req.method} ${routedPath(req.path)}`));
+  if (!large) return next();
+  // Only a body over the default's size, or of unknown length, takes a place, until its response closes.
+  const length = req.headers["content-length"];
+  const held = !/^\d+$/.test(length || "") || Number(length) > DEFAULT_BODY_BYTES;
+  const steps = [paidAccessGuard, sessionOwnerGuard, large.admit, ...(held ? [large.receiving] : []), large.parse, sessionOwnerGuard];
+  // Past the parser a step runs in its stream's callback, where nothing would catch what it throws.
+  const run = (i) => (err) => {
+    if (err || i === steps.length) return next(err);
+    try {
+      return steps[i](req, res, run(i + 1));
+    } catch (thrown) {
+      return next(thrown);
+    }
+  };
+  return run(0)();
+});
+// Never inflated: a few kilobytes of a compressed body would have the parser read its whole limit.
+app.use(bodyParser.json({ limit: "1mb", inflate: false }));
+app.use(bodyParser.urlencoded({ extended: true, limit: "1mb", inflate: false }));
+// Multipart bodies are parsed only where a file is expected, with that route's own ceiling: mounted app-wide, any
+// POST could hold a file in memory for the length of the request. The handlers keep their own typed size refusals
+// (DOCUMENT_TOO_LARGE, the attachment's cap), so each ceiling here sits just above the handler's.
+const multipartOptions = (maxMb) => ({
+  limits: { fileSize: maxMb * 1024 * 1024 },
+  abortOnLimit: true,
+  // Answered before the abort, which then finds the headers sent: a typed refusal the web can word.
+  limitHandler: (req, res) => {
+    if (!res.headersSent) res.status(413).set("Connection", "close").json({ error: "FILE_TOO_LARGE", message: `File size exceeds the ${maxMb} MB limit.`, max_mb: maxMb });
+  },
+});
+const multipart = (maxMb) => fileUpload(multipartOptions(maxMb));
+// A feed's archive is written to the uploads folder as it arrives, never held in memory: a file there, not a folder,
+// so it is no session; the handler moves it into its session, and what it did not move goes with the request.
+const multipartToDisk = (maxMb) => fileUpload({ ...multipartOptions(maxMb), useTempFiles: true, tempFileDir: appConfig.GTFS_UPLOAD_DIR });
+const dropReceived = (req, res, next) => {
+  const drop = () => {
+    for (const file of Object.values(req.files || {}).flat()) if (file && file.tempFilePath) require("fs").rm(file.tempFilePath, { force: true }, () => {});
+  };
+  if (!res.destroyed) res.once("close", drop);
+  else {
+    // The sender hung up while its body was still being written to disk: the close is past, so what the handler did not
+    // move goes with its answer.
+    const end = res.end;
+    res.end = function endAndDrop(...args) {
+      drop();
+      return end.apply(this, args);
+    };
+  }
+  next();
+};
+// An upload is counted by its limiter before its parser too.
+const receiving = inFlightCap({ total: 12, perAddress: 4 });
+app.post("/gtfs/upload", uploadLimiter, receiving, multipartToDisk(appConfig.UPLOAD_MAX_MB), dropReceived);
+app.post("/gtfs/network/documents", receiving, multipart(21));
+app.post("/gtfs/sql/nl2sql-chat/attachment", receiving, multipart(Math.ceil(appConfig.CHAT_ATTACHMENT_MAX_BYTES / 1048576) + 1));
+// The request's actor names every edit-log row, and its caller the places it holds (utils/callerKey). After the body
+// parsers: their stream callbacks would run outside the context.
+app.use(actorContext);
+app.use(require("./utils/callerKey").callerContext);
+// The persons this request knows, so that no model request carries them. After the body parsers, for the same
+// reason.
+app.use(personalDataContext);
+app.use(require("./services/llm/aiMeter").aiMeterContext);
+
+app.get("/health", (req, res) => {
+  res.status(200).json({ status: "ok", uptime: process.uptime() });
+});
+
+app.get("/", (req, res) => {
+  res.send("Welcome to the API");
+});
+
+const sampleLimiter = rateLimit({
+  windowMs: RATE_LIMIT_SAMPLE_WINDOW_MS,
+  max: RATE_LIMIT_MAX_SAMPLES,
+  message: `Sample load limit of ${RATE_LIMIT_MAX_SAMPLES} reached. Please try again later.`,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+app.get("/gtfs/load-sample", sampleLimiter);
+// Opening a share creates a session like the sample does: same budget.
+app.post("/gtfs/share/:token/open", sampleLimiter);
+// Opening a catalogue feed downloads it and creates a session: the upload budget, and a place among the archives read
+// at once.
+app.post("/gtfs/network/catalog/open", uploadLimiter, receiving);
+// These write to disk: their own budget, apart from the uploads', so that a journey's versions never eat the budget
+// of the files it opens.
+const workspaceLimiter = rateLimit({
+  windowMs: RATE_LIMIT_WINDOW_MS,
+  max: Number(process.env.WORKSPACE_RATE_LIMIT_MAX) || 300,
+  keyGenerator: betaAwareKey((req) => ipKeyGenerator(req.ip) || "unknown"),
+  message: "Workspace limit reached. Please try again later.",
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.post(["/gtfs/workspace/token", "/gtfs/workspace/projects/:projectId/versions", "/gtfs/workspace/projects/:projectId/versions/:versionId/restore", "/gtfs/workspace/projects/:projectId/take", "/gtfs/workspace/projects/:projectId/versions/:versionId/package"], workspaceLimiter);
+// A version read back writes its tables to disk once: the same budget.
+app.get(["/gtfs/workspace/projects/:projectId/versions/:versionId/diff", "/gtfs/workspace/projects/:projectId/versions/:versionId/coherence"], workspaceLimiter);
+
+// A share writes a whole copy of the network and keeps it SHARE_TTL_DAYS: a budget an hour per caller (the account,
+// else the hashed address), whatever session header it sends; the service also bounds its living shares and bytes.
+const { callerKey } = require("./utils/callerKey");
+const shareLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: betaAwareMax(appConfig.SHARE_RATE_LIMIT_MAX, appConfig.SHARE_RATE_LIMIT_MAX * 3),
+  keyGenerator: (req) => callerKey(req),
+  message: { error: "RATE_LIMITED", message: "Too many shares, slow down." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.post(["/gtfs/share", "/gtfs/share/:token/versions"], shareLimiter);
+
+// A simulated plan costs seconds of CPU in the request's thread: its own per-minute budget.
+const previewLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: betaAwareMax(Number(process.env.TRANSFORM_PREVIEW_RATE_LIMIT_MAX) || 60, Number(process.env.BETA_TRANSFORM_PREVIEW_RATE_LIMIT_MAX) || 120),
+  keyGenerator: betaAwareKey((req) => ipKeyGenerator(req.ip) || "unknown"),
+  message: { error: "RATE_LIMITED", message: "Too many simulations, slow down." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.post("/gtfs/transform/preview", previewLimiter);
+
+// Each export reads the whole coherence report; a first read of a large network costs seconds of CPU.
+const coherenceExportLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: betaAwareMax(Number(process.env.COHERENCE_EXPORT_RATE_LIMIT_MAX) || 20, Number(process.env.BETA_COHERENCE_EXPORT_RATE_LIMIT_MAX) || 60),
+  keyGenerator: betaAwareKey((req) => ipKeyGenerator(req.ip) || "unknown"),
+  message: { error: "RATE_LIMITED", message: "Too many coherence exports, slow down." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+// Each method named with its literal paths: the G1 route index reads them from this source.
+app.get(["/gtfs/network/coherence.xlsx", "/gtfs/network/coherence.pdf", "/gtfs/transform/preview/:id/coherence.xlsx", "/gtfs/transform/preview/:id/coherence.pdf"], coherenceExportLimiter);
+
+// Comparing two networks reads every row of both, in another process (diffService): a per-minute budget per caller
+// (the account, else the hashed address), whatever session header it sends; demand/computeGate also bounds how many
+// run at once.
+const RATE_LIMIT_MAX_DIFF = Number(process.env.DIFF_RATE_LIMIT_MAX) || 10;
+const diffLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: betaAwareMax(RATE_LIMIT_MAX_DIFF, RATE_LIMIT_MAX_DIFF * 3),
+  keyGenerator: (req) => callerKey(req),
+  message: { error: "RATE_LIMITED", message: "Too many comparisons, slow down." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.post("/gtfs/diff", diffLimiter);
+app.get("/gtfs/workspace/projects/:projectId/versions/:versionId/diff", diffLimiter);
+
+// An estimate costs seconds of CPU and a copy of the feed; demand/computeGate also bounds how many run at once.
+const demandLimiter = rateLimit({
+  windowMs: RATE_LIMIT_WINDOW_MS,
+  max: betaAwareMax(RATE_LIMIT_MAX_DEMAND, BETA_RATE_LIMIT_MAX_DEMAND),
+  keyGenerator: betaAwareKey((req) => ipKeyGenerator(req.ip) || "unknown"),
+  message: `Estimate limit of ${RATE_LIMIT_MAX_DEMAND}/hour reached. Please try again later.`,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.post("/gtfs/transform/demand", demandLimiter);
+
+// The per-session buckets below key on X-Session-ID, a header the client chooses: rotating it would give a fresh
+// bucket each time. Keyless traffic also meets a bucket per address holding four sessions' worth (an office behind
+// one address).
+const perAddress = (max, windowMs, message) =>
+  rateLimit({
+    windowMs,
+    max: max * 4,
+    skip: (req) => Boolean(req.betaCode),
+    keyGenerator: (req) => ipKeyGenerator(req.ip) || "unknown",
+    message,
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+
+// Revalidation runs every validator rule.
+const revalidateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: betaAwareMax(RATE_LIMIT_MAX_REVALIDATE, BETA_RATE_LIMIT_MAX_REVALIDATE),
+  keyGenerator: betaAwareKey(
+    (req) => req.headers["x-session-id"] || ipKeyGenerator(req.ip) || "unknown",
+  ),
+  message: `Revalidation limit of ${RATE_LIMIT_MAX_REVALIDATE}/minute reached. Please wait before re-running.`,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+app.post("/gtfs/edit/validate", perAddress(RATE_LIMIT_MAX_REVALIDATE, 60 * 1000, `Revalidation limit reached for this address. Please wait before re-running.`), revalidateLimiter);
+
+// A cap mistyped in the environment keeps its default: NaN would leave the limiter blocking nothing.
+const RATE_LIMIT_MAX_SQL = Number.parseInt(process.env.RATE_LIMIT_MAX_SQL, 10) || 60;
+const sqlLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: betaAwareMax(RATE_LIMIT_MAX_SQL, BETA_RATE_LIMIT_MAX_SQL),
+  keyGenerator: betaAwareKey(
+    (req) => req.headers["x-session-id"] || ipKeyGenerator(req.ip) || "unknown",
+  ),
+  message: { error: "Too many SQL requests, slow down." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const sqlPerAddress = perAddress(RATE_LIMIT_MAX_SQL, 60 * 1000, { error: "Too many SQL requests from this address, slow down." });
+app.post(["/gtfs/sql", "/gtfs/sql/export.csv", "/gtfs/edit/sql", "/gtfs/edit/sql/preview"], sqlPerAddress, sqlLimiter);
+
+// Parsing an attachment is CPU work. A bucket of its own, not the SQL one, so that neither can starve the other.
+const RATE_LIMIT_MAX_ATTACHMENTS = Number.parseInt(process.env.RATE_LIMIT_MAX_ATTACHMENTS, 10) || 10;
+const attachmentLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: RATE_LIMIT_MAX_ATTACHMENTS,
+  keyGenerator: betaAwareKey(
+    (req) => req.headers["x-session-id"] || ipKeyGenerator(req.ip) || "unknown",
+  ),
+  message: { error: "Too many attachment uploads, slow down." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.post("/gtfs/sql/nl2sql-chat/attachment", perAddress(RATE_LIMIT_MAX_ATTACHMENTS, 60 * 1000, { error: "Too many attachment uploads from this address, slow down." }), attachmentLimiter);
+
+// Keyed by IP on purpose (code guessing, address enumeration); the store also bounds each address. The quote
+// requests share the bucket: each sends an e-mail.
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: Number.parseInt(process.env.RATE_LIMIT_MAX_AUTH, 10) || 10,
+  keyGenerator: (req) => ipKeyGenerator(req.ip) || "unknown",
+  message: { error: "RATE_LIMITED", message: "Too many sign-in attempts. Please try again in 15 minutes." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.post(["/gtfs/auth/code", "/gtfs/auth/code/verify", "/gtfs/billing/quote"], authLimiter);
+
+// A person clicks far less than this; past it the counts would only be noise, so they are dropped quietly.
+const telemetryLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 120,
+  keyGenerator: (req) => ipKeyGenerator(req.ip) || "unknown",
+  handler: (req, res) => res.status(204).end(),
+  standardHeaders: false,
+  legacyHeaders: false,
+});
+app.post("/gtfs/telemetry/ui", telemetryLimiter);
+
+// A network read before its stop times are in: what cannot be answered without them waits (425 TIMETABLES_LOADING).
+app.use("/gtfs", require("./middleware/timetablesGate").timetablesGate, gtfsRoutes);
+
+// Public and parsed once at boot: the spec is static per deploy. openapiCoverage.test.js holds it to the routes.
+const swaggerUi = require("swagger-ui-express");
+const YAML = require("yaml");
+const openapiPath = require("path").join(__dirname, "..", "docs", "openapi.yaml");
+const openapiRaw = require("fs").readFileSync(openapiPath, "utf8");
+const openapiSpec = YAML.parse(openapiRaw);
+
+app.get("/gtfs/openapi.yaml", (req, res) => {
+  res.setHeader("Content-Type", "text/yaml; charset=utf-8");
+  res.setHeader("Cache-Control", "public, max-age=300");
+  res.send(openapiRaw);
+});
+
+// swagger-ui-express serves its assets same-origin, so helmet's default CSP holds.
+app.use(
+  "/gtfs/docs",
+  swaggerUi.serve,
+  swaggerUi.setup(openapiSpec, { customSiteTitle: "GTFS Express API" }),
+);
+
+// A typed refusal (services/refusal) answers with its CODE, a 503 too, so that the web can say it in the reader's
+// language; a server error never shows its message in production (paths, SQL). A lock another process holds on a
+// network, met past the gate (db/writeGate), is its refusal.
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+  if (writeGate.isBusy(err)) err = writeGate.busy();
+  err = bodyRefusalOf(err);
+  const status = Number(err.status || err.statusCode) || 500;
+  if (status >= 500 && err.code !== writeGate.CODE) console.error(`[ERROR] ${req.method} ${req.path}:`, err);
+  if (status !== 500 && Number(err.status) === status && typeof err.code === "string" && /^[A-Z][A-Z0-9_]+$/.test(err.code)) {
+    const details = err.details && typeof err.details === "object" ? err.details : {};
+    if (Number.isFinite(details.retryAfterSec) && details.retryAfterSec > 0) res.set("Retry-After", String(Math.ceil(details.retryAfterSec)));
+    return res.status(status).json({ error: err.code, message: err.message, ...details });
+  }
+  const message = status < 500 || NODE_ENV !== "production" ? err.message : "An internal server error occurred.";
+  res.status(status).json({ error: message });
+});
+
+// Tests require the app without binding a port.
+if (require.main === module) {
+  // There is no in-house fallback: production refuses to boot without the validator JAR and its JRE.
+  const {
+    assertReadyForProduction: assertCanonicalReady,
+  } = require("./services/canonicalValidatorService");
+  assertCanonicalReady();
+  require("./services/canonicalValidatorService").sweepStaleFolders();
+
+  // The use logs' folder (beta/) is not in git nor in the image: production mounts it, a fresh checkout gets it here.
+  for (const file of [appConfig.BETA_USAGE_PATH, appConfig.NL2SQL_CHAT_USAGE_PATH]) require("fs").mkdirSync(require("path").dirname(file), { recursive: true });
+
+  require("./services/logRetention").start();
+  require("./services/accounts/trialMail").start();
+  require("./services/admin/productBackfill").start();
+  const aiBudget = require("./services/aiCostLimiter");
+  for (const warning of aiBudget.budgetConsistency(appConfig).warnings) console.warn(`[ai budget] ${warning}`);
+
+  const server = app.listen(PORT, () => {
+    console.info(`Server is running on port ${PORT} [${NODE_ENV}]`);
+    console.info(`Security: Helmet + Rate Limiting enabled`);
+    console.info(`CORS origins: ${ALLOWED_ORIGINS.join(", ")}`);
+    console.info(`Trusted proxy hops: ${appConfig.TRUST_PROXY_HOPS} · log retention: ${appConfig.LOG_RETENTION_DAYS ? `${appConfig.LOG_RETENTION_DAYS} days` : "kept"}`);
+    console.info(
+      `Rate limits: ${RATE_LIMIT_MAX_REQUESTS} req/hour global, ${RATE_LIMIT_MAX_UPLOADS} uploads/hour`,
+    );
+  });
+
+  // A hung upstream cannot pin a worker forever; 5 minutes covers the largest legitimate uploads and exports.
+  server.requestTimeout = 5 * 60 * 1000;
+  server.headersTimeout = 60 * 1000;
+  server.keepAliveTimeout = 65 * 1000;
+
+  // In-flight requests drain before exit, so that uploads and exports are not truncated nor session databases left
+  // half-written.
+  const shutdown = (signal) => {
+    console.info(`${signal} received, draining…`);
+    // The import's child would outlive the process and write a database nobody waits for.
+    require("./services/db/feedImporter").stopAll();
+    require("./services/feedOutApart").stopAll();
+    require("./services/qualityAuditApart").stopAll();
+    try {
+      require("./services/diffService").stopAll();
+    } catch {
+      /* the community edition's stand-in refuses the call: it compares nothing */
+    }
+    // The sheets' PDF browser; the community edition's stand-in refuses the call, which must not stop the drain.
+    Promise.resolve()
+      .then(() => require("./services/stopSheets/sheetPdf").closeAll())
+      .catch(() => {});
+    // An event stream never ends by itself: left open, the drain would wait for its timeout and exit as a failure.
+    require("./utils/sseKeepAlive").endAll();
+    server.close((err) => {
+      if (err) {
+        console.error("Error during shutdown:", err);
+        process.exit(1);
+      }
+      console.info("Server closed cleanly.");
+      process.exit(0);
+    });
+    setTimeout(() => {
+      console.warn("Drain timeout exceeded — forcing exit.");
+      process.exit(1);
+    }, 30_000).unref();
+  };
+  // Logged, not fatal: ending the process would drop every user's edit mode, previews and counters, which live in it.
+  // Requests route their rejections to the error handler (routes/gtfsRoutes forwardRejection).
+  process.on("unhandledRejection", (reason) => console.error("[unhandledRejection]", reason));
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
+}
+
+module.exports = app;

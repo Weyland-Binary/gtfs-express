@@ -1,0 +1,11 @@
+route_id,agency_id,route_short_name,route_long_name,route_desc,route_type,route_url,route_color,route_text_color,route_sort_order,continuous_pickup,continuous_drop_off
+S1,NYCDEMO,S1,Broadway Local Inwood ↔ World Trade Center,Synthetic subway line following the Broadway corridor through Manhattan.,1,https://example.com/nyc-demo-transit/S1,B51017,FFFFFF,1,1,1
+S2,NYCDEMO,S2,Astoria ↔ Downtown Brooklyn,"Synthetic subway line linking Astoria, Midtown, the Lower East Side and Brooklyn.",1,https://example.com/nyc-demo-transit/S2,00933C,000000,2,1,1
+S3,NYCDEMO,S3,Downtown Brooklyn ↔ Coney Island,Synthetic subway line from central Brooklyn to the south shore.,1,https://example.com/nyc-demo-/S3,FCCC0A,000000,3,1,1
+B1,NYCDEMO,B1,LaGuardia Link SBS,"Synthetic airport bus linking LaGuardia, Queens hubs and Midtown.",3,https://example.com/nyc-demo-transit/B1,1F77B4,FFFFFF,4,1,1
+B2,NYCDEMO,B2,14 St Crosstown,"Synthetic crosstown bus through Chelsea, Union Square and the Lower East Side.",3,https://example.com/nyc-demo-transit/B2,7B4FA8,FFFFFF,5,1,1
+B4,NYCDEMO,B4,Brooklyn Waterfront,"Synthetic waterfront bus between Downtown Brooklyn, Williamsburg and Long Island City.",3,https://example.com/nyc-demo-transit/B4,17BECF,000000,7,1,1
+B5,NYCDEMO,B5,JFK Connector,"Synthetic limited-stop bus linking JFK, Jamaica, central Queens and Midtown East.",3,https://example.com/nyc-demo-transit/B5,D62728,FFFFFF,8,1,1
+B6,NYCDEMO,B6,Central Park Shuttle,Synthetic north-south bus along Fifth Avenue and Central Park.,3,https://example.com/nyc-demo-transit/B6,8C564B,FFFFFF,9,1,1
+N1,NYCDEMO,N1,Night Owl Manhattan ↔ Coney Island,"Synthetic overnight bus linking Upper Manhattan, central Manhattan and southern Brooklyn.",3,https://example.com/nyc-demo-transit/N1,4D4D4D,FFFFFF,10,1,1
+F1,NYCDEMO,F1,East River Ferry,"Synthetic ferry service on the East River between Lower Manhattan, Brooklyn, Queens and Midtown.",4,https://example.com/nyc-demo-transit/F1,0D7A6D,FFFFFF,11,1,1
